@@ -1,11 +1,11 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import {
 AlertTriangle, CheckCircle, Clock, Wrench, BarChart2, Package,
 Users, FileText, Bell, LogOut, ChevronRight, Plus, X,
 Calendar, Zap, Shield, Search, ClipboardList, AlertCircle,
 Check, RefreshCw, Activity, ArrowRight, Edit2, Trash2,
 TrendingUp, Layers, Info, Wifi, WifiOff, Gauge, Key, FileWarning,
-Printer, Filter, Eye, ChevronDown
+Printer, Filter, Eye, ChevronDown, Camera, Download, FileDown
 } from "lucide-react";
 import { db } from "./firebase.js";
 import { doc, setDoc, onSnapshot, getDoc } from "firebase/firestore";
@@ -149,6 +149,23 @@ const uid = () => Math.random().toString(36).slice(2,10);
 const nextOTCode = wos => `OT-${new Date().getFullYear()}-${String(wos.length+1).padStart(3,"0")}`;
 const CRIT_LABEL = { A:"Crítico", B:"Importante", C:"Rutinario" };
 
+// ─── CSV EXPORT UTILITY ──────────────────────────────────────────────────────
+function downloadCSV(filename, rows) {
+if (!rows || rows.length === 0) return;
+const headers = Object.keys(rows[0]);
+const escape = v => {
+const s = String(v == null ? "" : v);
+if (s.includes(",") || s.includes('"') || s.includes("\n")) return `"${s.replace(/"/g, '""')}"`;
+return s;
+};
+const lines = [headers.map(escape).join(","), ...rows.map(r => headers.map(h => escape(r[h])).join(","))];
+const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+const url = URL.createObjectURL(blob);
+const a = document.createElement("a");
+a.href = url; a.download = filename; a.click();
+URL.revokeObjectURL(url);
+}
+
 // ─── NAVIMAG COLORS ───────────────────────────────────────────────────────────
 // Primary navy: #002060  Secondary blue: #0055A4  Accent: #00AEEF
 const NV = {
@@ -181,7 +198,7 @@ const Badge=({s,label})=>{const c=ST[s]||{label:s,cls:"text-gray-600 bg-gray-100
 const ROLE_CFG={
 supervisor: {label:"Supervisor", color:"text-cyan-300",  bg:"bg-cyan-900/40",   icon:Shield,       nav:["dashboard","workorders","equipment","plans","indicadores","requests","checklist","deviaciones","reports","users"]},
 mecanico:   {label:"Mecánico",   color:"text-amber-300", bg:"bg-amber-900/30",  icon:Wrench,       nav:["dashboard","workorders","deviaciones","reports"]},
-operaciones:{label:"Operaciones",color:"text-sky-300",   bg:"bg-sky-900/30",    icon:Activity,     nav:["dashboard","requests","checklist","notifications"]},
+operaciones:{label:"Operaciones",color:"text-sky-300",   bg:"bg-sky-900/30",    icon:Activity,     nav:["dashboard","requests","checklist","plans","notifications"]},
 operador:   {label:"Operador",   color:"text-green-300", bg:"bg-green-900/30",  icon:ClipboardList,nav:["dashboard","checklist","notifications"]},
 };
 
@@ -210,6 +227,110 @@ return(
 <div className="flex gap-2 mt-5">
 <button onClick={onSave}   style={{background:NV.blue}} className="flex-1 text-white font-semibold py-2.5 rounded-lg text-sm transition hover:opacity-90">{label}</button>
 <button onClick={onCancel} className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2.5 rounded-lg text-sm transition">Cancelar</button>
+</div>
+);
+}
+
+// ─── PHOTO PICKER ────────────────────────────────────────────────────────────
+function PhotoPicker({ photos = [], onChange, max = 3 }) {
+const inputRef = useRef(null);
+const compressImage = (file, cb) => {
+const reader = new FileReader();
+reader.onload = e => {
+const img = new Image();
+img.onload = () => {
+const maxW = 800;
+let w = img.width, h = img.height;
+if (w > maxW) { h = Math.round(h * maxW / w); w = maxW; }
+const canvas = document.createElement("canvas");
+canvas.width = w; canvas.height = h;
+canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+cb(canvas.toDataURL("image/jpeg", 0.6));
+};
+img.src = e.target.result;
+};
+reader.readAsDataURL(file);
+};
+const handleFile = e => {
+const files = Array.from(e.target.files || []);
+if (!files.length) return;
+const remaining = max - photos.length;
+files.slice(0, remaining).forEach(f => {
+compressImage(f, b64 => onChange([...photos, b64]));
+});
+e.target.value = "";
+};
+const remove = idx => onChange(photos.filter((_, i) => i !== idx));
+return (
+<div>
+<div className="flex flex-wrap gap-2 mb-2">
+{photos.map((src, i) => (
+<div key={i} className="relative w-16 h-16 rounded-lg overflow-hidden border border-gray-200 group">
+<img src={src} alt="" className="w-full h-full object-cover cursor-pointer" onClick={() => { const w = window.open("", "_blank"); w.document.write(`<img src="${src}" style="max-width:100%;"/>`); w.document.close(); }}/>
+<button onClick={() => remove(i)} className="absolute top-0.5 right-0.5 bg-black/60 rounded-full w-4 h-4 flex items-center justify-center opacity-0 group-hover:opacity-100 transition"><X size={10} className="text-white"/></button>
+</div>
+))}
+{photos.length < max && (
+<button onClick={() => inputRef.current?.click()} className="w-16 h-16 border-2 border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center text-gray-400 hover:border-blue-400 hover:text-blue-500 transition">
+<Camera size={16}/><span className="text-xs mt-0.5">Foto</span>
+</button>
+)}
+</div>
+<input ref={inputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFile}/>
+</div>
+);
+}
+
+// ─── SIGNATURE PAD ───────────────────────────────────────────────────────────
+function SignaturePad({ onSave, onCancel }) {
+const canvasRef = useRef(null);
+const drawing = useRef(false);
+useEffect(() => {
+const canvas = canvasRef.current;
+if (!canvas) return;
+const ctx = canvas.getContext("2d");
+ctx.fillStyle = "#fff";
+ctx.fillRect(0, 0, canvas.width, canvas.height);
+}, []);
+const getPos = e => {
+const rect = canvasRef.current.getBoundingClientRect();
+const src = e.touches ? e.touches[0] : e;
+return { x: src.clientX - rect.left, y: src.clientY - rect.top };
+};
+const onDown = e => {
+e.preventDefault();
+drawing.current = true;
+const ctx = canvasRef.current.getContext("2d");
+const { x, y } = getPos(e);
+ctx.beginPath(); ctx.moveTo(x, y);
+};
+const onMove = e => {
+e.preventDefault();
+if (!drawing.current) return;
+const ctx = canvasRef.current.getContext("2d");
+ctx.strokeStyle = "#1a1a1a"; ctx.lineWidth = 2; ctx.lineCap = "round";
+const { x, y } = getPos(e);
+ctx.lineTo(x, y); ctx.stroke();
+};
+const onUp = e => { e.preventDefault(); drawing.current = false; };
+const clear = () => {
+const canvas = canvasRef.current;
+const ctx = canvas.getContext("2d");
+ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+};
+const save = () => onSave(canvasRef.current.toDataURL("image/png"));
+return (
+<div className="space-y-3">
+<p className="text-gray-600 text-sm font-medium">Firma del responsable:</p>
+<canvas ref={canvasRef} width={440} height={200}
+className="w-full border border-gray-300 rounded-lg bg-white touch-none"
+style={{ height: "200px", cursor: "crosshair" }}
+onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerLeave={onUp}/>
+<div className="flex gap-2">
+<button onClick={clear} className="px-3 py-2 text-sm border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50 transition">Limpiar</button>
+<button onClick={save} className="flex-1 py-2 text-sm text-white rounded-lg font-semibold hover:opacity-90 transition" style={{ background: "#002060" }}>Guardar Firma</button>
+<button onClick={onCancel} className="px-3 py-2 text-sm border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50 transition">Cancelar</button>
+</div>
 </div>
 );
 }
@@ -566,135 +687,38 @@ return<div key={c.id} className="flex items-center gap-2 py-2 border-b border-gr
 );
 }
 
-// ─── PHOTO PICKER ────────────────────────────────────────────────────────────
-function PhotoPicker({photos=[],onChange,max=3}){
-  const inputRef=useRef(null);
-  const compress=(file,cb)=>{
-    const img=new Image();
-    const url=URL.createObjectURL(file);
-    img.onload=()=>{
-      const canvas=document.createElement("canvas");
-      const MAX=800;
-      let {width:w,height:h}=img;
-      if(w>MAX){h=Math.round(h*(MAX/w));w=MAX;}
-      canvas.width=w;canvas.height=h;
-      canvas.getContext("2d").drawImage(img,0,0,w,h);
-      cb(canvas.toDataURL("image/jpeg",0.6));
-      URL.revokeObjectURL(url);
-    };
-    img.src=url;
-  };
-  const onFile=e=>{
-    const files=Array.from(e.target.files||[]);
-    if(!files.length)return;
-    let done=0;const newPhotos=[...photos];
-    files.slice(0,max-photos.length).forEach(f=>{
-      compress(f,b64=>{newPhotos.push(b64);done++;if(done===Math.min(files.length,max-photos.length))onChange(newPhotos);});
-    });
-    e.target.value="";
-  };
-  return(
-    <div>
-      <div className="flex flex-wrap gap-2 mb-2">
-        {photos.map((p,i)=>(
-          <div key={i} className="relative w-16 h-16 rounded-lg overflow-hidden border border-gray-200">
-            <img src={p} className="w-full h-full object-cover" onClick={()=>{const w=window.open();w.document.write(`<img src="${p}" style="max-width:100%">`);}} style={{cursor:"zoom-in"}}/>
-            <button onClick={()=>onChange(photos.filter((_,j)=>j!==i))} className="absolute top-0.5 right-0.5 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center"><X size={9} className="text-white"/></button>
-          </div>
-        ))}
-        {photos.length<max&&(
-          <button onClick={()=>inputRef.current?.click()} className="w-16 h-16 rounded-lg border-2 border-dashed border-gray-300 flex flex-col items-center justify-center gap-0.5 text-gray-400 hover:border-blue-400 hover:text-blue-400 transition text-xs">
-            <span className="text-lg leading-none">📷</span><span className="text-xs">Foto</span>
-          </button>
-        )}
-      </div>
-      <input ref={inputRef} type="file" accept="image/*" capture="environment" multiple className="hidden" onChange={onFile}/>
-    </div>
-  );
-}
-
-// ─── SIGNATURE PAD ───────────────────────────────────────────────────────────
-function SignaturePad({onSave,onCancel}){
-  const canvasRef=useRef(null);
-  const drawing=useRef(false);
-  const getPos=(e,canvas)=>{
-    const rect=canvas.getBoundingClientRect();
-    const src=e.touches?e.touches[0]:e;
-    return{x:src.clientX-rect.left,y:src.clientY-rect.top};
-  };
-  const start=e=>{
-    e.preventDefault();
-    const c=canvasRef.current;if(!c)return;
-    drawing.current=true;
-    const ctx=c.getContext("2d");
-    const{x,y}=getPos(e,c);
-    ctx.beginPath();ctx.moveTo(x,y);
-  };
-  const move=e=>{
-    e.preventDefault();
-    if(!drawing.current)return;
-    const c=canvasRef.current;if(!c)return;
-    const ctx=c.getContext("2d");
-    const{x,y}=getPos(e,c);
-    ctx.lineTo(x,y);ctx.stroke();
-  };
-  const stop=()=>{drawing.current=false;};
-  const clear=()=>{
-    const c=canvasRef.current;if(!c)return;
-    const ctx=c.getContext("2d");
-    ctx.clearRect(0,0,c.width,c.height);
-  };
-  useEffect(()=>{
-    const c=canvasRef.current;if(!c)return;
-    const ctx=c.getContext("2d");
-    ctx.strokeStyle="#1e3a5f";ctx.lineWidth=2;ctx.lineCap="round";ctx.lineJoin="round";
-  },[]);
-  return(
-    <div className="space-y-3">
-      <p className="text-gray-500 text-sm">Firma en el recuadro a continuación:</p>
-      <canvas ref={canvasRef} width={460} height={180}
-        className="w-full border-2 border-gray-300 rounded-xl bg-white touch-none"
-        style={{cursor:"crosshair"}}
-        onMouseDown={start} onMouseMove={move} onMouseUp={stop} onMouseLeave={stop}
-        onTouchStart={start} onTouchMove={move} onTouchEnd={stop}
-      />
-      <div className="flex gap-2">
-        <button onClick={clear} className="flex-1 py-2 rounded-lg border border-gray-200 text-gray-500 text-sm hover:bg-gray-50 transition">Limpiar</button>
-        <button onClick={()=>onSave(canvasRef.current?.toDataURL("image/png")||null)} className="flex-1 py-2 rounded-lg text-white text-sm font-semibold hover:opacity-90 transition" style={{background:"#002060"}}>Guardar Firma</button>
-        <button onClick={onCancel} className="py-2 px-4 rounded-lg border border-gray-200 text-gray-400 text-sm hover:bg-gray-50 transition">Saltar</button>
-      </div>
-    </div>
-  );
-}
-
 // ─── WORK ORDERS ─────────────────────────────────────────────────────────────
 function WorkOrders({user,data,setData}){
 const {wos,equip,users,requests,plans}=data;
-const [flt,setFlt]=useState({status:"",type:"",equipId:"",assignedTo:""});
-const [search,setSearch]=useState("");
-const [showWorkload,setShowWorkload]=useState(false);
+  const [filter,setFilter]=useState("all"); const [search,setSearch]=useState("");
+  const [flt,setFlt]=useState({status:"",type:"",equipId:"",assignedTo:""});
+  const [search,setSearch]=useState("");
+  const [showWorkload,setShowWorkload]=useState(false);
 const [sel,setSel]=useState(null); const [showRep,setShowRep]=useState(false);
 const [rep,setRep]=useState({actualHours:"",observations:"",status:"completada"});
-const [showSig,setShowSig]=useState(false);
-const [sigData,setSigData]=useState(null);
+  const [showSig,setShowSig]=useState(false);
+  const [sigData,setSigData]=useState(null);
 const role=user.role;
-const mechanics=users.filter(u=>u.role==="mecanico");
-const thisMonth=new Date().toISOString().slice(0,7);
+  const mechanics=users.filter(u=>u.role==="mecanico");
+  const thisMonth=new Date().toISOString().slice(0,7);
 const visible=wos.filter(w=>{
 if(role==="mecanico"&&w.assignedTo!==user.id) return false;
-if(flt.status&&w.status!==flt.status) return false;
-if(flt.type&&w.type!==flt.type) return false;
-if(flt.equipId&&w.equipId!==flt.equipId) return false;
-if(flt.assignedTo&&w.assignedTo!==flt.assignedTo) return false;
+    if(filter!=="all"&&w.status!==filter) return false;
+    if(flt.status&&w.status!==flt.status) return false;
+    if(flt.type&&w.type!==flt.type) return false;
+    if(flt.equipId&&w.equipId!==flt.equipId) return false;
+    if(flt.assignedTo&&w.assignedTo!==flt.assignedTo) return false;
 if(search&&!w.title.toLowerCase().includes(search.toLowerCase())&&!w.code.toLowerCase().includes(search.toLowerCase())) return false;
 return true;
 });
 const updWO=(id,patch)=>{const u=wos.map(w=>w.id===id?{...w,...patch}:w);setData(d=>({...d,wos:u}));saveData("workOrders",u);if(sel?.id===id)setSel(s=>({...s,...patch}));};
-const doSubmitRep=(signature)=>{
+  const submitRep=()=>{
+  const doSubmitRep=(signature)=>{
 if(!rep.actualHours)return;
-const patch={status:rep.status,actualHours:parseFloat(rep.actualHours),observations:rep.observations};
-if(signature)patch.mechanicSignature=signature;
-updWO(sel.id,patch);
+    updWO(sel.id,{status:rep.status,actualHours:parseFloat(rep.actualHours),observations:rep.observations});
+    const patch={status:rep.status,actualHours:parseFloat(rep.actualHours),observations:rep.observations};
+    if(signature)patch.mechanicSignature=signature;
+    updWO(sel.id,patch);
 if(rep.status==="completada"&&sel.reqId){
 const updR=requests.map(r=>r.id===sel.reqId?{...r,status:"completada"}:r);
 setData(d=>({...d,requests:updR}));saveData("requests",updR);
@@ -704,82 +728,91 @@ const eqH=equip.find(e=>e.id===sel.equipId)?.hours||0;
 const updP=plans.map(p=>p.id===sel.planId?{...p,lastHorometro:eqH,horometroTarget:eqH+(p.frequency||0)}:p);
 setData(d=>({...d,plans:updP}));saveData("plans",updP);
 }
-setShowRep(false);setShowSig(false);setSigData(null);setRep({actualHours:"",observations:"",status:"completada"});
+    setShowRep(false);setRep({actualHours:"",observations:"",status:"completada"});
+    setShowRep(false);setShowSig(false);setSigData(null);setRep({actualHours:"",observations:"",status:"completada"});
 };
-const submitRep=()=>{if(!rep.actualHours)return;setShowSig(true);};
+  const submitRep=()=>{if(!rep.actualHours)return;setShowSig(true);};
 const cur=sel?wos.find(w=>w.id===sel.id):null;
 const curEq=cur?equip.find(e=>e.id===cur.equipId):null;
 const curAs=cur?users.find(u=>u.id===cur.assignedTo):null;
-const anyFlt=flt.status||flt.type||flt.equipId||flt.assignedTo||search;
+  const anyFlt=flt.status||flt.type||flt.equipId||flt.assignedTo||search;
 return(
 <div className="p-6 flex gap-5 h-full">
 <div className="flex-1 min-w-0">
 <div className="mb-5"><h1 className="text-gray-900 font-bold text-xl">Órdenes de Trabajo</h1><p className="text-gray-500 text-sm">{visible.length} registros</p></div>
+        <div className="flex gap-2 mb-4 flex-wrap">
 
-{/* Mechanic workload panel — supervisor only */}
-{role==="supervisor"&&(
-<div className="mb-4">
-<button onClick={()=>setShowWorkload(v=>!v)} className="flex items-center gap-2 text-xs font-semibold px-3 py-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 transition mb-2">
-<Users size={13}/>{showWorkload?"Ocultar carga de mecánicos":"Ver carga de mecánicos"}<ChevronDown size={12} className={`transition-transform ${showWorkload?"rotate-180":""}`}/>
-</button>
-{showWorkload&&(
-<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-3">
-{mechanics.map(mec=>{
-const openOTs=wos.filter(w=>w.assignedTo===mec.id&&(w.status==="asignada"||w.status==="en_proceso"));
-const completedThisMonth=wos.filter(w=>w.assignedTo===mec.id&&w.status==="completada"&&w.createdAt?.startsWith(thisMonth));
-const pendingHours=openOTs.reduce((s,w)=>s+(w.estimatedHours||0),0);
-const barColor=openOTs.length>4?"bg-red-500":openOTs.length>=2?"bg-amber-400":"bg-emerald-500";
-return(
-<div key={mec.id} className={`${card} p-4 flex items-center gap-3`}>
-<div className="w-10 h-10 rounded-full bg-white flex items-center justify-center font-bold text-sm border border-gray-200 flex-shrink-0" style={{color:NV.navy}}>{mec.avatar}</div>
-<div className="flex-1 min-w-0">
-<p className="text-gray-800 font-semibold text-sm truncate">{mec.name}</p>
-<div className="flex items-center gap-3 mt-0.5 text-xs text-gray-500">
-<span className="font-bold" style={{color:openOTs.length>4?"#dc2626":openOTs.length>=2?"#d97706":"#16a34a"}}>{openOTs.length} abiertas</span>
-<span>{completedThisMonth.length} comp./mes</span>
-<span>{pendingHours.toFixed(1)}h pend.</span>
-</div>
-<div className="w-full h-1.5 bg-gray-200 rounded-full overflow-hidden mt-1.5">
-<div className={`h-full rounded-full transition-all ${barColor}`} style={{width:`${Math.min(100,(openOTs.length/8)*100)}%`}}/>
-</div>
-</div>
-</div>
-);
-})}
-</div>
-)}
-</div>
-)}
+        {/* Mechanic workload panel — supervisor only */}
+        {role==="supervisor"&&(
+          <div className="mb-4">
+            <button onClick={()=>setShowWorkload(v=>!v)} className="flex items-center gap-2 text-xs font-semibold px-3 py-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 transition mb-2">
+              <Users size={13}/>{showWorkload?"Ocultar carga de mecánicos":"Ver carga de mecánicos"}<ChevronDown size={12} className={`transition-transform ${showWorkload?"rotate-180":""}`}/>
+            </button>
+            {showWorkload&&(
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-3">
+                {mechanics.map(mec=>{
+                  const openOTs=wos.filter(w=>w.assignedTo===mec.id&&(w.status==="asignada"||w.status==="en_proceso"));
+                  const completedThisMonth=wos.filter(w=>w.assignedTo===mec.id&&w.status==="completada"&&w.createdAt?.startsWith(thisMonth));
+                  const pendingHours=openOTs.reduce((s,w)=>s+(w.estimatedHours||0),0);
+                  const barColor=openOTs.length>4?"bg-red-500":openOTs.length>=2?"bg-amber-400":"bg-emerald-500";
+                  return(
+                    <div key={mec.id} className={`${card} p-4 flex items-center gap-3`}>
+                      <div className="w-10 h-10 rounded-full bg-white flex items-center justify-center font-bold text-sm border border-gray-200 flex-shrink-0" style={{color:NV.navy}}>{mec.avatar}</div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-gray-800 font-semibold text-sm truncate">{mec.name}</p>
+                        <div className="flex items-center gap-3 mt-0.5 text-xs text-gray-500">
+                          <span className="font-bold" style={{color:openOTs.length>4?"#dc2626":openOTs.length>=2?"#d97706":"#16a34a"}}>{openOTs.length} abiertas</span>
+                          <span>{completedThisMonth.length} comp./mes</span>
+                          <span>{pendingHours.toFixed(1)}h pend.</span>
+                        </div>
+                        <div className="w-full h-1.5 bg-gray-200 rounded-full overflow-hidden mt-1.5">
+                          <div className={`h-full rounded-full transition-all ${barColor}`} style={{width:`${Math.min(100,(openOTs.length/8)*100)}%`}}/>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
 
-{/* Filter bar */}
-<div className="flex gap-2 mb-4 flex-wrap items-center">
+        {/* Filter bar */}
+        <div className="flex gap-2 mb-4 flex-wrap items-center">
 <div className="relative flex-1 min-w-40">
 <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
 <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar OT..." className={iCls+" pl-9"}/>
 </div>
-<select value={flt.status} onChange={e=>setFlt(f=>({...f,status:e.target.value}))} className="bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-700 text-xs focus:outline-none focus:border-blue-400">
-<option value="">Estado: Todos</option>
-<option value="asignada">Asignada</option>
-<option value="en_proceso">En Progreso</option>
-<option value="completada">Completada</option>
-<option value="cancelada">Cancelada</option>
-</select>
-<select value={flt.type} onChange={e=>setFlt(f=>({...f,type:e.target.value}))} className="bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-700 text-xs focus:outline-none focus:border-blue-400">
-<option value="">Tipo: Todos</option>
-<option value="preventivo">Preventivo</option>
-<option value="correctivo">Correctivo</option>
-</select>
-<select value={flt.equipId} onChange={e=>setFlt(f=>({...f,equipId:e.target.value}))} className="bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-700 text-xs focus:outline-none focus:border-blue-400">
-<option value="">Equipo: Todos</option>
-{equip.map(e=><option key={e.id} value={e.id}>{e.code} — {e.name}</option>)}
-</select>
-{role==="supervisor"&&(
-<select value={flt.assignedTo} onChange={e=>setFlt(f=>({...f,assignedTo:e.target.value}))} className="bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-700 text-xs focus:outline-none focus:border-blue-400">
-<option value="">Mecánico: Todos</option>
-{mechanics.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}
-</select>
-)}
-{anyFlt&&<button onClick={()=>{setFlt({status:"",type:"",equipId:"",assignedTo:""});setSearch("");}} className="flex items-center gap-1 text-xs text-red-500 hover:text-red-700 border border-red-200 bg-red-50 px-2.5 py-1.5 rounded-lg transition"><X size={11}/>Limpiar</button>}
+          {["all","pendiente","asignada","en_proceso","completada"].map(s=>(
+            <button key={s} onClick={()=>setFilter(s)}
+              style={filter===s?{background:NV.blue}:{}}
+              className={`px-3 py-2 rounded-lg text-xs font-medium border transition ${filter===s?"text-white border-transparent":"bg-white text-gray-600 border-gray-200 hover:border-gray-300"}`}>
+              {s==="all"?"Todas":ST[s]?.label}
+            </button>
+          ))}
+          <select value={flt.status} onChange={e=>setFlt(f=>({...f,status:e.target.value}))} className="bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-700 text-xs focus:outline-none focus:border-blue-400">
+            <option value="">Estado: Todos</option>
+            <option value="asignada">Asignada</option>
+            <option value="en_proceso">En Progreso</option>
+            <option value="completada">Completada</option>
+            <option value="cancelada">Cancelada</option>
+          </select>
+          <select value={flt.type} onChange={e=>setFlt(f=>({...f,type:e.target.value}))} className="bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-700 text-xs focus:outline-none focus:border-blue-400">
+            <option value="">Tipo: Todos</option>
+            <option value="preventivo">Preventivo</option>
+            <option value="correctivo">Correctivo</option>
+          </select>
+          <select value={flt.equipId} onChange={e=>setFlt(f=>({...f,equipId:e.target.value}))} className="bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-700 text-xs focus:outline-none focus:border-blue-400">
+            <option value="">Equipo: Todos</option>
+            {equip.map(e=><option key={e.id} value={e.id}>{e.code} — {e.name}</option>)}
+          </select>
+          {role==="supervisor"&&(
+            <select value={flt.assignedTo} onChange={e=>setFlt(f=>({...f,assignedTo:e.target.value}))} className="bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-700 text-xs focus:outline-none focus:border-blue-400">
+              <option value="">Mecánico: Todos</option>
+              {mechanics.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}
+            </select>
+          )}
+          {anyFlt&&<button onClick={()=>{setFlt({status:"",type:"",equipId:"",assignedTo:""});setSearch("");}} className="flex items-center gap-1 text-xs text-red-500 hover:text-red-700 border border-red-200 bg-red-50 px-2.5 py-1.5 rounded-lg transition"><X size={11}/>Limpiar</button>}
 </div>
 
 <div className="space-y-2">
@@ -830,7 +863,7 @@ style={sel?.id===w.id?{borderColor:NV.blue,background:"#EBF4FF"}:{}}>
 </div>
 {cur.description&&<div className="bg-gray-50 border border-gray-100 rounded-lg p-3 mb-3 text-gray-600 text-xs">{cur.description}</div>}
 {cur.observations&&<div className="bg-emerald-50 border border-emerald-100 rounded-lg p-3 mb-3 text-xs"><span className="text-emerald-700 font-semibold">Obs: </span>{cur.observations}</div>}
-{cur.mechanicSignature&&<div className="mb-3"><p className="text-gray-400 text-xs mb-1">Firma del mecánico:</p><img src={cur.mechanicSignature} alt="firma" className="border border-gray-200 rounded-lg w-full"/></div>}
+          {cur.mechanicSignature&&<div className="mb-3"><p className="text-gray-400 text-xs mb-1">Firma del mecánico:</p><img src={cur.mechanicSignature} alt="firma" className="border border-gray-200 rounded-lg w-full"/></div>}
 <div className="space-y-2 mt-4">
 {role==="mecanico"&&cur.assignedTo===user.id&&cur.status!=="completada"&&<>
 {cur.status==="asignada"&&<button onClick={()=>updWO(cur.id,{status:"en_proceso"})} className="w-full border text-sm py-2 rounded-lg hover:opacity-90 transition font-medium" style={{background:NV.light,borderColor:NV.blue,color:NV.blue}}>Iniciar Trabajo</button>}
@@ -852,7 +885,8 @@ setData(d=>({...d,requests:updR}));saveData("requests",updR);
 </div>
 </div>
 )}
-{showRep&&!showSig&&(
+      {showRep&&(
+      {showRep&&!showSig&&(
 <Modal title={`Reportar — ${cur?.code}`} onClose={()=>setShowRep(false)}>
 <div className="space-y-4">
 <div><label className="text-gray-500 text-xs font-medium mb-1 block">HORAS REALES *</label><input type="number" step="0.5" value={rep.actualHours} onChange={e=>setRep(r=>({...r,actualHours:e.target.value}))} className={iCls} placeholder="ej: 3.5"/></div>
@@ -862,14 +896,14 @@ setData(d=>({...d,requests:updR}));saveData("requests",updR);
 <ModalActions onSave={submitRep} onCancel={()=>setShowRep(false)} label="Enviar Reporte"/>
 </Modal>
 )}
-{showSig&&(
-<Modal title="Firma del Mecánico" onClose={()=>setShowSig(false)}>
-<SignaturePad
-onSave={dataURL=>{doSubmitRep(dataURL);}}
-onCancel={()=>doSubmitRep(null)}
-/>
-</Modal>
-)}
+      {showSig&&(
+        <Modal title="Firma del Mecánico" onClose={()=>setShowSig(false)}>
+          <SignaturePad
+            onSave={dataURL=>{doSubmitRep(dataURL);}}
+            onCancel={()=>doSubmitRep(null)}
+          />
+        </Modal>
+      )}
 </div>
 );
 }
@@ -1030,6 +1064,7 @@ const latestCL=(checklists||[])
 return latestCL?latestCL.horometro:(equip.find(e=>e.id===equipId)?.hours||0);
 };
 const [tab,setTab]=useState("planes");
+const [fltEquip,setFltEquip]=useState("");
 const [showTplForm,setShowTplForm]=useState(false);
 const [showAssign,setShowAssign]=useState(null);
 const [showPlanForm,setShowPlanForm]=useState(false);
@@ -1109,10 +1144,22 @@ return(
 
 {tab==="planes"&&(
 <>
+{/* Filter bar */}
+<div className="flex items-center gap-3 mb-5 flex-wrap">
+<Filter size={14} className="text-gray-400 flex-shrink-0"/>
+<select value={fltEquip} onChange={e=>setFltEquip(e.target.value)}
+className="bg-white border border-gray-300 rounded-lg px-3 py-1.5 text-gray-700 text-xs focus:outline-none focus:border-blue-400 min-w-[200px]">
+<option value="">Todos los equipos</option>
+{[...new Set(plans.map(p=>p.equipId))].map(eqId=>{
+const eq=equip.find(e=>e.id===eqId);
+return eq?<option key={eqId} value={eqId}>{eq.code} — {eq.name}</option>:null;
+})}
+</select>
+{fltEquip&&<button onClick={()=>setFltEquip("")} className="flex items-center gap-1 text-xs text-red-500 hover:text-red-700 border border-red-200 bg-red-50 px-2.5 py-1.5 rounded-lg transition"><X size={11}/>Limpiar</button>}
+</div>
 {plans.length===0&&<div className="text-center py-16 text-gray-400"><Gauge size={40} className="mx-auto mb-3 text-gray-300"/><p className="font-medium">Sin planes de mantenimiento</p><p className="text-sm mt-1">Crea una plantilla y asígnala a equipos, o crea un plan individual</p></div>}
 {(()=>{
-// Group plans by equipId
-const equipIds=[...new Set(plans.map(p=>p.equipId))];
+const equipIds=[...new Set(plans.map(p=>p.equipId))].filter(id=>!fltEquip||id===fltEquip);
 return(
 <div className="space-y-6">
 {equipIds.map(equipId=>{
@@ -1463,8 +1510,10 @@ w.document.write(`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"/><t
      ${req.source==="checklist"?`<tr><td class="label">Origen</td><td colspan="3">Checklist Pre-operacional</td></tr>`:""}
    </table>`:""}
    <div class="footer">
-     <div>${ot.mechanicSignature?`<img src="${ot.mechanicSignature}" style="max-height:60px;margin-bottom:4px;"/>`:`<div style="height:60px;"></div>`}<div class="sig-line">Mecánico Responsable — ${esc(mec?.name||"")}<br/><span style="font-size:10px;color:#999;">Nombre y Firma</span></div></div>
-     <div><div style="height:60px;"></div><div class="sig-line">Supervisor<br/><span style="font-size:10px;color:#999;">Nombre y Firma</span></div></div>
+      <div><div class="sig-line">Mecánico Responsable<br/><span style="font-size:10px;color:#999;">Nombre y Firma</span></div></div>
+      <div><div class="sig-line">Supervisor<br/><span style="font-size:10px;color:#999;">Nombre y Firma</span></div></div>
+      <div>${ot.mechanicSignature?`<img src="${ot.mechanicSignature}" style="max-height:60px;margin-bottom:4px;"/>`:`<div style="height:60px;"></div>`}<div class="sig-line">Mecánico Responsable — ${esc(mec?.name||"")}<br/><span style="font-size:10px;color:#999;">Nombre y Firma</span></div></div>
+      <div><div style="height:60px;"></div><div class="sig-line">Supervisor<br/><span style="font-size:10px;color:#999;">Nombre y Firma</span></div></div>
    </div>
  </div>
  </body></html>`);
@@ -1477,7 +1526,8 @@ w.print();
 function Requests({user,data,setData}){
 const {requests,equip,users,wos}=data;
 const [showForm,setShowForm]=useState(false);
-const [form,setForm]=useState({equipId:"",title:"",description:"",priority:"media",subsistema:"",componente:"",photos:[]});
+  const [form,setForm]=useState({equipId:"",title:"",description:"",priority:"media",subsistema:"",componente:""});
+  const [form,setForm]=useState({equipId:"",title:"",description:"",priority:"media",subsistema:"",componente:"",photos:[]});
 const [showCLProc,setShowCLProc]=useState(false);
 const [clProc,setClProc]=useState({req:null,priority:"media",subsistema:"",componente:"",description:""});
 const [selReq,setSelReq]=useState(null);
@@ -1491,7 +1541,8 @@ if(flt.priority&&r.priority!==flt.priority)return false;
 return true;
 });
 const uniqueRequesters=[...new Map(visible.map(r=>r.requestedBy).filter(Boolean).map(id=>[id,users.find(u=>u.id===id)])).values()].filter(Boolean);
-const createReq=()=>{if(!form.equipId||!form.title)return;const nr={id:uid(),...form,status:"pendiente",source:"solicitud",requestedBy:user.id,requestedAt:new Date().toISOString(),approvedBy:null,otId:null};const updated=[...requests,nr];setData(d=>({...d,requests:updated}));saveData("requests",updated);setShowForm(false);setForm({equipId:"",title:"",description:"",priority:"media",subsistema:"",componente:"",photos:[]});};
+  const createReq=()=>{if(!form.equipId||!form.title)return;const nr={id:uid(),...form,status:"pendiente",source:"solicitud",requestedBy:user.id,requestedAt:new Date().toISOString(),approvedBy:null,otId:null};const updated=[...requests,nr];setData(d=>({...d,requests:updated}));saveData("requests",updated);setShowForm(false);setForm({equipId:"",title:"",description:"",priority:"media",subsistema:"",componente:""});};
+  const createReq=()=>{if(!form.equipId||!form.title)return;const nr={id:uid(),...form,status:"pendiente",source:"solicitud",requestedBy:user.id,requestedAt:new Date().toISOString(),approvedBy:null,otId:null};const updated=[...requests,nr];setData(d=>({...d,requests:updated}));saveData("requests",updated);setShowForm(false);setForm({equipId:"",title:"",description:"",priority:"media",subsistema:"",componente:"",photos:[]});};
 const approve=req=>{const eq=equip.find(e=>e.id===req.equipId);const priority=req.priority==="alta"||eq?.criticality==="A"?"alta":req.priority;const mec=users.find(u=>u.role==="mecanico");const isInsp=req.source==="inspeccion";const newOT={id:uid(),code:nextOTCode(wos),type:"correctivo",equipId:req.equipId,planId:null,title:`${isInsp?"Inspección":"Reparación"} ${eq?.name||""} - ${req.title}`,priority,status:"asignada",assignedTo:mec?.id||"",createdAt:new Date().toISOString(),scheduledDate:new Date().toISOString().slice(0,10),estimatedHours:priority==="alta"?4:2,actualHours:null,description:req.description,observations:"",parts:[],source:req.source||"solicitud",reqId:req.id};const updW=[...wos,newOT];const updR=requests.map(r=>r.id===req.id?{...r,status:"aprobada",approvedBy:user.id,otId:newOT.id}:r);setData(d=>({...d,wos:updW,requests:updR}));saveData("workOrders",updW);saveData("requests",updR);alert(`✅ OT ${newOT.code} generada — Prioridad ${priority.toUpperCase()}`);};
 const reject=req=>{const updated=requests.map(r=>r.id===req.id?{...r,status:"rechazada",approvedBy:user.id}:r);setData(d=>({...d,requests:updated}));saveData("requests",updated);};
 const markRevised=req=>{const updated=requests.map(r=>r.id===req.id?{...r,status:"revisado",approvedBy:user.id}:r);setData(d=>({...d,requests:updated}));saveData("requests",updated);};
@@ -1508,21 +1559,22 @@ alert("✅ Solicitud enviada al Supervisor para su aprobación y asignación de 
 };
 const SUBSIST_MAP={electrico:"Eléctrico",hidraulico:"Hidráulico",mecanico:"Mecánico",neumatico:"Neumático"};
 const DEV_TYPE_MAP={fuera_de_programa:"Fuera de Programa",anomalia:"Anomalía Detectada",desgaste:"Desgaste / Deterioro",otro:"Otro"};
-const exportReqs=()=>{
-const rows=filtered.map(r=>{
-const eq=equip.find(e=>e.id===r.equipId);const reqBy=users.find(u=>u.id===r.requestedBy);const linkedOT=wos.find(w=>w.id===r.otId);
-return{"ID":r.id.slice(-6),"Equipo":eq?.code||"—","Título":r.title,"Subsistema":SUBSIST_MAP[r.subsistema]||"—","Componente":r.componente||"—","Prioridad":r.priority,"Estado":r.status,"Fuente":r.source,"Solicitante":reqBy?.name||"—","Fecha":fmtDT(r.requestedAt),"OT Vinculada":linkedOT?.code||"—"};
-});
-downloadCSV(`solicitudes_${new Date().toISOString().slice(0,10)}.csv`,rows);
-};
+  const exportReqs=()=>{
+    const rows=filtered.map(r=>{
+      const eq=equip.find(e=>e.id===r.equipId);const reqBy=users.find(u=>u.id===r.requestedBy);const linkedOT=wos.find(w=>w.id===r.otId);
+      return{"ID":r.id.slice(-6),"Equipo":eq?.code||"—","Título":r.title,"Subsistema":SUBSIST_MAP[r.subsistema]||"—","Componente":r.componente||"—","Prioridad":r.priority,"Estado":r.status,"Fuente":r.source,"Solicitante":reqBy?.name||"—","Fecha":fmtDT(r.requestedAt),"OT Vinculada":linkedOT?.code||"—"};
+    });
+    downloadCSV(`solicitudes_${new Date().toISOString().slice(0,10)}.csv`,rows);
+  };
 return(
 <div className="p-6">
 <div className="flex items-center justify-between mb-5">
 <div><h1 className="text-gray-900 font-bold text-xl">Solicitudes de Reparación</h1><p className="text-gray-500 text-sm">{filtered.length} de {visible.length} solicitudes</p></div>
-<div className="flex gap-2">
-{filtered.length>0&&<button onClick={exportReqs} className={btnSecondary} style={{borderColor:NV.blue,color:NV.blue,background:"white"}}><FileDown size={14}/>Exportar</button>}
-{canCreate&&<button onClick={()=>setShowForm(true)} style={{background:NV.blue}} className={btnPrimary}><Plus size={15}/>Nueva Solicitud</button>}
-</div>
+        {canCreate&&<button onClick={()=>setShowForm(true)} style={{background:NV.blue}} className={btnPrimary}><Plus size={15}/>Nueva Solicitud</button>}
+        <div className="flex gap-2">
+          {filtered.length>0&&<button onClick={exportReqs} className={btnSecondary} style={{borderColor:NV.blue,color:NV.blue,background:"white"}}><FileDown size={14}/>Exportar</button>}
+          {canCreate&&<button onClick={()=>setShowForm(true)} style={{background:NV.blue}} className={btnPrimary}><Plus size={15}/>Nueva Solicitud</button>}
+        </div>
 </div>
 
 {/* ── Filter Bar ── */}
@@ -1615,7 +1667,7 @@ return(
 <span>·</span>
 <span>{fmtDT(r.requestedAt)}</span>
 {linkedOT&&<><span>·</span><span className="text-emerald-600 font-semibold">{linkedOT.code}</span></>}
-{r.photos&&r.photos.length>0&&<><span>·</span><span className="text-blue-500 font-medium">📷 {r.photos.length} foto{r.photos.length!==1?"s":""}</span></>}
+                  {r.photos&&r.photos.length>0&&<><span>·</span><span className="text-blue-500 font-medium">📷 {r.photos.length} foto{r.photos.length!==1?"s":""}</span></>}
 </div>
 </div>
 </div>
@@ -1658,18 +1710,18 @@ return(
 </div>
 {/* Description */}
 {r.description&&<div className="bg-gray-50 border border-gray-100 rounded-lg p-3"><p className="text-gray-400 text-xs font-medium uppercase tracking-wide mb-1">Descripción de la Falla</p><p className="text-gray-700 text-sm leading-relaxed whitespace-pre-line">{r.description}</p></div>}
-{/* Photos */}
-{r.photos&&r.photos.length>0&&(
-<div>
-<p className="text-gray-400 text-xs font-medium uppercase tracking-wide mb-2">Fotos adjuntas</p>
-<div className="flex flex-wrap gap-2">
-{r.photos.map((src,i)=>(
-<img key={i} src={src} alt={`foto ${i+1}`} className="w-24 h-24 object-cover rounded-lg border border-gray-200 cursor-pointer hover:opacity-90 transition"
-onClick={()=>{const w2=window.open("","_blank");w2.document.write(`<img src="${src}" style="max-width:100%;"/>`);w2.document.close();}}/>
-))}
-</div>
-</div>
-)}
+              {/* Photos */}
+              {r.photos&&r.photos.length>0&&(
+                <div>
+                  <p className="text-gray-400 text-xs font-medium uppercase tracking-wide mb-2">Fotos adjuntas</p>
+                  <div className="flex flex-wrap gap-2">
+                    {r.photos.map((src,i)=>(
+                      <img key={i} src={src} alt={`foto ${i+1}`} className="w-24 h-24 object-cover rounded-lg border border-gray-200 cursor-pointer hover:opacity-90 transition"
+                        onClick={()=>{const w2=window.open("","_blank");w2.document.write(`<img src="${src}" style="max-width:100%;"/>`);w2.document.close();}}/>
+                    ))}
+                  </div>
+                </div>
+              )}
 {/* Linked OT */}
 {linkedOT&&(
 <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 space-y-3">
@@ -1747,7 +1799,7 @@ onClick={()=>{const w2=window.open("","_blank");w2.document.write(`<img src="${s
 <div><label className="text-gray-500 text-xs font-medium mb-1 block">FALLA DETECTADA *</label><input value={form.title} onChange={e=>setForm(f=>({...f,title:e.target.value}))} className={iCls} placeholder="Descripción breve de la falla"/></div>
 <div><label className="text-gray-500 text-xs font-medium mb-1 block">DESCRIPCIÓN DE LA FALLA</label><textarea value={form.description} onChange={e=>setForm(f=>({...f,description:e.target.value}))} rows={3} className={iCls+" resize-none"} placeholder="Detalla síntomas, condiciones, frecuencia..."/></div>
 <div><label className="text-gray-500 text-xs font-medium mb-1 block">PRIORIDAD</label><select value={form.priority} onChange={e=>setForm(f=>({...f,priority:e.target.value}))} className={sCls}><option value="alta">Alta — Detiene operaciones</option><option value="media">Media — Afecta rendimiento</option><option value="baja">Baja — Sin impacto inmediato</option></select></div>
-<div><label className="text-gray-500 text-xs font-medium mb-2 block">FOTOS (opcional)</label><PhotoPicker photos={form.photos||[]} onChange={p=>setForm(f=>({...f,photos:p}))} max={3}/></div>
+            <div><label className="text-gray-500 text-xs font-medium mb-2 block">FOTOS (opcional)</label><PhotoPicker photos={form.photos||[]} onChange={p=>setForm(f=>({...f,photos:p}))} max={3}/></div>
 </div>
 <ModalActions onSave={createReq} onCancel={()=>setShowForm(false)} label="Enviar Solicitud"/>
 </Modal>
@@ -1758,112 +1810,114 @@ onClick={()=>{const w2=window.open("","_blank");w2.document.write(`<img src="${s
 
 // ─── MONTHLY REPORT ──────────────────────────────────────────────────────────
 function printMonthlyReport(data, equipList, usersList, month) {
-const {wos, requests, checklists} = data;
-const allCL = checklists || [];
-const monthWOs = wos.filter(w => w.createdAt?.startsWith(month));
-const monthCompleted = monthWOs.filter(w => w.status === "completada");
-const monthPrev = monthWOs.filter(w => w.type === "preventivo");
-const monthCorr = monthWOs.filter(w => w.type === "correctivo");
-const monthHrs = monthCompleted.reduce((s, w) => s + (w.actualHours || 0), 0);
-const compRate = monthWOs.length > 0 ? ((monthCompleted.length / monthWOs.length) * 100).toFixed(1) : "N/D";
-const monthReqs = requests.filter(r => r.requestedAt?.startsWith(month));
-const monthCL = allCL.filter(c => c.createdAt?.startsWith(month));
-const monthLabel = new Date(month + "-01").toLocaleDateString("es-CL", {month:"long",year:"numeric"});
-const esc = s => String(s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-const byEquip = equipList.map(e => {
-const ots = monthWOs.filter(w => w.equipId === e.id);
-const comp = ots.filter(w => w.status === "completada");
-const hrs = comp.reduce((s, w) => s + (w.actualHours || 0), 0);
-const cls = monthCL.filter(c => c.equipId === e.id);
-const disp = ots.length > 0 && hrs > 0 ? Math.max(0, 100 - (hrs / 730) * 100).toFixed(1) : "N/D";
-return { ...e, ots: ots.length, comp: comp.length, hrs, cls: cls.length, disp };
-}).filter(e => e.ots > 0 || e.cls > 0);
-const w = window.open("", "_blank", "width=900,height=700");
-w.document.write(`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"/><title>Informe Mensual ${monthLabel}</title>
- <style>
-   *{box-sizing:border-box;margin:0;padding:0;}
-   body{font-family:Arial,sans-serif;font-size:12px;color:#1a1a1a;background:#fff;}
-   .header{background:#002060;color:#fff;padding:20px 32px;display:flex;align-items:center;gap:20px;}
-   .header-title{font-size:22px;font-weight:bold;letter-spacing:1px;}
-   .header-sub{font-size:13px;opacity:0.8;margin-top:4px;}
-   .body{padding:24px 32px;}
-   h2{font-size:14px;font-weight:bold;color:#002060;border-bottom:2px solid #002060;padding-bottom:4px;margin:18px 0 10px;}
-   .kpi-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:18px;}
-   .kpi{background:#e8f2fb;border:1px solid #c0d8ee;border-radius:8px;padding:12px;text-align:center;}
-   .kpi-val{font-size:22px;font-weight:bold;color:#002060;}
-   .kpi-lbl{font-size:10px;color:#555;margin-top:3px;}
-   table{width:100%;border-collapse:collapse;margin-bottom:12px;}
-   th{background:#e8f2fb;color:#002060;font-size:11px;text-align:left;padding:6px 10px;border:1px solid #c0d8ee;}
-   td{padding:6px 10px;border:1px solid #dde6f0;vertical-align:top;font-size:11px;}
-   .footer{margin-top:32px;font-size:10px;color:#999;border-top:1px solid #dde6f0;padding-top:12px;}
-   @media print{body{margin:0;}button{display:none;}}
- </style></head><body>
- <div class="header">
-   <div>
-     <div class="header-title">NAVIMAG FERRIES</div>
-     <div class="header-sub">Informe Mensual de Mantenimiento — ${esc(monthLabel)}</div>
-   </div>
-   <div style="margin-left:auto;text-align:right;font-size:11px;opacity:0.8;">Generado: ${new Date().toLocaleDateString("es-CL")}</div>
- </div>
- <div class="body">
-   <h2>Resumen del Mes</h2>
-   <div class="kpi-grid">
-     <div class="kpi"><div class="kpi-val">${monthWOs.length}</div><div class="kpi-lbl">Total OT</div></div>
-     <div class="kpi"><div class="kpi-val">${monthPrev.length}</div><div class="kpi-lbl">Preventivas</div></div>
-     <div class="kpi"><div class="kpi-val">${monthCorr.length}</div><div class="kpi-lbl">Correctivas</div></div>
-     <div class="kpi"><div class="kpi-val">${monthHrs.toFixed(1)}h</div><div class="kpi-lbl">Horas Totales</div></div>
-     <div class="kpi"><div class="kpi-val">${compRate}%</div><div class="kpi-lbl">Tasa Completación</div></div>
-   </div>
-   <h2>OT por Equipo</h2>
-   <table>
-     <tr><th>Código</th><th>Equipo</th><th>Total OT</th><th>Completadas</th><th>Horas</th><th>Disp. Est.</th></tr>
-     ${byEquip.filter(e=>e.ots>0).map(e=>`<tr><td><strong>${esc(e.code)}</strong></td><td>${esc(e.name)}</td><td>${e.ots}</td><td>${e.comp}</td><td>${e.hrs.toFixed(1)}h</td><td>${e.disp}${e.disp!=="N/D"?"%":""}</td></tr>`).join("")}
-     ${byEquip.filter(e=>e.ots>0).length===0?`<tr><td colspan="6" style="text-align:center;color:#9ca3af;">Sin OT este mes</td></tr>`:""}
-   </table>
-   <h2>Solicitudes de Reparación</h2>
-   <table>
-     <tr><th>Estado</th><th>Cantidad</th></tr>
-     ${["pendiente","aprobada","rechazada","completada"].map(s=>`<tr><td>${ST[s]?.label||s}</td><td>${monthReqs.filter(r=>r.status===s).length}</td></tr>`).join("")}
-     <tr><td><strong>Total</strong></td><td><strong>${monthReqs.length}</strong></td></tr>
-   </table>
-   <h2>Checklists Pre-operacionales</h2>
-   <table>
-     <tr><th>Equipo</th><th>Checklists</th><th>Con Observaciones</th></tr>
-     ${byEquip.filter(e=>e.cls>0).map(e=>{const issueCount=monthCL.filter(c=>c.equipId===e.id&&c.hasIssues).length;return`<tr><td>${esc(e.code)} — ${esc(e.name)}</td><td>${e.cls}</td><td>${issueCount}</td></tr>`;}).join("")}
-     ${byEquip.filter(e=>e.cls>0).length===0?`<tr><td colspan="3" style="text-align:center;color:#9ca3af;">Sin checklists este mes</td></tr>`:""}
-     <tr><td><strong>Total</strong></td><td><strong>${monthCL.length}</strong></td><td><strong>${monthCL.filter(c=>c.hasIssues).length}</strong></td></tr>
-   </table>
-   <div class="footer">Informe generado automáticamente por MANTEK ERP · Navimag Ferries · ${new Date().toLocaleString("es-CL")}</div>
- </div>
- </body></html>`);
-w.document.close();
-w.focus();
-w.print();
+  const {wos, requests, checklists} = data;
+  const allCL = checklists || [];
+  const monthWOs = wos.filter(w => w.createdAt?.startsWith(month));
+  const monthCompleted = monthWOs.filter(w => w.status === "completada");
+  const monthPrev = monthWOs.filter(w => w.type === "preventivo");
+  const monthCorr = monthWOs.filter(w => w.type === "correctivo");
+  const monthHrs = monthCompleted.reduce((s, w) => s + (w.actualHours || 0), 0);
+  const compRate = monthWOs.length > 0 ? ((monthCompleted.length / monthWOs.length) * 100).toFixed(1) : "N/D";
+  const monthReqs = requests.filter(r => r.requestedAt?.startsWith(month));
+  const monthCL = allCL.filter(c => c.createdAt?.startsWith(month));
+  const monthLabel = new Date(month + "-01").toLocaleDateString("es-CL", {month:"long",year:"numeric"});
+  const esc = s => String(s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  const byEquip = equipList.map(e => {
+    const ots = monthWOs.filter(w => w.equipId === e.id);
+    const comp = ots.filter(w => w.status === "completada");
+    const hrs = comp.reduce((s, w) => s + (w.actualHours || 0), 0);
+    const cls = monthCL.filter(c => c.equipId === e.id);
+    const disp = ots.length > 0 && hrs > 0 ? Math.max(0, 100 - (hrs / 730) * 100).toFixed(1) : "N/D";
+    return { ...e, ots: ots.length, comp: comp.length, hrs, cls: cls.length, disp };
+  }).filter(e => e.ots > 0 || e.cls > 0);
+  const w = window.open("", "_blank", "width=900,height=700");
+  w.document.write(`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"/><title>Informe Mensual ${monthLabel}</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;}
+    body{font-family:Arial,sans-serif;font-size:12px;color:#1a1a1a;background:#fff;}
+    .header{background:#002060;color:#fff;padding:20px 32px;display:flex;align-items:center;gap:20px;}
+    .header-title{font-size:22px;font-weight:bold;letter-spacing:1px;}
+    .header-sub{font-size:13px;opacity:0.8;margin-top:4px;}
+    .body{padding:24px 32px;}
+    h2{font-size:14px;font-weight:bold;color:#002060;border-bottom:2px solid #002060;padding-bottom:4px;margin:18px 0 10px;}
+    .kpi-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:18px;}
+    .kpi{background:#e8f2fb;border:1px solid #c0d8ee;border-radius:8px;padding:12px;text-align:center;}
+    .kpi-val{font-size:22px;font-weight:bold;color:#002060;}
+    .kpi-lbl{font-size:10px;color:#555;margin-top:3px;}
+    table{width:100%;border-collapse:collapse;margin-bottom:12px;}
+    th{background:#e8f2fb;color:#002060;font-size:11px;text-align:left;padding:6px 10px;border:1px solid #c0d8ee;}
+    td{padding:6px 10px;border:1px solid #dde6f0;vertical-align:top;font-size:11px;}
+    .footer{margin-top:32px;font-size:10px;color:#999;border-top:1px solid #dde6f0;padding-top:12px;}
+    @media print{body{margin:0;}button{display:none;}}
+  </style></head><body>
+  <div class="header">
+    <div>
+      <div class="header-title">NAVIMAG FERRIES</div>
+      <div class="header-sub">Informe Mensual de Mantenimiento — ${esc(monthLabel)}</div>
+    </div>
+    <div style="margin-left:auto;text-align:right;font-size:11px;opacity:0.8;">Generado: ${new Date().toLocaleDateString("es-CL")}</div>
+  </div>
+  <div class="body">
+    <h2>Resumen del Mes</h2>
+    <div class="kpi-grid">
+      <div class="kpi"><div class="kpi-val">${monthWOs.length}</div><div class="kpi-lbl">Total OT</div></div>
+      <div class="kpi"><div class="kpi-val">${monthPrev.length}</div><div class="kpi-lbl">Preventivas</div></div>
+      <div class="kpi"><div class="kpi-val">${monthCorr.length}</div><div class="kpi-lbl">Correctivas</div></div>
+      <div class="kpi"><div class="kpi-val">${monthHrs.toFixed(1)}h</div><div class="kpi-lbl">Horas Totales</div></div>
+      <div class="kpi"><div class="kpi-val">${compRate}%</div><div class="kpi-lbl">Tasa Completación</div></div>
+    </div>
+    <h2>OT por Equipo</h2>
+    <table>
+      <tr><th>Código</th><th>Equipo</th><th>Total OT</th><th>Completadas</th><th>Horas</th><th>Disp. Est.</th></tr>
+      ${byEquip.filter(e=>e.ots>0).map(e=>`<tr><td><strong>${esc(e.code)}</strong></td><td>${esc(e.name)}</td><td>${e.ots}</td><td>${e.comp}</td><td>${e.hrs.toFixed(1)}h</td><td>${e.disp}${e.disp!=="N/D"?"%":""}</td></tr>`).join("")}
+      ${byEquip.filter(e=>e.ots>0).length===0?`<tr><td colspan="6" style="text-align:center;color:#9ca3af;">Sin OT este mes</td></tr>`:""}
+    </table>
+    <h2>Solicitudes de Reparación</h2>
+    <table>
+      <tr><th>Estado</th><th>Cantidad</th></tr>
+      ${["pendiente","aprobada","rechazada","completada"].map(s=>`<tr><td>${ST[s]?.label||s}</td><td>${monthReqs.filter(r=>r.status===s).length}</td></tr>`).join("")}
+      <tr><td><strong>Total</strong></td><td><strong>${monthReqs.length}</strong></td></tr>
+    </table>
+    <h2>Checklists Pre-operacionales</h2>
+    <table>
+      <tr><th>Equipo</th><th>Checklists</th><th>Con Observaciones</th></tr>
+      ${byEquip.filter(e=>e.cls>0).map(e=>{const issueCount=monthCL.filter(c=>c.equipId===e.id&&c.hasIssues).length;return`<tr><td>${esc(e.code)} — ${esc(e.name)}</td><td>${e.cls}</td><td>${issueCount}</td></tr>`;}).join("")}
+      ${byEquip.filter(e=>e.cls>0).length===0?`<tr><td colspan="3" style="text-align:center;color:#9ca3af;">Sin checklists este mes</td></tr>`:""}
+      <tr><td><strong>Total</strong></td><td><strong>${monthCL.length}</strong></td><td><strong>${monthCL.filter(c=>c.hasIssues).length}</strong></td></tr>
+    </table>
+    <div class="footer">Informe generado automáticamente por MANTEK ERP · Navimag Ferries · ${new Date().toLocaleString("es-CL")}</div>
+  </div>
+  </body></html>`);
+  w.document.close();
+  w.focus();
+  w.print();
 }
 
 // ─── REPORTS ─────────────────────────────────────────────────────────────────
 function Reports({data}){
-const {wos,equip,users,requests,checklists}=data;
+  const {wos,equip}=data;
+  const {wos,equip,users,requests,checklists}=data;
 const completed=wos.filter(w=>w.status==="completada");const prev=wos.filter(w=>w.type==="preventivo");const corr=wos.filter(w=>w.type==="correctivo");
 const totalHrs=completed.reduce((s,w)=>s+(w.actualHours||0),0);
 const byEquip=equip.map(e=>({...e,totalWOs:wos.filter(w=>w.equipId===e.id).length,completedWOs:completed.filter(w=>w.equipId===e.id).length,hrs:completed.filter(w=>w.equipId===e.id).reduce((s,w)=>s+(w.actualHours||0),0)})).sort((a,b)=>b.totalWOs-a.totalWOs);
-const thisMonth=new Date().toISOString().slice(0,7);
-const exportOTs=()=>{
-const rows=completed.map(w=>{
-const eq=equip.find(e=>e.id===w.equipId);const mec=users.find(u=>u.id===w.assignedTo);
-return{"Código":w.code,"Tipo":w.type,"Equipo":eq?.code||"—","Mecánico":mec?.name||"—","Prioridad":w.priority,"Estado":w.status,"Fecha Creación":fmt(w.createdAt),"Fecha Programada":fmt(w.scheduledDate),"Horas Estimadas":w.estimatedHours||0,"Horas Reales":w.actualHours||0};
-});
-downloadCSV(`ot_completadas_${new Date().toISOString().slice(0,10)}.csv`,rows);
-};
+  const thisMonth=new Date().toISOString().slice(0,7);
+  const exportOTs=()=>{
+    const rows=completed.map(w=>{
+      const eq=equip.find(e=>e.id===w.equipId);const mec=users.find(u=>u.id===w.assignedTo);
+      return{"Código":w.code,"Tipo":w.type,"Equipo":eq?.code||"—","Mecánico":mec?.name||"—","Prioridad":w.priority,"Estado":w.status,"Fecha Creación":fmt(w.createdAt),"Fecha Programada":fmt(w.scheduledDate),"Horas Estimadas":w.estimatedHours||0,"Horas Reales":w.actualHours||0};
+    });
+    downloadCSV(`ot_completadas_${new Date().toISOString().slice(0,10)}.csv`,rows);
+  };
 return(
 <div className="p-6 space-y-6">
-<div className="flex items-center justify-between">
-<h1 className="text-gray-900 font-bold text-xl">Informes y Análisis</h1>
-<div className="flex gap-2">
-{completed.length>0&&<button onClick={exportOTs} className={btnSecondary} style={{borderColor:NV.blue,color:NV.blue,background:"white"}}><FileDown size={14}/>Exportar OT</button>}
-<button onClick={()=>printMonthlyReport(data,equip,users,thisMonth)} className={btnSecondary} style={{borderColor:NV.navy,color:NV.navy,background:"white"}}><Printer size={14}/>Informe Mensual</button>
-</div>
-</div>
+      <div><h1 className="text-gray-900 font-bold text-xl">Informes y Análisis</h1></div>
+      <div className="flex items-center justify-between">
+        <h1 className="text-gray-900 font-bold text-xl">Informes y Análisis</h1>
+        <div className="flex gap-2">
+          {completed.length>0&&<button onClick={exportOTs} className={btnSecondary} style={{borderColor:NV.blue,color:NV.blue,background:"white"}}><FileDown size={14}/>Exportar OT</button>}
+          <button onClick={()=>printMonthlyReport(data,equip,users,thisMonth)} className={btnSecondary} style={{borderColor:NV.navy,color:NV.navy,background:"white"}}><Printer size={14}/>Informe Mensual</button>
+        </div>
+      </div>
 <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
 <StatCard icon={CheckCircle}   label="OT Completadas" value={completed.length}         color="emerald"/>
 <StatCard icon={Wrench}        label="Preventivas"    value={prev.length}               color="blue"/>
@@ -2058,7 +2112,7 @@ const [editing,setEditing]=useState(false);
 const [setup,setSetup]=useState({operatorName:"",equipType:"tracto",equipId:"",horometro:"",fuel:"1/2"});
 const [items,setItems]=useState([]);
 const [step,setStep]=useState(1);
-const [showSig,setShowSig]=useState(false);
+  const [showSig,setShowSig]=useState(false);
 
 const tplEquip=type=>equip.filter(e=>CHECKLIST_TEMPLATES[type].equipTypes.includes(e.type));
 
@@ -2066,26 +2120,31 @@ const startForm=()=>{
 if(!setup.operatorName.trim()){alert("Ingresa el nombre del operador");return;}
 if(!setup.equipId||!setup.horometro)return;
 const tpl=CHECKLIST_TEMPLATES[setup.equipType];
-const flat=tpl.sections.flatMap(s=>s.items.map(it=>({...it,sectionLabel:s.label,status:null,note:"",photos:[]})));
+    const flat=tpl.sections.flatMap(s=>s.items.map(it=>({...it,sectionLabel:s.label,status:null,note:""})));
+    const flat=tpl.sections.flatMap(s=>s.items.map(it=>({...it,sectionLabel:s.label,status:null,note:"",photos:[]})));
 setItems(flat);setStep(2);
 };
 
 const setItemStatus=(id,status)=>setItems(prev=>prev.map(it=>it.id===id?{...it,status}:it));
 const setItemNote=(id,note)=>setItems(prev=>prev.map(it=>it.id===id?{...it,note}:it));
-const setItemPhotos=(id,photos)=>setItems(prev=>prev.map(it=>it.id===id?{...it,photos}:it));
+  const setItemPhotos=(id,photos)=>setItems(prev=>prev.map(it=>it.id===id?{...it,photos}:it));
 
 const issueItems=items.filter(it=>it.status==="malo"||it.status==="regular");
 const pendingCount=items.filter(it=>it.status===null).length;
 
-const doSubmit=(signature)=>{
+  const submit=()=>{
+    if(pendingCount>0){alert(`Faltan ${pendingCount} ítem${pendingCount!==1?"s":""} sin evaluar`);return;}
+  const doSubmit=(signature)=>{
 const eq=equip.find(e=>e.id===setup.equipId);
 const newCL={
 id:uid(),type:setup.equipType,equipId:setup.equipId,operatorId:user.id,
 operatorName:setup.operatorName,
 horometro:parseFloat(setup.horometro)||0,fuel:setup.fuel,
-items:items.map(it=>({id:it.id,name:it.name,sectionLabel:it.sectionLabel,status:it.status,note:it.note,photos:it.photos||[]})),
-createdAt:new Date().toISOString(),hasIssues:issueItems.length>0,issueCount:issueItems.length,
-operatorSignature:signature||null
+      items:items.map(it=>({id:it.id,name:it.name,sectionLabel:it.sectionLabel,status:it.status,note:it.note})),
+      createdAt:new Date().toISOString(),hasIssues:issueItems.length>0,issueCount:issueItems.length
+      items:items.map(it=>({id:it.id,name:it.name,sectionLabel:it.sectionLabel,status:it.status,note:it.note,photos:it.photos||[]})),
+      createdAt:new Date().toISOString(),hasIssues:issueItems.length>0,issueCount:issueItems.length,
+      operatorSignature:signature||null
 };
 const updC=[...allCL,newCL];
 setData(d=>({...d,checklists:updC}));saveData("checklists",updC);
@@ -2105,55 +2164,58 @@ requestedBy:user.id,
 requestedAt:now,
 source:"checklist",
 checklistId:newCL.id,
-checklistItemId:it.id,
-photos:it.photos||[]
+        checklistItemId:it.id
+        checklistItemId:it.id,
+        photos:it.photos||[]
 }));
 const updR=[...(requests||[]),...newSolicitudes];
 setData(d=>({...d,requests:updR}));saveData("requests",updR);
 }
-setEditing(false);setStep(1);setItems([]);setShowSig(false);
+    setEditing(false);setStep(1);setItems([]);
+    setEditing(false);setStep(1);setItems([]);setShowSig(false);
 setSetup({operatorName:"",equipType:"tracto",equipId:"",horometro:"",fuel:"1/2"});
 alert(`✅ Checklist guardado${issueItems.length>0?` · ${issueItems.length} solicitud(es) independientes enviadas a Operaciones.`:". Sin observaciones."}`);
 };
 
-const submit=()=>{
-if(pendingCount>0){alert(`Faltan ${pendingCount} ítem${pendingCount!==1?"s":""} sin evaluar`);return;}
-setShowSig(true);
-};
+  const submit=()=>{
+    if(pendingCount>0){alert(`Faltan ${pendingCount} ítem${pendingCount!==1?"s":""} sin evaluar`);return;}
+    setShowSig(true);
+  };
 
-const exportCL=()=>{
-const rows=mine.map(c=>{
-const eq=equip.find(e=>e.id===c.equipId);
-const op=users.find(u=>u.id===c.operatorId);
-return{"Equipo":eq?.code||"—","Tipo":CHECKLIST_TEMPLATES[c.type]?.label||c.type,"Operador":c.operatorName||op?.name||"—","Horómetro":c.horometro,"Combustible":c.fuel,"Fecha":fmtDT(c.createdAt),"Observaciones":c.issueCount||0};
-});
-downloadCSV(`checklists_${new Date().toISOString().slice(0,10)}.csv`,rows);
-};
+  const exportCL=()=>{
+    const rows=mine.map(c=>{
+      const eq=equip.find(e=>e.id===c.equipId);
+      const op=users.find(u=>u.id===c.operatorId);
+      return{"Equipo":eq?.code||"—","Tipo":CHECKLIST_TEMPLATES[c.type]?.label||c.type,"Operador":c.operatorName||op?.name||"—","Horómetro":c.horometro,"Combustible":c.fuel,"Fecha":fmtDT(c.createdAt),"Observaciones":c.issueCount||0};
+    });
+    downloadCSV(`checklists_${new Date().toISOString().slice(0,10)}.csv`,rows);
+  };
 
 const mine=(user.role==="supervisor"||user.role==="operaciones")?allCL:[...allCL].filter(c=>c.operatorId===user.id);
 
-if(showSig){
-return(
-<div className="p-6 max-w-lg">
-<div className="flex items-center gap-3 mb-6">
-<div><h1 className="text-gray-900 font-bold text-xl">Firma del Operador</h1><p className="text-gray-500 text-sm">Confirma la inspección con tu firma (opcional)</p></div>
-</div>
-<div className={`${card} p-5`}>
-<SignaturePad onSave={sig=>doSubmit(sig)} onCancel={()=>doSubmit(null)}/>
-</div>
-</div>
-);
-}
+  if(showSig){
+    return(
+      <div className="p-6 max-w-lg">
+        <div className="flex items-center gap-3 mb-6">
+          <div><h1 className="text-gray-900 font-bold text-xl">Firma del Operador</h1><p className="text-gray-500 text-sm">Confirma la inspección con tu firma (opcional)</p></div>
+        </div>
+        <div className={`${card} p-5`}>
+          <SignaturePad onSave={sig=>doSubmit(sig)} onCancel={()=>doSubmit(null)}/>
+        </div>
+      </div>
+    );
+  }
 
 if(!editing){
 return(
 <div className="p-6">
 <div className="flex items-center justify-between mb-5">
 <div><h1 className="text-gray-900 font-bold text-xl">Checklist Pre-Operacional</h1><p className="text-gray-500 text-sm">Inspección diaria de equipos antes de operar</p></div>
-<div className="flex gap-2">
-{mine.length>0&&<button onClick={exportCL} className={btnSecondary} style={{borderColor:NV.blue,color:NV.blue,background:"white"}}><FileDown size={14}/>Exportar</button>}
-{user.role==="operador"&&<button onClick={()=>setEditing(true)} className={btnPrimary} style={{background:NV.blue}}><Plus size={15}/>Nuevo Checklist</button>}
-</div>
+          {user.role==="operador"&&<button onClick={()=>setEditing(true)} className={btnPrimary} style={{background:NV.blue}}><Plus size={15}/>Nuevo Checklist</button>}
+          <div className="flex gap-2">
+            {mine.length>0&&<button onClick={exportCL} className={btnSecondary} style={{borderColor:NV.blue,color:NV.blue,background:"white"}}><FileDown size={14}/>Exportar</button>}
+            {user.role==="operador"&&<button onClick={()=>setEditing(true)} className={btnPrimary} style={{background:NV.blue}}><Plus size={15}/>Nuevo Checklist</button>}
+          </div>
 </div>
 <div className="grid grid-cols-3 gap-3 mb-5">
 {[["Total mes",mine.filter(c=>c.createdAt?.startsWith(new Date().toISOString().slice(0,7))).length,"text-gray-800"],["Sin obs.",mine.filter(c=>c.createdAt?.startsWith(new Date().toISOString().slice(0,7))&&!c.hasIssues).length,"text-emerald-600"],["Con obs.",mine.filter(c=>c.createdAt?.startsWith(new Date().toISOString().slice(0,7))&&c.hasIssues).length,"text-amber-600"]].map(([l,v,cl])=>(
@@ -2177,13 +2239,14 @@ return(
 <span className={`px-2 py-0.5 rounded-full border text-xs font-bold ${c.hasIssues?"text-amber-700 bg-amber-50 border-amber-200":"text-emerald-700 bg-emerald-50 border-emerald-200"}`}>
 {c.hasIssues?`${c.issueCount} observación(es)`:"Sin observaciones"}
 </span>
-{c.operatorSignature&&<span className="px-2 py-0.5 rounded-full border text-xs font-semibold text-blue-700 bg-blue-50 border-blue-200">Firmado</span>}
+                    {c.operatorSignature&&<span className="px-2 py-0.5 rounded-full border text-xs font-semibold text-blue-700 bg-blue-50 border-blue-200">Firmado</span>}
 </div>
 <p className="text-gray-500 text-xs mt-1">{CHECKLIST_TEMPLATES[c.type]?.label||c.type} · {c.horometro.toLocaleString()}h · Comb: {c.fuel}</p>
 <p className="text-gray-400 text-xs">{fmtDT(c.createdAt)}{op?` · ${op.name}`:""}{ c.operatorName&&c.operatorName!==op?.name?` · Op: ${c.operatorName}`:""}</p>
 {c.hasIssues&&<div className="mt-2 space-y-0.5">
 {c.items.filter(it=>it.status!=="bueno").map((it,i)=>(
-<p key={i} className={`text-xs ${it.status==="malo"?"text-red-600":"text-amber-600"}`}>• {it.sectionLabel}: {it.name}{it.note?` — ${it.note}`:""}{it.photos?.length>0?` 📷${it.photos.length}`:""}</p>
+                      <p key={i} className={`text-xs ${it.status==="malo"?"text-red-600":"text-amber-600"}`}>• {it.sectionLabel}: {it.name}{it.note?` — ${it.note}`:""}</p>
+                      <p key={i} className={`text-xs ${it.status==="malo"?"text-red-600":"text-amber-600"}`}>• {it.sectionLabel}: {it.name}{it.note?` — ${it.note}`:""}{it.photos?.length>0?` 📷${it.photos.length}`:""}</p>
 ))}
 </div>}
 </div>
@@ -2258,8 +2321,10 @@ Iniciar Inspección →
 
 const tpl=CHECKLIST_TEMPLATES[setup.equipType];
 const eq=equip.find(e=>e.id===setup.equipId);
-const completedCount=items.filter(it=>it.status!==null).length;
-const pct=Math.round((completedCount/items.length)*100);
+  const completed=items.filter(it=>it.status!==null).length;
+  const pct=Math.round((completed/items.length)*100);
+  const completedCount=items.filter(it=>it.status!==null).length;
+  const pct=Math.round((completedCount/items.length)*100);
 return(
 <div className="p-6 max-w-2xl pb-32">
 <div className="flex items-center gap-3 mb-3">
@@ -2268,7 +2333,8 @@ return(
 </button>
 <div className="flex-1">
 <h1 className="text-gray-900 font-bold text-lg">{tpl.label} — {eq?.code}</h1>
-<p className="text-gray-500 text-xs">{completedCount}/{items.length} ítems · Horómetro: {setup.horometro}h</p>
+          <p className="text-gray-500 text-xs">{completed}/{items.length} ítems · Horómetro: {setup.horometro}h</p>
+          <p className="text-gray-500 text-xs">{completedCount}/{items.length} ítems · Horómetro: {setup.horometro}h</p>
 </div>
 <span className="text-sm font-bold" style={{color:pct===100?"#16a34a":NV.blue}}>{pct}%</span>
 </div>
@@ -2304,9 +2370,10 @@ title={s.charAt(0).toUpperCase()+s.slice(1)}>{lbl}</button>
 </div>
 </div>
 {(it.status==="regular"||it.status==="malo")&&(
-<div className="mt-2 space-y-2">
+                        <div className="mt-2">
+                        <div className="mt-2 space-y-2">
 <input value={it.note} onChange={e=>setItemNote(it.id,e.target.value)} className={iCls+" text-xs py-1.5"} placeholder="Nota / descripción del problema (opcional)..."/>
-<PhotoPicker photos={it.photos||[]} onChange={p=>setItemPhotos(it.id,p)} max={2}/>
+                          <PhotoPicker photos={it.photos||[]} onChange={p=>setItemPhotos(it.id,p)} max={2}/>
 </div>
 )}
 </div>
@@ -2412,7 +2479,8 @@ indicadores:   <Indicadores   data={data}/>,
 requests:      <Requests      user={user} data={data} setData={setData}/>,
 notifications: <Notifications user={user} data={data}/>,
 checklist:     <Checklist     user={user} data={data} setData={setData}/>,
-reports:       <Reports       user={user} data={data}/>,
+    reports:       <Reports       data={data}/>,
+    reports:       <Reports       user={user} data={data}/>,
 deviaciones:   <DeviationReports user={user} data={data} setData={setData}/>,
 users:         <UsersPage     data={data} setData={setData}/>,
 };
