@@ -1,109 +1,149 @@
 import { useState, useEffect, useRef } from "react";
 import {
-  AlertTriangle, CheckCircle, Clock, Wrench, BarChart2, Package,
-  Users, FileText, Bell, LogOut, ChevronRight, Plus, X,
-  Calendar, Zap, Shield, Search, ClipboardList, AlertCircle,
-  Check, RefreshCw, Activity, ArrowRight, Edit2, Trash2,
-  TrendingUp, Layers, Info, Wifi, WifiOff, Gauge
+  AlertTriangle, CheckCircle, Clock, Wrench, BarChart2, Users, FileText,
+  Bell, LogOut, Plus, X, Calendar, Shield, Search, ClipboardList,
+  AlertCircle, Check, Edit2, Trash2, TrendingUp, Wifi, WifiOff, Gauge,
+  Key, Printer, Filter, Eye, FileDown, Ship, Anchor, Award, MapPin,
+  ChevronRight, ChevronDown, Package, Zap, Activity
 } from "lucide-react";
-import { db } from "./firebase.js";
-import { doc, setDoc, onSnapshot, getDoc } from "firebase/firestore";
+import { db, auth } from "./firebase.js";
+import { signInWithEmailAndPassword, signOut, onAuthStateChanged, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from "firebase/auth";
+import { doc, setDoc, onSnapshot, getDoc, collection } from "firebase/firestore";
 
-// ─── USUARIOS ─────────────────────────────────────────────────────────────────
-const SEED_USERS = [
-  { id:"u1", name:"Christopher Silva", role:"supervisor",  email:"csilva@navimag.cl",  password:"Navimag2026", avatar:"CS" },
-  { id:"u2", name:"José Muñoz",        role:"supervisor",  email:"jmunoz@navimag.cl",  password:"Navimag2026", avatar:"JM" },
-  { id:"u3", name:"Felipe Stein",      role:"operaciones", email:"fstein@navimag.cl",  password:"Navimag2026", avatar:"FS" },
-  { id:"u4", name:"Jorge Soto",        role:"operaciones", email:"jsoto@navimag.cl",   password:"Navimag2026", avatar:"JS" },
+// ─── COLECCIÓN ────────────────────────────────────────────────────────────────
+const COLL = "mantek_maritime_v1";
+
+// ─── SEED DATA ────────────────────────────────────────────────────────────────
+const SEED_VESSELS = [
+  { id:"v1", imo:"9042345", name:"MV Puerto Eden",    flag:"CL", type:"Ferry / RoRo",  class_soc:"Bureau Veritas", gt:8765, dwt:2400, built:1995, status:"at_sea",  lastPort:"Puerto Montt",   nextPort:"Puerto Natales", mainEngine:"MAN B&W 8L28/32A", engineHours:42500 },
+  { id:"v2", imo:"8711234", name:"MV Evangelistas",   flag:"CL", type:"RoRo Cargo",    class_soc:"Bureau Veritas", gt:6234, dwt:4100, built:1990, status:"in_port", lastPort:"Puerto Montt",   nextPort:"—",              mainEngine:"Wärtsilä 9L32",    engineHours:67800 },
+  { id:"v3", imo:"9185421", name:"MV Patagonia",      flag:"CL", type:"Ferry / Pasaje", class_soc:"DNV GL",        gt:4120, dwt:850,  built:2001, status:"in_port", lastPort:"Natales",        nextPort:"Puerto Montt",   mainEngine:"Caterpillar 3612", engineHours:31200 },
 ];
 
-// ─── EQUIPOS NAVIMAG ──────────────────────────────────────────────────────────
 const SEED_EQUIPMENT = [
-  { id:"mol1",   code:"MOL-01",  name:"Mol 1",       type:"Tracto Terminal",  location:"Patio Terminal", criticality:"A", status:"operativo", lastMaint:"", nextMaint:"", hours:0 },
-  { id:"mol2",   code:"MOL-02",  name:"Mol 2",       type:"Tracto Terminal",  location:"Patio Terminal", criticality:"A", status:"operativo", lastMaint:"", nextMaint:"", hours:0 },
-  { id:"mol3",   code:"MOL-03",  name:"Mol 3",       type:"Tracto Terminal",  location:"Patio Terminal", criticality:"A", status:"operativo", lastMaint:"", nextMaint:"", hours:0 },
-  { id:"mol4",   code:"MOL-04",  name:"Mol 4",       type:"Tracto Terminal",  location:"Patio Terminal", criticality:"A", status:"operativo", lastMaint:"", nextMaint:"", hours:0 },
-  { id:"kal69",  code:"KAL-69",  name:"Kalmar 69",   type:"Tracto Terminal",  location:"Patio Terminal", criticality:"A", status:"operativo", lastMaint:"", nextMaint:"", hours:0 },
-  { id:"kal71",  code:"KAL-71",  name:"Kalmar 71",   type:"Tracto Terminal",  location:"Patio Terminal", criticality:"A", status:"operativo", lastMaint:"", nextMaint:"", hours:0 },
-  { id:"kal72",  code:"KAL-72",  name:"Kalmar 72",   type:"Tracto Terminal",  location:"Patio Terminal", criticality:"A", status:"operativo", lastMaint:"", nextMaint:"", hours:0 },
-  { id:"kal73",  code:"KAL-73",  name:"Kalmar 73",   type:"Tracto Terminal",  location:"Patio Terminal", criticality:"A", status:"operativo", lastMaint:"", nextMaint:"", hours:0 },
-  { id:"kal75",  code:"KAL-75",  name:"Kalmar 75",   type:"Tracto Terminal",  location:"Patio Terminal", criticality:"A", status:"operativo", lastMaint:"", nextMaint:"", hours:0 },
-  { id:"kal76",  code:"KAL-76",  name:"Kalmar 76",   type:"Tracto Terminal",  location:"Patio Terminal", criticality:"A", status:"operativo", lastMaint:"", nextMaint:"", hours:0 },
-  { id:"ter648", code:"TER-648", name:"Terberg 648", type:"Tracto Portuario", location:"Muelle",         criticality:"A", status:"operativo", lastMaint:"", nextMaint:"", hours:0 },
-  { id:"ter659", code:"TER-659", name:"Terberg 659", type:"Tracto Portuario", location:"Muelle",         criticality:"A", status:"operativo", lastMaint:"", nextMaint:"", hours:0 },
-  { id:"ter779", code:"TER-779", name:"Terberg 779", type:"Tracto Portuario", location:"Muelle",         criticality:"A", status:"operativo", lastMaint:"", nextMaint:"", hours:0 },
-  { id:"ter789", code:"TER-789", name:"Terberg 789", type:"Tracto Portuario", location:"Muelle",         criticality:"A", status:"operativo", lastMaint:"", nextMaint:"", hours:0 },
-  { id:"ter73",  code:"TER-73",  name:"Terberg 73",  type:"Tracto Portuario", location:"Muelle",         criticality:"A", status:"operativo", lastMaint:"", nextMaint:"", hours:0 },
-  { id:"ter74",  code:"TER-74",  name:"Terberg 74",  type:"Tracto Portuario", location:"Muelle",         criticality:"A", status:"operativo", lastMaint:"", nextMaint:"", hours:0 },
-  { id:"lif1",   code:"LIF-01",  name:"Liftec 1",    type:"Montacargas",      location:"Bodega",         criticality:"B", status:"operativo", lastMaint:"", nextMaint:"", hours:0 },
-  { id:"lif2",   code:"LIF-02",  name:"Liftec 2",    type:"Montacargas",      location:"Bodega",         criticality:"B", status:"operativo", lastMaint:"", nextMaint:"", hours:0 },
-  { id:"lif3",   code:"LIF-03",  name:"Liftec 3",    type:"Montacargas",      location:"Bodega",         criticality:"B", status:"operativo", lastMaint:"", nextMaint:"", hours:0 },
-  { id:"gru39",  code:"GRU-39",  name:"Grúa 39",     type:"Grúa Portuaria",   location:"Muelle",         criticality:"A", status:"operativo", lastMaint:"", nextMaint:"", hours:0 },
-  { id:"gru40",  code:"GRU-40",  name:"Grúa 40",     type:"Grúa Portuaria",   location:"Muelle",         criticality:"A", status:"operativo", lastMaint:"", nextMaint:"", hours:0 },
-  { id:"gru41",  code:"GRU-41",  name:"Grúa 41",     type:"Grúa Portuaria",   location:"Muelle",         criticality:"A", status:"operativo", lastMaint:"", nextMaint:"", hours:0 },
+  { id:"eq1",  vesselId:"v1", code:"PE-ME-01",  name:"Motor Principal",           category:"Motor Principal",         maker:"MAN B&W",    model:"8L28/32A", serialNo:"MAN-12345", year:1995, status:"operativo",     hours:42500, criticality:"A" },
+  { id:"eq2",  vesselId:"v1", code:"PE-DG1-01", name:"Generador Diesel #1",       category:"Motor Auxiliar / Generador", maker:"Wärtsilä", model:"6R22",     serialNo:"WAR-67890", year:1995, status:"operativo",     hours:38200, criticality:"A" },
+  { id:"eq3",  vesselId:"v1", code:"PE-DG2-01", name:"Generador Diesel #2",       category:"Motor Auxiliar / Generador", maker:"Wärtsilä", model:"6R22",     serialNo:"WAR-67891", year:1995, status:"mantenimiento", hours:35600, criticality:"A" },
+  { id:"eq4",  vesselId:"v1", code:"PE-SG-01",  name:"Sistema de Dirección",      category:"Sistema de Dirección",    maker:"Rolls-Royce",model:"R5/800",   serialNo:"RR-11111",  year:1995, status:"operativo",     hours:42500, criticality:"A" },
+  { id:"eq5",  vesselId:"v1", code:"PE-SEP-01", name:"Separador de Sentinas",     category:"Separadores / MARPOL",    maker:"Facet",      model:"MAS-20",   serialNo:"FCT-88888", year:2010, status:"operativo",     hours:18000, criticality:"A" },
+  { id:"eq6",  vesselId:"v2", code:"EV-ME-01",  name:"Motor Principal",           category:"Motor Principal",         maker:"Wärtsilä",   model:"9L32",     serialNo:"WAR-99999", year:1990, status:"operativo",     hours:67800, criticality:"A" },
+  { id:"eq7",  vesselId:"v2", code:"EV-DG1-01", name:"Generador Diesel #1",       category:"Motor Auxiliar / Generador", maker:"MAN",      model:"D2842LE",  serialNo:"MAN-22222", year:1990, status:"operativo",     hours:58000, criticality:"A" },
+  { id:"eq8",  vesselId:"v2", code:"EV-HE-01",  name:"Hélice de Proa (Bow Thr.)", category:"Propulsión / Hélice",     maker:"Rolls-Royce",model:"TT2100",   serialNo:"RR-33333",  year:1990, status:"operativo",     hours:22000, criticality:"B" },
+  { id:"eq9",  vesselId:"v3", code:"PT-ME-01",  name:"Motor Principal Patagonia", category:"Motor Principal",         maker:"Caterpillar",model:"3612",     serialNo:"CAT-55555", year:2001, status:"operativo",     hours:31200, criticality:"A" },
+  { id:"eq10", vesselId:"v3", code:"PT-DG1-01", name:"Generador Diesel #1",       category:"Motor Auxiliar / Generador", maker:"Caterpillar",model:"C18",   serialNo:"CAT-66666", year:2001, status:"falla",         hours:29800, criticality:"A" },
 ];
 
-const SEED_PM_PLANS    = [];
-const SEED_REQUESTS    = [];
+const SEED_CERTIFICATES = [
+  { id:"cert1",  vesselId:"v1", type:"Safety Equipment Certificate",         number:"CL-SEC-2024-001",  issueDate:"2024-01-15", expiryDate:"2027-01-14", issuedBy:"Bureau Veritas",  notes:"" },
+  { id:"cert2",  vesselId:"v1", type:"IOPP Certificate (MARPOL Annex I)",    number:"CL-IOPP-2024-001", issueDate:"2024-03-10", expiryDate:"2026-06-25", issuedBy:"Armada de Chile", notes:"Renewal survey due Q2 2026" },
+  { id:"cert3",  vesselId:"v1", type:"ISM SMC",                              number:"ISM-SMC-2023-001", issueDate:"2023-07-01", expiryDate:"2028-06-30", issuedBy:"Bureau Veritas",  notes:"" },
+  { id:"cert4",  vesselId:"v1", type:"Safety Construction Certificate",      number:"CL-SCC-2023-001",  issueDate:"2023-09-01", expiryDate:"2028-08-31", issuedBy:"Bureau Veritas",  notes:"" },
+  { id:"cert5",  vesselId:"v1", type:"Load Line Certificate",                number:"CL-LL-2023-001",   issueDate:"2023-09-01", expiryDate:"2028-08-31", issuedBy:"Bureau Veritas",  notes:"" },
+  { id:"cert6",  vesselId:"v1", type:"ISPS Ship Security Certificate",       number:"ISPS-2023-001",    issueDate:"2023-07-01", expiryDate:"2028-06-30", issuedBy:"Armada de Chile", notes:"" },
+  { id:"cert7",  vesselId:"v2", type:"Class Certificate - Machinery",        number:"BV-MCH-2022-015",  issueDate:"2022-09-01", expiryDate:"2027-08-31", issuedBy:"Bureau Veritas",  notes:"" },
+  { id:"cert8",  vesselId:"v2", type:"Safety Construction Certificate",      number:"CL-SCC-2023-002",  issueDate:"2023-01-20", expiryDate:"2026-06-10", issuedBy:"Bureau Veritas",  notes:"Intermediate survey required" },
+  { id:"cert9",  vesselId:"v2", type:"IOPP Certificate (MARPOL Annex I)",    number:"CL-IOPP-2023-002", issueDate:"2023-05-01", expiryDate:"2028-04-30", issuedBy:"Armada de Chile", notes:"" },
+  { id:"cert10", vesselId:"v2", type:"ISM SMC",                              number:"ISM-SMC-2022-002", issueDate:"2022-09-01", expiryDate:"2027-08-31", issuedBy:"Bureau Veritas",  notes:"" },
+  { id:"cert11", vesselId:"v3", type:"Safety Equipment Certificate",         number:"CL-SEC-2025-003",  issueDate:"2025-02-01", expiryDate:"2026-05-20", issuedBy:"DNV GL",          notes:"Annual survey overdue" },
+  { id:"cert12", vesselId:"v3", type:"Class Certificate - Hull",             number:"DNV-HLL-2022-003", issueDate:"2022-06-01", expiryDate:"2027-05-31", issuedBy:"DNV GL",          notes:"" },
+];
+
 const SEED_WORK_ORDERS = [];
+const SEED_PLANS = [];
+const SEED_USERS_PROFILE = [
+  { uid:"placeholder", name:"Fleet Manager", role:"fleet_manager",  email:"admin@navimag.cl",  avatar:"FM" },
+];
 
-// ─── COLECCIÓN NUEVA (fuerza reinicio de datos en Firebase) ──────────────────
-const COLL = "mantek_v2";
-
+// ─── FIREBASE HELPERS ─────────────────────────────────────────────────────────
 async function saveData(key, arr) {
-  try { await setDoc(doc(db,COLL,key),{data:arr}); } catch(e) { console.error("Save:",e); }
+  try { await setDoc(doc(db,COLL,key),{data:arr}); } catch(e){ console.error("Save:",e); }
 }
 async function initIfEmpty(key, seed) {
-  try { const s=await getDoc(doc(db,COLL,key)); if(!s.exists()) await setDoc(doc(db,COLL,key),{data:seed}); } catch(e) { console.error("Init:",e); }
+  try { const s=await getDoc(doc(db,COLL,key)); if(!s.exists()) await setDoc(doc(db,COLL,key),{data:seed}); } catch(e){ console.error("Init:",e); }
 }
 
-// ─── UTILS ───────────────────────────────────────────────────────────────────
-const fmt   = d => d ? new Date(d).toLocaleDateString("es-CL",{day:"2-digit",month:"2-digit",year:"numeric"}) : "—";
-const fmtDT = d => d ? new Date(d).toLocaleString("es-CL",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"}) : "—";
-const uid = () => Math.random().toString(36).slice(2,10);
+// ─── UTILS ────────────────────────────────────────────────────────────────────
+const fmt    = d => d ? new Date(d).toLocaleDateString("es-CL",{day:"2-digit",month:"2-digit",year:"numeric"}) : "—";
+const fmtDT  = d => d ? new Date(d).toLocaleString("es-CL",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"}) : "—";
+const uid    = () => Math.random().toString(36).slice(2,10);
 const nextOTCode = wos => `OT-${new Date().getFullYear()}-${String(wos.length+1).padStart(3,"0")}`;
-const CRIT_LABEL = { A:"Crítico", B:"Importante", C:"Rutinario" };
 
-// ─── NAVIMAG COLORS ───────────────────────────────────────────────────────────
-// Primary navy: #002060  Secondary blue: #0055A4  Accent: #00AEEF
-const NV = {
-  navy:    "#002060",
-  blue:    "#0055A4",
-  cyan:    "#00AEEF",
-  navyMid: "#003087",
-  light:   "#E8F2FB",
+const certStatus = (expiryDate) => {
+  if (!expiryDate) return { s:"unknown", label:"Sin fecha", cls:"text-gray-500 bg-gray-50 border-gray-200", days: null };
+  const d = Math.floor((new Date(expiryDate) - new Date()) / 86400000);
+  if (d < 0)   return { s:"expired",  label:"Vencido",        cls:"text-red-700   bg-red-50    border-red-200",    days:d };
+  if (d <= 30) return { s:"critical", label:`${d}d restantes`, cls:"text-red-700   bg-red-50    border-red-200",    days:d };
+  if (d <= 90) return { s:"expiring", label:`${d}d restantes`, cls:"text-amber-700 bg-amber-50  border-amber-200",  days:d };
+  const months = Math.floor(d/30); const rem = d%30;
+  return { s:"valid", label:`${months>0?months+"m ":""}${rem}d`, cls:"text-emerald-700 bg-emerald-50 border-emerald-200", days:d };
 };
 
-// ─── THEME ───────────────────────────────────────────────────────────────────
-const ST = {
-  pendiente:     {label:"Pendiente",     cls:"text-gray-600    bg-gray-100    border-gray-300"   },
-  asignada:      {label:"Asignada",      cls:"text-blue-700    bg-blue-50     border-blue-200"   },
-  en_proceso:    {label:"En Proceso",    cls:"text-amber-700   bg-amber-50    border-amber-200"  },
-  completada:    {label:"Completada",    cls:"text-emerald-700 bg-emerald-50  border-emerald-200"},
-  cancelada:     {label:"Cancelada",     cls:"text-red-700     bg-red-50      border-red-200"    },
-  aprobada:      {label:"Aprobada",      cls:"text-emerald-700 bg-emerald-50  border-emerald-200"},
-  rechazada:     {label:"Rechazada",     cls:"text-red-700     bg-red-50      border-red-200"    },
-  operativo:     {label:"Operativo",     cls:"text-emerald-700 bg-emerald-50  border-emerald-200"},
-  mantenimiento: {label:"Mantenimiento", cls:"text-amber-700   bg-amber-50    border-amber-200"  },
-  falla:         {label:"Falla",         cls:"text-red-700     bg-red-50      border-red-200"    },
+const VESSEL_STATUS = {
+  at_sea:  { label:"En ruta",   cls:"text-blue-700   bg-blue-50   border-blue-200"   },
+  in_port: { label:"En puerto", cls:"text-emerald-700 bg-emerald-50 border-emerald-200" },
+  drydock: { label:"Dique seco",cls:"text-amber-700   bg-amber-50  border-amber-200"  },
+  laid_up: { label:"Fondeado",  cls:"text-gray-600   bg-gray-100  border-gray-300"   },
+};
+const EQUIP_STATUS = {
+  operativo:     { label:"Operativo",     cls:"text-emerald-700 bg-emerald-50 border-emerald-200" },
+  mantenimiento: { label:"Mantenimiento", cls:"text-amber-700   bg-amber-50  border-amber-200"  },
+  falla:         { label:"Falla",         cls:"text-red-700     bg-red-50    border-red-200"    },
 };
 const CRIT_CLS={A:"text-red-700 bg-red-50 border-red-200",B:"text-amber-700 bg-amber-50 border-amber-200",C:"text-emerald-700 bg-emerald-50 border-emerald-200"};
-const PRI_CLS ={alta:"text-red-700 bg-red-50 border-red-200",media:"text-amber-700 bg-amber-50 border-amber-200",baja:"text-emerald-700 bg-emerald-50 border-emerald-200"};
-
-const Badge=({s,label})=>{const c=ST[s]||{label:s,cls:"text-gray-600 bg-gray-100 border-gray-300"};return<span className={`inline-flex px-2 py-0.5 rounded-full border text-xs font-semibold ${c.cls}`}>{label||c.label}</span>;};
-
-const ROLE_CFG={
-  supervisor: {label:"Supervisor", color:"text-cyan-300",  bg:"bg-cyan-900/40",   icon:Shield,   nav:["dashboard","workorders","equipment","plans","indicadores","requests","reports","users"]},
-  mecanico:   {label:"Mecánico",   color:"text-amber-300", bg:"bg-amber-900/30",  icon:Wrench,   nav:["dashboard","workorders","reports"]},
-  operaciones:{label:"Operaciones",color:"text-sky-300",   bg:"bg-sky-900/30",    icon:Activity, nav:["dashboard","requests","notifications"]},
+const WO_STATUS = {
+  pendiente:  { label:"Pendiente",  cls:"text-gray-600    bg-gray-100   border-gray-300"   },
+  asignada:   { label:"Asignada",   cls:"text-blue-700    bg-blue-50    border-blue-200"   },
+  en_proceso: { label:"En Proceso", cls:"text-amber-700   bg-amber-50   border-amber-200"  },
+  completada: { label:"Completada", cls:"text-emerald-700 bg-emerald-50 border-emerald-200"},
 };
 
-const iCls="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 text-sm focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100";
-const sCls="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 text-sm focus:outline-none focus:border-blue-400";
-const card="bg-white border border-gray-200 rounded-xl shadow-sm";
-const btnPrimary="flex items-center gap-2 text-white font-semibold px-4 py-2 rounded-lg text-sm transition shadow-sm hover:opacity-90";
+const EQUIP_CATEGORIES = [
+  "Motor Principal","Motor Auxiliar / Generador","Sistema de Dirección",
+  "Bombas / Sistema de Lastre","Equipos de Navegación","Equipos de Seguridad",
+  "Maquinaria de Cubierta","HVAC / Climatización","Sistema Eléctrico",
+  "Casco / Estructura","Propulsión / Hélice","Separadores / MARPOL",
+  "Equipos de Carga","Sistemas de Fondeo","Otro",
+];
 
-// ─── MODAL ───────────────────────────────────────────────────────────────────
+const CERT_TYPES = [
+  "Safety Equipment Certificate","Safety Radio Certificate",
+  "Safety Construction Certificate","Load Line Certificate",
+  "Tonnage Certificate","IOPP Certificate (MARPOL Annex I)",
+  "IAPP Certificate (MARPOL Annex VI)","ISM SMC",
+  "ISM DOC (compañía)","ISPS Ship Security Certificate",
+  "Class Certificate - Hull","Class Certificate - Machinery",
+  "Class Certificate - Electrical","Anti-fouling System Certificate",
+  "CLC Certificate","CSR (Continuous Synopsis Record)","Otro",
+];
+
+const FLAG_NAMES = { CL:"Chile",PA:"Panamá",BS:"Bahamas",MH:"Islas Marshall",LR:"Liberia",MT:"Malta",CY:"Chipre",NL:"Países Bajos" };
+
+// ─── COLORS ───────────────────────────────────────────────────────────────────
+const NV = { navy:"#0A2342", blue:"#1565C0", teal:"#00695C", cyan:"#0288D1", navyMid:"#1A3A5C", light:"#E3F2FD" };
+
+// ─── CSS CLASSES ─────────────────────────────────────────────────────────────
+const card  = "bg-white border border-gray-200 rounded-xl shadow-sm";
+const iCls  = "w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 text-sm focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100";
+const sCls  = "w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 text-sm focus:outline-none focus:border-blue-400";
+const btnPrimary    = "flex items-center gap-2 text-white font-semibold px-4 py-2 rounded-lg text-sm transition shadow-sm hover:opacity-90";
+const btnSecondary  = "flex items-center gap-2 font-semibold px-4 py-2 rounded-lg text-sm transition shadow-sm hover:opacity-90 border";
+
+// ─── UI PRIMITIVES ────────────────────────────────────────────────────────────
+const Badge = ({s, label, cfg}) => {
+  const c = cfg?.[s] || {label:s, cls:"text-gray-600 bg-gray-100 border-gray-300"};
+  return <span className={`inline-flex px-2 py-0.5 rounded-full border text-xs font-semibold ${c.cls}`}>{label||c.label}</span>;
+};
+
+function StatCard({icon:Icon,label,value,sub,color="navy"}){
+  const m={navy:"border-blue-200 bg-blue-50 text-blue-800",blue:"border-blue-200 bg-blue-50 text-blue-700",red:"border-red-200 bg-red-50 text-red-600",amber:"border-amber-200 bg-amber-50 text-amber-700",emerald:"border-emerald-200 bg-emerald-50 text-emerald-700",cyan:"border-cyan-200 bg-cyan-50 text-cyan-700"};
+  return(
+    <div className={`${card} p-5 flex items-center gap-4`}>
+      <div className={`w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 border ${m[color]||m.navy}`}><Icon size={20}/></div>
+      <div><p className="text-gray-500 text-xs font-medium mb-0.5">{label}</p><p className="text-gray-900 font-bold text-2xl leading-none">{value}</p>{sub&&<p className="text-gray-400 text-xs mt-1">{sub}</p>}</div>
+    </div>
+  );
+}
+
 function Modal({title,onClose,children,wide=false}){
   return(
     <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -120,97 +160,111 @@ function Modal({title,onClose,children,wide=false}){
 function ModalActions({onSave,onCancel,label="Guardar"}){
   return(
     <div className="flex gap-2 mt-5">
-      <button onClick={onSave}   style={{background:NV.blue}} className="flex-1 text-white font-semibold py-2.5 rounded-lg text-sm transition hover:opacity-90">{label}</button>
+      <button onClick={onSave} style={{background:NV.blue}} className="flex-1 text-white font-semibold py-2.5 rounded-lg text-sm transition hover:opacity-90">{label}</button>
       <button onClick={onCancel} className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2.5 rounded-lg text-sm transition">Cancelar</button>
     </div>
   );
 }
 
-// ─── STAT CARD ───────────────────────────────────────────────────────────────
-function StatCard({icon:Icon,label,value,sub,color="navy"}){
-  const m={
-    navy:   "border-blue-200 bg-blue-50   text-blue-800",
-    blue:   "border-blue-200 bg-blue-50   text-blue-700",
-    red:    "border-red-200  bg-red-50    text-red-600",
-    amber:  "border-amber-200 bg-amber-50 text-amber-700",
-    emerald:"border-emerald-200 bg-emerald-50 text-emerald-700",
-    cyan:   "border-cyan-200 bg-cyan-50   text-cyan-700",
+// ─── CHANGE PASSWORD ─────────────────────────────────────────────────────────
+function ChangePasswordModal({onClose}){
+  const [old,setOld]=useState(""); const [nw,setNw]=useState(""); const [cf,setCf]=useState(""); const [err,setErr]=useState(""); const [ok,setOk]=useState(false);
+  const handle=async()=>{
+    if(!old||!nw||!cf){setErr("Completa todos los campos");return;}
+    if(nw!==cf){setErr("Las contraseñas no coinciden");return;}
+    if(nw.length<6){setErr("Mínimo 6 caracteres");return;}
+    try{
+      const u=auth.currentUser;
+      const cred=EmailAuthProvider.credential(u.email,old);
+      await reauthenticateWithCredential(u,cred);
+      await updatePassword(u,nw);
+      setOk(true);
+    }catch(e){setErr("Contraseña actual incorrecta");}
   };
   return(
-    <div className={`${card} p-5 flex items-center gap-4`}>
-      <div className={`w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 border ${m[color]||m.navy}`}><Icon size={20}/></div>
-      <div>
-        <p className="text-gray-500 text-xs font-medium mb-0.5">{label}</p>
-        <p className="text-gray-900 font-bold text-2xl leading-none">{value}</p>
-        {sub&&<p className="text-gray-400 text-xs mt-1">{sub}</p>}
+    <Modal title="Cambiar Contraseña" onClose={onClose}>
+      {ok?<div className="text-emerald-600 text-center py-4 font-medium">✅ Contraseña actualizada</div>:<>
+      {err&&<div className="bg-red-50 border border-red-200 text-red-700 text-xs p-3 rounded-lg mb-4">{err}</div>}
+      <div className="space-y-3">
+        {[["Contraseña actual",old,setOld],["Nueva contraseña",nw,setNw],["Confirmar nueva",cf,setCf]].map(([l,v,s])=>(
+          <div key={l}><label className="text-gray-500 text-xs font-medium mb-1 block">{l.toUpperCase()}</label><input type="password" value={v} onChange={e=>s(e.target.value)} className={iCls}/></div>
+        ))}
       </div>
-    </div>
+      <ModalActions onSave={handle} onCancel={onClose} label="Cambiar Contraseña"/></>}
+    </Modal>
   );
 }
 
-// ─── LOGIN ───────────────────────────────────────────────────────────────────
-function LoginPage({users,onLogin}){
-  const [email,setEmail]=useState(""); const [pass,setPass]=useState(""); const [err,setErr]=useState(""); const [show,setShow]=useState(false);
-  const handle=()=>{const u=users.find(x=>x.email===email&&x.password===pass);if(u)onLogin(u);else setErr("Credenciales incorrectas");};
+// ─── LOGIN PAGE ───────────────────────────────────────────────────────────────
+function LoginPage(){
+  const [email,setEmail]=useState(""); const [pass,setPass]=useState(""); const [err,setErr]=useState(""); const [show,setShow]=useState(false); const [loading,setLoading]=useState(false);
+  const handle=async()=>{
+    if(!email||!pass)return;
+    setLoading(true); setErr("");
+    try{ await signInWithEmailAndPassword(auth,email.trim(),pass); }
+    catch(e){
+      if(e.code==="auth/wrong-password"||e.code==="auth/invalid-credential") setErr("Contraseña incorrecta");
+      else if(e.code==="auth/user-not-found") setErr("Usuario no encontrado");
+      else setErr("Error al iniciar sesión");
+    }
+    setLoading(false);
+  };
   return(
     <div className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden"
       style={{background:`linear-gradient(160deg, ${NV.navy} 0%, ${NV.navyMid} 40%, ${NV.blue} 70%, ${NV.cyan} 100%)`}}>
-
-      {/* Wave decoration */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <svg viewBox="0 0 1440 320" className="absolute bottom-0 w-full opacity-20" preserveAspectRatio="none">
-          <path fill="white" d="M0,192L60,202.7C120,213,240,235,360,224C480,213,600,171,720,165.3C840,160,960,192,1080,197.3C1200,203,1320,181,1380,170.7L1440,160L1440,320L1380,320C1320,320,1200,320,1080,320C960,320,840,320,720,320C600,320,480,320,360,320C240,320,120,320,60,320L0,320Z"/>
+        <svg viewBox="0 0 1440 320" className="absolute bottom-0 w-full opacity-15" preserveAspectRatio="none">
+          <path fill="white" d="M0,192L60,202.7C120,213,240,235,360,224C480,213,600,171,720,165.3C840,160,960,192,1080,197.3C1200,203,1320,181,1380,170.7L1440,160L1440,320L0,320Z"/>
         </svg>
-        <svg viewBox="0 0 1440 320" className="absolute bottom-0 w-full opacity-10" preserveAspectRatio="none">
-          <path fill="white" d="M0,256L80,240C160,224,320,192,480,192C640,192,800,224,960,218.7C1120,213,1280,171,1360,149.3L1440,128L1440,320L1360,320C1280,320,1120,320,960,320C800,320,640,320,480,320C320,320,160,320,80,320L0,320Z"/>
+        <svg viewBox="0 0 1440 320" className="absolute bottom-0 w-full opacity-8" preserveAspectRatio="none">
+          <path fill="white" d="M0,256L80,240C160,224,320,192,480,192C640,192,800,224,960,218.7C1120,213,1280,171,1360,149.3L1440,128L1440,320L0,320Z"/>
         </svg>
         {/* Ship silhouette */}
-        <svg viewBox="0 0 800 200" className="absolute bottom-8 right-0 w-96 opacity-10">
-          <path fill="white" d="M50,150 L100,140 L100,100 L120,100 L120,80 L140,80 L140,100 L200,100 L200,60 L220,60 L220,100 L400,100 L420,100 L420,80 L440,80 L440,100 L700,120 L750,150 Z"/>
-          <rect x="120" y="40" width="20" height="60" fill="white"/>
-          <rect x="420" y="30" width="20" height="70" fill="white"/>
+        <svg viewBox="0 0 900 250" className="absolute bottom-6 right-0 w-[500px] opacity-10">
+          <path fill="white" d="M50,190 L120,170 L120,110 L160,110 L160,70 L200,70 L200,110 L420,110 L440,110 L440,80 L490,80 L490,110 L750,140 L820,190 Z"/>
+          <rect x="160" y="30" width="22" height="80" fill="white"/>
+          <rect x="442" y="20" width="22" height="90" fill="white"/>
+          <rect x="530" y="50" width="18" height="60" fill="white"/>
+          <path fill="white" d="M182,30 L182,50 L230,50 L230,30Z"/>
+          <path fill="white" d="M464,20 L464,45 L520,45 L520,20Z"/>
         </svg>
       </div>
-
       <div className="w-full max-w-sm relative z-10">
-        {/* Logo */}
         <div className="text-center mb-8">
           <div className="inline-flex flex-col items-center gap-2">
             <div className="w-16 h-16 bg-white/15 backdrop-blur-sm rounded-2xl flex items-center justify-center border border-white/30 shadow-xl">
-              <Wrench size={32} className="text-white"/>
+              <Ship size={32} className="text-white"/>
             </div>
             <div>
-              <p className="text-white font-bold text-2xl tracking-wide">MANTEK ERP</p>
-              <p className="text-blue-200 text-xs tracking-widest font-medium">NAVIMAG · MANTENIMIENTO</p>
+              <p className="text-white font-bold text-2xl tracking-wide">MANTEK Maritime</p>
+              <p className="text-blue-200 text-xs tracking-widest font-medium">GESTIÓN DE MANTENIMIENTO NAVAL</p>
             </div>
           </div>
         </div>
-
         <div className="bg-white/95 backdrop-blur-sm rounded-2xl p-8 shadow-2xl border border-white/50">
           <p className="font-bold mb-6 text-sm" style={{color:NV.navy}}>Iniciar Sesión</p>
           {err&&<div className="bg-red-50 border border-red-200 text-red-700 text-xs p-3 rounded-lg mb-4">{err}</div>}
           <div className="space-y-4">
             <div>
               <label className="text-gray-500 text-xs font-medium mb-1 block">CORREO</label>
-              <input value={email} onChange={e=>setEmail(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handle()} className={iCls} placeholder="usuario@navimag.cl"/>
+              <input value={email} onChange={e=>setEmail(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handle()} className={iCls} placeholder="usuario@empresa.cl"/>
             </div>
             <div>
               <label className="text-gray-500 text-xs font-medium mb-1 block">CONTRASEÑA</label>
               <div className="relative">
-                <input type={show?"text":"password"} value={pass} onChange={e=>setPass(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handle()} className={iCls+" pr-16"} placeholder="••••••"/>
+                <input type={show?"text":"password"} value={pass} onChange={e=>setPass(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handle()} className={`${iCls} pr-16`} placeholder="••••••"/>
                 <button type="button" onClick={()=>setShow(s=>!s)} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs font-medium">{show?"Ocultar":"Mostrar"}</button>
               </div>
             </div>
-            <button onClick={handle} style={{background:`linear-gradient(90deg, ${NV.navy}, ${NV.blue})`}}
-              className="w-full text-white font-bold py-3 rounded-xl text-sm transition shadow-md hover:opacity-90 mt-2">
-              INGRESAR
+            <button onClick={handle} disabled={loading} style={{background:`linear-gradient(90deg, ${NV.navy}, ${NV.blue})`}} className="w-full text-white font-bold py-3 rounded-xl text-sm transition shadow-md hover:opacity-90 mt-2 disabled:opacity-60">
+              {loading?"Iniciando...":"INGRESAR"}
             </button>
           </div>
           <div className="flex items-center gap-2 mt-6 pt-4 border-t border-gray-100">
             <div className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0" style={{background:NV.blue}}>
-              <svg viewBox="0 0 24 24" fill="none" className="w-3.5 h-3.5"><path d="M3 12h18M3 6h18M3 18h18" stroke="white" strokeWidth="2.5" strokeLinecap="round"/></svg>
+              <Anchor size={12} className="text-white"/>
             </div>
-            <p className="text-gray-400 text-xs">Navimag · Departamento de Mantenimiento</p>
+            <p className="text-gray-400 text-xs">Sistema de Gestión de Mantenimiento Naval</p>
           </div>
         </div>
       </div>
@@ -219,62 +273,66 @@ function LoginPage({users,onLogin}){
 }
 
 // ─── SIDEBAR ─────────────────────────────────────────────────────────────────
-const NAV_ITEMS={
-  dashboard:     {label:"Dashboard",          icon:BarChart2},
-  workorders:    {label:"Órdenes de Trabajo", icon:ClipboardList},
-  equipment:     {label:"Equipos",            icon:Package},
-  plans:         {label:"Plan Preventivo",    icon:Calendar},
-  indicadores:   {label:"Indicadores KPI",    icon:TrendingUp},
-  requests:      {label:"Solicitudes",        icon:Bell},
-  notifications: {label:"Notificaciones",     icon:Bell},
-  reports:       {label:"Informes",           icon:FileText},
-  users:         {label:"Usuarios",           icon:Users},
+const ROLE_CFG = {
+  fleet_manager: { label:"Fleet Manager", icon:Ship,    nav:["dashboard","fleet","equipment","workorders","certificates","plans","reports","users"] },
+  vessel_chief:  { label:"Chief Engineer",icon:Wrench,  nav:["dashboard","fleet","equipment","workorders","certificates","plans","reports"] },
+  mechanic:      { label:"Mecánico",      icon:Wrench,  nav:["dashboard","workorders","plans"] },
+  admin:         { label:"Admin",         icon:Shield,  nav:["dashboard","fleet","equipment","workorders","certificates","plans","reports","users"] },
 };
-function Sidebar({user,active,onNav,onLogout,notifications,online}){
-  const cfg=ROLE_CFG[user.role]; const RoleIcon=cfg.icon;
+const NAV_ITEMS = {
+  dashboard:    { label:"Dashboard",         icon:BarChart2 },
+  fleet:        { label:"Flota / Buques",    icon:Ship },
+  equipment:    { label:"Equipos",           icon:Package },
+  workorders:   { label:"Órdenes de Trabajo",icon:ClipboardList },
+  certificates: { label:"Certificados",      icon:Award },
+  plans:        { label:"Plan Preventivo",   icon:Calendar },
+  reports:      { label:"Informes KPI",      icon:TrendingUp },
+  users:        { label:"Usuarios",          icon:Users },
+};
+
+function Sidebar({profile,active,onNav,onLogout,onChangePwd,certAlerts,online}){
+  const cfg=ROLE_CFG[profile?.role]||ROLE_CFG.mechanic; const Icon=cfg.icon;
   return(
     <div className="w-56 flex flex-col h-screen sticky top-0 flex-shrink-0 shadow-xl" style={{background:NV.navy}}>
-      {/* Logo */}
       <div className="p-4 border-b border-white/10">
         <div className="flex items-center gap-2.5">
           <div className="w-8 h-8 bg-white/15 rounded-lg flex items-center justify-center flex-shrink-0 border border-white/20">
-            <Wrench size={15} className="text-white"/>
+            <Ship size={15} className="text-white"/>
           </div>
           <div>
-            <p className="text-white font-bold text-sm">MANTEK ERP</p>
+            <p className="text-white font-bold text-sm">MANTEK Maritime</p>
             <div className="flex items-center gap-1">
-              {online
-                ?<><Wifi size={9} className="text-emerald-400"/><p className="text-emerald-400 text-xs">En línea</p></>
-                :<><WifiOff size={9} className="text-red-400"/><p className="text-red-400 text-xs">Sin conexión</p></>}
+              {online?<><Wifi size={9} className="text-emerald-400"/><p className="text-emerald-400 text-xs">En línea</p></>:<><WifiOff size={9} className="text-red-400"/><p className="text-red-400 text-xs">Sin conexión</p></>}
             </div>
           </div>
         </div>
       </div>
-
       <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
         {cfg.nav.map(key=>{
-          const item=NAV_ITEMS[key]; if(!item) return null;
-          const Icon=item.icon; const isActive=active===key;
-          const badge=(key==="requests"||key==="notifications")&&notifications>0;
+          const item=NAV_ITEMS[key]; if(!item)return null;
+          const ItemIcon=item.icon; const isActive=active===key;
+          const badge=key==="certificates"&&certAlerts>0;
           return(
             <button key={key} onClick={()=>onNav(key)}
               className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all ${isActive?"text-white font-semibold":"text-blue-200 hover:text-white hover:bg-white/10"}`}
               style={isActive?{background:`${NV.blue}cc`}:{}}>
-              <Icon size={15}/><span className="flex-1 text-left">{item.label}</span>
-              {badge&&<span className="bg-amber-400 text-black text-xs font-bold w-4 h-4 rounded-full flex items-center justify-center">{notifications}</span>}
+              <ItemIcon size={15}/><span className="flex-1 text-left">{item.label}</span>
+              {badge&&<span className="bg-amber-400 text-black text-xs font-bold w-4 h-4 rounded-full flex items-center justify-center">{certAlerts}</span>}
             </button>
           );
         })}
       </nav>
-
       <div className="p-3 border-t border-white/10">
         <div className="flex items-center gap-2 px-2 py-2 mb-2">
-          <div className={`w-8 h-8 rounded-full bg-white/20 flex items-center justify-center text-xs font-bold text-white`}>{user.avatar}</div>
+          <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center text-xs font-bold text-white">{profile?.avatar||"?"}</div>
           <div className="min-w-0">
-            <p className="text-white text-xs font-semibold truncate">{user.name}</p>
-            <p className={`text-xs ${cfg.color} flex items-center gap-1`}><RoleIcon size={10}/>{cfg.label}</p>
+            <p className="text-white text-xs font-semibold truncate">{profile?.name||profile?.email}</p>
+            <p className={`text-xs text-blue-300 flex items-center gap-1`}><Icon size={10}/>{cfg.label}</p>
           </div>
         </div>
+        <button onClick={onChangePwd} className="w-full flex items-center gap-2 px-3 py-2 text-blue-300 hover:text-white text-sm rounded-lg hover:bg-white/10 transition-all">
+          <Key size={14}/><span>Cambiar Contraseña</span>
+        </button>
         <button onClick={onLogout} className="w-full flex items-center gap-2 px-3 py-2 text-blue-300 hover:text-red-400 text-sm rounded-lg hover:bg-red-400/10 transition-all">
           <LogOut size={14}/><span>Cerrar Sesión</span>
         </button>
@@ -283,268 +341,317 @@ function Sidebar({user,active,onNav,onLogout,notifications,online}){
   );
 }
 
-// ─── DASHBOARD ───────────────────────────────────────────────────────────────
-function Dashboard({user,data,onNav}){
-  const {wos,equip,requests}=data; const role=user.role;
-  const pendingWOs=wos.filter(w=>w.status!=="completada"&&w.status!=="cancelada");
-  const myWOs=wos.filter(w=>w.assignedTo===user.id&&w.status!=="completada");
-  const fallas=equip.filter(e=>e.status==="falla");
-  const completed=wos.filter(w=>w.status==="completada").length;
+// ─── DASHBOARD ────────────────────────────────────────────────────────────────
+function Dashboard({data,onNav}){
+  const {vessels,equipment,workorders,certificates} = data;
+  const today = new Date();
+  const certsExpiring90 = certificates.filter(c=>{ const d=certStatus(c.expiryDate); return d.s==="critical"||d.s==="expiring"; });
+  const certsCritical   = certificates.filter(c=>{ const d=certStatus(c.expiryDate); return d.s==="critical"||d.s==="expired"; });
+  const equipFalla      = equipment.filter(e=>e.status==="falla");
+  const woActive        = workorders.filter(w=>w.status!=="completada"&&w.status!=="cancelada");
   return(
     <div className="p-6 space-y-6">
       <div>
-        <h1 className="text-gray-900 font-bold text-xl">Dashboard</h1>
-        <p className="text-gray-500 text-sm">Bienvenido, {user.name} · {ROLE_CFG[role].label}</p>
+        <h1 className="text-gray-900 font-bold text-xl">Dashboard de Flota</h1>
+        <p className="text-gray-500 text-sm">{vessels.length} buque{vessels.length!==1?"s":""} registrados · {new Date().toLocaleDateString("es-CL",{weekday:"long",year:"numeric",month:"long",day:"numeric"})}</p>
       </div>
-      {role==="supervisor"&&<>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard icon={ClipboardList} label="OT Activas"            value={pendingWOs.length} sub={`${pendingWOs.filter(w=>w.priority==="alta").length} críticas`} color="navy"/>
-          <StatCard icon={AlertTriangle} label="Equipos en Falla"      value={fallas.length} color="red"/>
-          <StatCard icon={Bell}          label="Solicitudes Pendientes" value={requests.filter(r=>r.status==="pendiente").length} color="cyan"/>
-          <StatCard icon={CheckCircle}   label="OT Completadas"         value={completed} sub="este mes" color="emerald"/>
-        </div>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div className={`${card} p-5`}>
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="font-semibold text-sm" style={{color:NV.navy}}>OT Recientes</h2>
-              <button onClick={()=>onNav("workorders")} className="text-xs hover:underline flex items-center gap-1" style={{color:NV.blue}}>Ver todo<ChevronRight size={12}/></button>
-            </div>
-            {wos.length===0&&<p className="text-gray-400 text-xs text-center py-4">Sin órdenes de trabajo</p>}
-            {wos.slice(0,5).map(w=>(
-              <div key={w.id} className="flex items-center gap-2 py-2 border-b border-gray-100 last:border-0">
-                <Badge s={w.status}/><span className="text-gray-700 text-xs flex-1 truncate">{w.title}</span>
-              </div>
-            ))}
-          </div>
-          <div className={`${card} p-5`}>
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="font-semibold text-sm" style={{color:NV.navy}}>Estado de Equipos</h2>
-              <button onClick={()=>onNav("equipment")} className="text-xs hover:underline flex items-center gap-1" style={{color:NV.blue}}>Ver todo<ChevronRight size={12}/></button>
-            </div>
-            <div className="flex items-center gap-4 mb-3">
-              {[["operativo","bg-emerald-500","Operativos"],["mantenimiento","bg-amber-400","En Mant."],["falla","bg-red-500","En Falla"]].map(([s,c,l])=>(
-                <div key={s} className="flex items-center gap-1.5">
-                  <span className={`w-2.5 h-2.5 rounded-full ${c}`}/>
-                  <span className="text-gray-600 text-xs">{equip.filter(e=>e.status===s).length} {l}</span>
-                </div>
-              ))}
-            </div>
-            {fallas.length>0&&fallas.map(e=>(
-              <div key={e.id} className="flex items-center gap-2 py-1.5 border-b border-red-100 last:border-0">
-                <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0"/>
-                <span className="text-gray-700 text-xs flex-1">{e.name}</span>
-                <span className="text-gray-400 text-xs">{e.code}</span>
-              </div>
-            ))}
-            {fallas.length===0&&<p className="text-emerald-600 text-xs text-center py-2">✅ Todos los equipos operativos</p>}
-          </div>
-        </div>
-      </>}
-      {role==="mecanico"&&<>
-        <div className="grid grid-cols-2 gap-4">
-          <StatCard icon={ClipboardList} label="Mis OT Pendientes" value={myWOs.length} color="navy"/>
-          <StatCard icon={CheckCircle}   label="Completadas"       value={wos.filter(w=>w.assignedTo===user.id&&w.status==="completada").length} color="emerald"/>
-        </div>
-        <div className={`${card} p-5`}>
-          <h2 className="font-semibold text-sm mb-4" style={{color:NV.navy}}>Mis Órdenes de Trabajo</h2>
-          {myWOs.length===0&&<p className="text-gray-400 text-sm text-center py-6">No tienes órdenes asignadas</p>}
-          {myWOs.map(w=>{const eq=data.equip.find(e=>e.id===w.equipId);return(
-            <div key={w.id} className="bg-gray-50 border border-gray-200 rounded-xl p-4 mb-2 last:mb-0">
-              <div className="flex items-start justify-between gap-2">
-                <div><p className="text-xs font-mono font-bold mb-1" style={{color:NV.blue}}>{w.code}</p>
-                  <p className="text-gray-800 text-sm font-semibold">{w.title}</p>
-                  <p className="text-gray-500 text-xs mt-1">{eq?.name} · {fmt(w.scheduledDate)}</p></div>
-                <Badge s={w.status}/>
-              </div>
-            </div>
-          );})}
-        </div>
-      </>}
-      {role==="operaciones"&&<>
-        <div className="grid grid-cols-2 gap-4">
-          <StatCard icon={AlertTriangle} label="Equipos en Falla" value={fallas.length} color="red"/>
-          <StatCard icon={Bell}          label="Mis Solicitudes"  value={requests.filter(r=>r.requestedBy===user.id).length} color="cyan"/>
-        </div>
-        {fallas.length>0&&(
-          <div className="bg-red-50 border border-red-200 rounded-xl p-5">
-            <h2 className="text-red-700 font-semibold text-sm mb-3 flex items-center gap-2"><AlertCircle size={15}/>Equipos con Falla Activa</h2>
-            {fallas.map(e=>(
-              <div key={e.id} className="bg-white rounded-lg p-3 mb-2 last:mb-0 border border-red-100">
-                <p className="text-gray-800 text-sm font-semibold">{e.name}</p>
-                <p className="text-gray-500 text-xs">{e.location} · Criticidad {e.criticality}</p>
-              </div>
-            ))}
-          </div>
-        )}
-        <div className={`${card} p-5`}>
-          <h2 className="font-semibold text-sm mb-4" style={{color:NV.navy}}>Mis Solicitudes Recientes</h2>
-          {requests.filter(r=>r.requestedBy===user.id).slice(0,5).map(r=>{
-            const eq=equip.find(e=>e.id===r.equipId);
-            return<div key={r.id} className="flex items-center gap-2 py-2 border-b border-gray-100 last:border-0">
-              <Badge s={r.status}/><span className="text-gray-700 text-xs flex-1 truncate">{r.title}</span><span className="text-gray-400 text-xs">{eq?.code}</span>
-            </div>;
-          })}
-          {requests.filter(r=>r.requestedBy===user.id).length===0&&<p className="text-gray-400 text-sm text-center py-6">Sin solicitudes registradas</p>}
-        </div>
-      </>}
-    </div>
-  );
-}
 
-// ─── WORK ORDERS ─────────────────────────────────────────────────────────────
-function WorkOrders({user,data,setData}){
-  const {wos,equip,users}=data;
-  const [filter,setFilter]=useState("all"); const [search,setSearch]=useState("");
-  const [sel,setSel]=useState(null); const [showRep,setShowRep]=useState(false);
-  const [rep,setRep]=useState({actualHours:"",observations:"",status:"completada"});
-  const role=user.role;
-  const visible=wos.filter(w=>{
-    if(role==="mecanico"&&w.assignedTo!==user.id) return false;
-    if(filter!=="all"&&w.status!==filter) return false;
-    if(search&&!w.title.toLowerCase().includes(search.toLowerCase())&&!w.code.toLowerCase().includes(search.toLowerCase())) return false;
-    return true;
-  });
-  const updWO=(id,patch)=>{const u=wos.map(w=>w.id===id?{...w,...patch}:w);setData(d=>({...d,wos:u}));saveData("workOrders",u);if(sel?.id===id)setSel(s=>({...s,...patch}));};
-  const submitRep=()=>{if(!rep.actualHours)return;updWO(sel.id,{status:rep.status,actualHours:parseFloat(rep.actualHours),observations:rep.observations});setShowRep(false);setRep({actualHours:"",observations:"",status:"completada"});};
-  const cur=sel?wos.find(w=>w.id===sel.id):null;
-  const curEq=cur?equip.find(e=>e.id===cur.equipId):null;
-  const curAs=cur?users.find(u=>u.id===cur.assignedTo):null;
-  return(
-    <div className="p-6 flex gap-5 h-full">
-      <div className="flex-1 min-w-0">
-        <div className="mb-5"><h1 className="text-gray-900 font-bold text-xl">Órdenes de Trabajo</h1><p className="text-gray-500 text-sm">{visible.length} registros</p></div>
-        <div className="flex gap-2 mb-4 flex-wrap">
-          <div className="relative flex-1 min-w-40">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
-            <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar OT..." className={iCls+" pl-9"}/>
+      {/* Alert banner: certificates */}
+      {certsCritical.length>0&&(
+        <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+          <div className="flex items-center gap-2 mb-2"><AlertTriangle size={16} className="text-red-600"/><span className="text-red-700 font-semibold text-sm">{certsCritical.length} certificado{certsCritical.length!==1?"s":""} vencido{certsCritical.length!==1?"s":""} o por vencer en menos de 30 días</span></div>
+          <div className="flex flex-wrap gap-2">
+            {certsCritical.slice(0,4).map(c=>{
+              const v=vessels.find(v=>v.id===c.vesselId);
+              return <span key={c.id} className="text-xs bg-white border border-red-200 text-red-700 px-2 py-1 rounded-lg">{v?.name} — {c.type}</span>;
+            })}
+            {certsCritical.length>4&&<span className="text-xs text-red-500">+{certsCritical.length-4} más</span>}
           </div>
-          {["all","pendiente","asignada","en_proceso","completada"].map(s=>(
-            <button key={s} onClick={()=>setFilter(s)}
-              style={filter===s?{background:NV.blue}:{}}
-              className={`px-3 py-2 rounded-lg text-xs font-medium border transition ${filter===s?"text-white border-transparent":"bg-white text-gray-600 border-gray-200 hover:border-gray-300"}`}>
-              {s==="all"?"Todas":ST[s]?.label}
-            </button>
-          ))}
         </div>
-        <div className="space-y-2">
-          {visible.map(w=>{
-            const eq=equip.find(e=>e.id===w.equipId); const asn=users.find(u=>u.id===w.assignedTo);
+      )}
+
+      {/* Stats */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard icon={Ship}          label="Buques en Flota"     value={vessels.length}        sub={`${vessels.filter(v=>v.status==="at_sea").length} en ruta`}         color="navy"/>
+        <StatCard icon={AlertTriangle} label="Equipos en Falla"    value={equipFalla.length}     sub="requieren atención"                                                  color="red"/>
+        <StatCard icon={Award}         label="Certs. Por Vencer"   value={certsExpiring90.length} sub="en los próximos 90 días"                                            color="amber"/>
+        <StatCard icon={ClipboardList} label="OT Activas"          value={woActive.length}       sub="órdenes de trabajo"                                                  color="blue"/>
+      </div>
+
+      {/* Fleet status cards */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="font-semibold text-sm" style={{color:NV.navy}}>Estado de la Flota</h2>
+          <button onClick={()=>onNav("fleet")} className="text-xs hover:underline flex items-center gap-1" style={{color:NV.blue}}>Ver flota<ChevronRight size={12}/></button>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {vessels.map(v=>{
+            const vs=VESSEL_STATUS[v.status]||VESSEL_STATUS.in_port;
+            const vEquip=equipment.filter(e=>e.vesselId===v.id);
+            const vCerts=certificates.filter(c=>c.vesselId===v.id);
+            const critCerts=vCerts.filter(c=>{const d=certStatus(c.expiryDate);return d.s==="critical"||d.s==="expired";});
+            const fallas=vEquip.filter(e=>e.status==="falla");
             return(
-              <div key={w.id} onClick={()=>setSel(w)}
-                className={`bg-white border rounded-xl p-4 cursor-pointer transition-all ${sel?.id===w.id?"shadow-sm":"border-gray-200 hover:border-blue-300 hover:shadow-sm"}`}
-                style={sel?.id===w.id?{borderColor:NV.blue,background:"#EBF4FF"}:{}}>
-                <div className="flex items-start gap-3">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1 flex-wrap">
-                      <span className="text-xs font-mono font-bold" style={{color:NV.blue}}>{w.code}</span>
-                      <Badge s={w.type==="preventivo"?"asignada":"en_proceso"} label={w.type==="preventivo"?"Preventivo":"Correctivo"}/>
-                      <Badge s={w.status}/>
-                    </div>
-                    <p className="text-gray-800 text-sm font-semibold truncate">{w.title}</p>
-                    <div className="flex items-center gap-3 mt-1 flex-wrap">
-                      <span className="text-gray-400 text-xs flex items-center gap-1"><Package size={10}/>{eq?.code}</span>
-                      <span className="text-gray-400 text-xs flex items-center gap-1"><Calendar size={10}/>{fmt(w.scheduledDate)}</span>
-                      {asn&&<span className="text-gray-400 text-xs flex items-center gap-1"><Users size={10}/>{asn.name}</span>}
-                    </div>
+              <div key={v.id} className={`${card} p-4`}>
+                <div className="flex items-start justify-between mb-3">
+                  <div>
+                    <p className="font-bold text-sm text-gray-900">{v.name}</p>
+                    <p className="text-gray-400 text-xs mt-0.5">IMO {v.imo} · {v.type}</p>
                   </div>
-                  <span className={`px-2 py-0.5 rounded-full border text-xs font-bold flex-shrink-0 ${PRI_CLS[w.priority]}`}>{w.priority.toUpperCase()}</span>
+                  <span className={`text-xs px-2 py-0.5 rounded-full border font-semibold ${vs.cls}`}>{vs.label}</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div className="bg-gray-50 rounded-lg p-2">
+                    <p className="text-gray-400">Bandera</p>
+                    <p className="font-semibold text-gray-700">{FLAG_NAMES[v.flag]||v.flag}</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-lg p-2">
+                    <p className="text-gray-400">Clase</p>
+                    <p className="font-semibold text-gray-700 truncate">{v.class_soc}</p>
+                  </div>
+                  <div className={`rounded-lg p-2 ${fallas.length>0?"bg-red-50":"bg-gray-50"}`}>
+                    <p className={fallas.length>0?"text-red-500":"text-gray-400"}>Equipos falla</p>
+                    <p className={`font-bold ${fallas.length>0?"text-red-600":"text-gray-700"}`}>{fallas.length}</p>
+                  </div>
+                  <div className={`rounded-lg p-2 ${critCerts.length>0?"bg-amber-50":"bg-gray-50"}`}>
+                    <p className={critCerts.length>0?"text-amber-600":"text-gray-400"}>Certs. alertas</p>
+                    <p className={`font-bold ${critCerts.length>0?"text-amber-700":"text-gray-700"}`}>{critCerts.length}</p>
+                  </div>
                 </div>
               </div>
             );
           })}
-          {visible.length===0&&<div className="text-center py-12 text-gray-400 text-sm">No se encontraron órdenes</div>}
         </div>
       </div>
-      {cur&&(
-        <div className={`w-80 flex-shrink-0 ${card} p-5 h-fit sticky top-6 overflow-y-auto max-h-[calc(100vh-6rem)]`}>
-          <div className="flex items-center justify-between mb-4">
-            <span className="text-xs font-mono font-bold" style={{color:NV.blue}}>{cur.code}</span>
-            <button onClick={()=>setSel(null)}><X size={16} className="text-gray-400 hover:text-gray-700"/></button>
+
+      {/* Recent WO */}
+      {workorders.length>0&&(
+        <div className={`${card} p-5`}>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-semibold text-sm" style={{color:NV.navy}}>Órdenes de Trabajo Recientes</h2>
+            <button onClick={()=>onNav("workorders")} className="text-xs hover:underline flex items-center gap-1" style={{color:NV.blue}}>Ver todas<ChevronRight size={12}/></button>
           </div>
-          <h3 className="text-gray-900 font-semibold text-sm mb-3">{cur.title}</h3>
-          <div className="flex flex-wrap gap-1.5 mb-4">
-            <Badge s={cur.status}/>
-            <span className={`px-2 py-0.5 rounded-full border text-xs font-bold ${PRI_CLS[cur.priority]}`}>{cur.priority.toUpperCase()}</span>
-          </div>
-          <div className="space-y-2 mb-4 text-xs">
-            {[["Equipo",curEq?.name||"—"],["Código",curEq?.code||"—"],["Tipo",cur.type],["Fuente",cur.source==="plan"?"Plan Preventivo":"Solicitud"],["Programado",fmt(cur.scheduledDate)],["Horas Est.",`${cur.estimatedHours}h`],["Asignado a",curAs?.name||"—"]].map(([k,v])=>(
-              <div key={k} className="flex justify-between gap-2"><span className="text-gray-400">{k}</span><span className="text-gray-700 text-right">{v}</span></div>
-            ))}
-            {cur.actualHours&&<div className="flex justify-between"><span className="text-gray-400">Horas Reales</span><span className="text-emerald-600 font-semibold">{cur.actualHours}h</span></div>}
-          </div>
-          {cur.description&&<div className="bg-gray-50 border border-gray-100 rounded-lg p-3 mb-3 text-gray-600 text-xs">{cur.description}</div>}
-          {cur.observations&&<div className="bg-emerald-50 border border-emerald-100 rounded-lg p-3 mb-3 text-xs"><span className="text-emerald-700 font-semibold">Obs: </span>{cur.observations}</div>}
-          <div className="space-y-2 mt-4">
-            {role==="mecanico"&&cur.assignedTo===user.id&&cur.status!=="completada"&&<>
-              {cur.status==="asignada"&&<button onClick={()=>updWO(cur.id,{status:"en_proceso"})} className="w-full border text-sm py-2 rounded-lg hover:opacity-90 transition font-medium" style={{background:NV.light,borderColor:NV.blue,color:NV.blue}}>Iniciar Trabajo</button>}
-              <button onClick={()=>setShowRep(true)} className="w-full text-white text-sm py-2 rounded-lg hover:opacity-90 transition font-medium" style={{background:NV.blue}}>Reportar Trabajo</button>
-            </>}
-            {role==="supervisor"&&cur.status!=="completada"&&cur.status!=="cancelada"&&(
-              <select value={cur.status} onChange={e=>updWO(cur.id,{status:e.target.value})} className={sCls}>
-                <option value="pendiente">Pendiente</option><option value="asignada">Asignada</option>
-                <option value="en_proceso">En Proceso</option><option value="completada">Completada</option><option value="cancelada">Cancelada</option>
-              </select>
-            )}
-          </div>
+          {workorders.slice(-5).reverse().map(w=>{
+            const eq=equipment.find(e=>e.id===w.equipId);
+            const v=vessels.find(v=>v.id===w.vesselId);
+            const st=WO_STATUS[w.status]||WO_STATUS.pendiente;
+            return(
+              <div key={w.id} className="flex items-center gap-3 py-2 border-b border-gray-100 last:border-0">
+                <span className={`inline-flex px-2 py-0.5 rounded-full border text-xs font-semibold ${st.cls}`}>{st.label}</span>
+                <span className="text-gray-700 text-xs flex-1 truncate">{w.title}</span>
+                <span className="text-gray-400 text-xs">{v?.name||""}</span>
+              </div>
+            );
+          })}
         </div>
       )}
-      {showRep&&(
-        <Modal title={`Reportar — ${cur?.code}`} onClose={()=>setShowRep(false)}>
-          <div className="space-y-4">
-            <div><label className="text-gray-500 text-xs font-medium mb-1 block">HORAS REALES *</label><input type="number" step="0.5" value={rep.actualHours} onChange={e=>setRep(r=>({...r,actualHours:e.target.value}))} className={iCls} placeholder="ej: 3.5"/></div>
-            <div><label className="text-gray-500 text-xs font-medium mb-1 block">OBSERVACIONES</label><textarea value={rep.observations} onChange={e=>setRep(r=>({...r,observations:e.target.value}))} rows={3} className={iCls+" resize-none"}/></div>
-            <div><label className="text-gray-500 text-xs font-medium mb-1 block">ESTADO FINAL</label><select value={rep.status} onChange={e=>setRep(r=>({...r,status:e.target.value}))} className={sCls}><option value="completada">Completada</option><option value="en_proceso">En Proceso (parcial)</option></select></div>
+    </div>
+  );
+}
+
+// ─── FLEET / VESSELS ─────────────────────────────────────────────────────────
+const EMPTY_VESSEL = { imo:"", name:"", flag:"CL", type:"Ferry / RoRo", class_soc:"Bureau Veritas", gt:"", dwt:"", built:"", status:"in_port", lastPort:"", nextPort:"", mainEngine:"", engineHours:"" };
+
+function Fleet({data,setData}){
+  const {vessels,equipment,certificates,workorders} = data;
+  const [showForm,setShowForm]=useState(false);
+  const [form,setForm]=useState(EMPTY_VESSEL);
+  const [editTarget,setEditTarget]=useState(null);
+  const [confirmDel,setConfirmDel]=useState(null);
+  const [expanded,setExpanded]=useState(null);
+
+  const save=()=>{
+    if(!form.name||!form.imo)return;
+    const obj={...form, gt:parseInt(form.gt)||0, dwt:parseInt(form.dwt)||0, built:parseInt(form.built)||0, engineHours:parseInt(form.engineHours)||0};
+    const updated=editTarget?vessels.map(v=>v.id===editTarget.id?{...v,...obj}:v):[...vessels,{id:uid(),...obj}];
+    setData(d=>({...d,vessels:updated})); saveData("vessels",updated); setShowForm(false);
+  };
+  const del=id=>{
+    const updated=vessels.filter(v=>v.id!==id);
+    setData(d=>({...d,vessels:updated})); saveData("vessels",updated); setConfirmDel(null);
+  };
+  const openEdit=v=>{setForm({...v,gt:String(v.gt),dwt:String(v.dwt),built:String(v.built),engineHours:String(v.engineHours)});setEditTarget(v);setShowForm(true);};
+
+  return(
+    <div className="p-6">
+      <div className="flex items-center justify-between mb-5">
+        <div><h1 className="text-gray-900 font-bold text-xl">Flota de Buques</h1><p className="text-gray-500 text-sm">{vessels.length} buques registrados</p></div>
+        <button onClick={()=>{setForm(EMPTY_VESSEL);setEditTarget(null);setShowForm(true);}} style={{background:NV.blue}} className={btnPrimary}><Plus size={15}/>Nuevo Buque</button>
+      </div>
+
+      <div className="space-y-3">
+        {vessels.map(v=>{
+          const vs=VESSEL_STATUS[v.status]||VESSEL_STATUS.in_port;
+          const vEquip=equipment.filter(e=>e.vesselId===v.id);
+          const vCerts=certificates.filter(c=>c.vesselId===v.id);
+          const vWO=workorders.filter(w=>w.vesselId===v.id&&w.status!=="completada");
+          const critCerts=vCerts.filter(c=>{const d=certStatus(c.expiryDate);return d.s==="critical"||d.s==="expired";});
+          const isExp=expanded===v.id;
+          return(
+            <div key={v.id} className={`${card} overflow-hidden`}>
+              {/* Header row */}
+              <div className="p-4 flex items-center gap-4">
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 text-white font-bold text-xs" style={{background:NV.navy}}>
+                  <Ship size={18}/>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                    <p className="font-bold text-gray-900 text-sm">{v.name}</p>
+                    <span className="text-gray-400 text-xs font-mono">IMO {v.imo}</span>
+                    <span className={`text-xs px-2 py-0.5 rounded-full border font-semibold ${vs.cls}`}>{vs.label}</span>
+                    {critCerts.length>0&&<span className="text-xs px-2 py-0.5 rounded-full border font-semibold text-amber-700 bg-amber-50 border-amber-200">⚠ {critCerts.length} cert.</span>}
+                  </div>
+                  <div className="flex items-center gap-3 text-xs text-gray-400 flex-wrap">
+                    <span>{v.type}</span><span>·</span><span>{FLAG_NAMES[v.flag]||v.flag}</span><span>·</span><span>{v.class_soc}</span><span>·</span><span>GT {v.gt?.toLocaleString()}</span>
+                    {v.status==="at_sea"&&v.nextPort&&<><span>·</span><span className="flex items-center gap-1"><MapPin size={10}/>{v.nextPort}</span></>}
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 flex-shrink-0 text-xs text-gray-500">
+                  <span className="flex items-center gap-1"><Package size={11}/>{vEquip.length} equipos</span>
+                  <span className="flex items-center gap-1"><Award size={11}/>{vCerts.length} certs.</span>
+                  <span className="flex items-center gap-1"><ClipboardList size={11}/>{vWO.length} OT</span>
+                  <div className="flex gap-1">
+                    <button onClick={()=>openEdit(v)} className="p-1.5 rounded-lg hover:bg-blue-50" style={{color:NV.blue}}><Edit2 size={13}/></button>
+                    <button onClick={()=>setConfirmDel(v)} className="p-1.5 rounded-lg text-red-500 hover:bg-red-50"><Trash2 size={13}/></button>
+                    <button onClick={()=>setExpanded(isExp?null:v.id)} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400">
+                      <ChevronDown size={14} className={`transition-transform ${isExp?"rotate-180":""}`}/>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Expanded detail */}
+              {isExp&&(
+                <div className="border-t border-gray-100 px-4 py-3 bg-gray-50/50">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs mb-3">
+                    {[["Año construcción",v.built],["Motor principal",v.mainEngine],["Horas de motor",`${(v.engineHours||0).toLocaleString()} h`],["DWT",`${(v.dwt||0).toLocaleString()} t`],["Último puerto",v.lastPort||"—"],["Próximo puerto",v.nextPort||"—"]].map(([k,val])=>(
+                      <div key={k} className="bg-white rounded-lg p-2.5 border border-gray-100">
+                        <p className="text-gray-400 mb-0.5">{k}</p>
+                        <p className="font-semibold text-gray-700">{val||"—"}</p>
+                      </div>
+                    ))}
+                  </div>
+                  {/* Cert summary for this vessel */}
+                  {vCerts.length>0&&(
+                    <div>
+                      <p className="text-gray-400 text-xs font-medium mb-2">Certificados con alerta:</p>
+                      <div className="flex flex-wrap gap-2">
+                        {vCerts.filter(c=>{const d=certStatus(c.expiryDate);return d.s!=="valid";}).map(c=>{
+                          const cs=certStatus(c.expiryDate);
+                          return <span key={c.id} className={`text-xs px-2 py-0.5 rounded-full border font-semibold ${cs.cls}`}>{c.type.slice(0,30)}{c.type.length>30?"...":""} — {cs.label}</span>;
+                        })}
+                        {vCerts.filter(c=>{const d=certStatus(c.expiryDate);return d.s!=="valid";}).length===0&&<span className="text-xs text-emerald-600">✅ Todos los certificados vigentes</span>}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {vessels.length===0&&<div className="text-center py-16 text-gray-400"><Ship size={40} className="mx-auto mb-3 text-gray-300"/><p>Sin buques registrados</p></div>}
+      </div>
+
+      {showForm&&(
+        <Modal title={editTarget?"Editar Buque":"Nuevo Buque"} onClose={()=>setShowForm(false)} wide>
+          <div className="grid grid-cols-2 gap-3">
+            {[["name","NOMBRE"],["imo","IMO NUMBER"],["mainEngine","MOTOR PRINCIPAL"]].map(([k,l])=>(
+              <div key={k} className={k==="mainEngine"?"col-span-2":""}><label className="text-gray-500 text-xs font-medium mb-1 block">{l}</label><input value={form[k]} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))} className={iCls}/></div>
+            ))}
+            <div><label className="text-gray-500 text-xs font-medium mb-1 block">TIPO</label>
+              <select value={form.type} onChange={e=>setForm(f=>({...f,type:e.target.value}))} className={sCls}>
+                {["Ferry / RoRo","Ferry / Pasajeros","RoRo Cargo","Bulk Carrier","Contenedor","Tanker","Offshore","Remolcador","Barcaza","Otro"].map(t=><option key={t}>{t}</option>)}
+              </select></div>
+            <div><label className="text-gray-500 text-xs font-medium mb-1 block">BANDERA</label>
+              <select value={form.flag} onChange={e=>setForm(f=>({...f,flag:e.target.value}))} className={sCls}>
+                {Object.entries(FLAG_NAMES).map(([k,v])=><option key={k} value={k}>{v} ({k})</option>)}
+              </select></div>
+            <div><label className="text-gray-500 text-xs font-medium mb-1 block">SOCIEDAD CLASIFICADORA</label>
+              <select value={form.class_soc} onChange={e=>setForm(f=>({...f,class_soc:e.target.value}))} className={sCls}>
+                {["Bureau Veritas","DNV GL","Lloyd's Register","ABS","ClassNK","RINA","Korean Register","Otra"].map(s=><option key={s}>{s}</option>)}
+              </select></div>
+            <div><label className="text-gray-500 text-xs font-medium mb-1 block">ESTADO</label>
+              <select value={form.status} onChange={e=>setForm(f=>({...f,status:e.target.value}))} className={sCls}>
+                {Object.entries(VESSEL_STATUS).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
+              </select></div>
+            {[["gt","GT (Tonelaje Bruto)"],["dwt","DWT (Porte Bruto)"],["built","AÑO CONSTRUCCIÓN"],["engineHours","HORAS MOTOR PRINCIPAL"],["lastPort","ÚLTIMO PUERTO"],["nextPort","PRÓXIMO PUERTO"]].map(([k,l])=>(
+              <div key={k}><label className="text-gray-500 text-xs font-medium mb-1 block">{l}</label><input value={form[k]} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))} className={iCls}/></div>
+            ))}
           </div>
-          <ModalActions onSave={submitRep} onCancel={()=>setShowRep(false)} label="Enviar Reporte"/>
+          <ModalActions onSave={save} onCancel={()=>setShowForm(false)} label={editTarget?"Guardar Cambios":"Crear Buque"}/>
         </Modal>
+      )}
+      {confirmDel&&(
+        <div className="fixed inset-0 bg-black/25 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white border border-gray-200 rounded-2xl shadow-xl p-6 w-full max-w-sm">
+            <p className="font-bold text-gray-900 mb-2">Eliminar {confirmDel.name}</p>
+            <p className="text-gray-500 text-sm mb-5">Esta acción no se puede deshacer. Los equipos y certificados del buque también serán eliminados.</p>
+            <div className="flex gap-2">
+              <button onClick={()=>del(confirmDel.id)} className="flex-1 bg-red-600 hover:bg-red-500 text-white font-semibold py-2.5 rounded-lg text-sm">Eliminar</button>
+              <button onClick={()=>setConfirmDel(null)} className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2.5 rounded-lg text-sm">Cancelar</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
 }
 
 // ─── EQUIPMENT ───────────────────────────────────────────────────────────────
-const EMPTY_EQ={code:"",name:"",type:"",location:"",criticality:"B",status:"operativo",hours:"",lastMaint:"",nextMaint:""};
-const EQ_GROUPS=["Mol","Kalmar","Terberg","Liftec","Grúa","Otros"];
-const getGroup=e=>{
-  if(e.code.startsWith("MOL")) return "Mol";
-  if(e.code.startsWith("KAL")) return "Kalmar";
-  if(e.code.startsWith("TER")) return "Terberg";
-  if(e.code.startsWith("LIF")) return "Liftec";
-  if(e.code.startsWith("GRU")) return "Grúa";
-  return "Otros";
-};
-function Equipment({user,data,setData}){
-  const {equip}=data; const isSup=user.role==="supervisor";
-  const [search,setSearch]=useState(""); const [showForm,setShowForm]=useState(false);
-  const [editTarget,setEditTarget]=useState(null); const [form,setForm]=useState(EMPTY_EQ);
-  const [confirmDel,setConfirmDel]=useState(null); const [editingHours,setEditingHours]=useState(null);
-  const visible=equip.filter(e=>!search||e.name.toLowerCase().includes(search.toLowerCase())||e.code.toLowerCase().includes(search.toLowerCase()));
-  const grouped=EQ_GROUPS.map(g=>({group:g,items:visible.filter(e=>getGroup(e)===g)})).filter(g=>g.items.length>0);
-  const openNew=()=>{setForm(EMPTY_EQ);setEditTarget(null);setShowForm(true);};
-  const openEdit=e=>{setForm({...e,hours:String(e.hours)});setEditTarget(e);setShowForm(true);};
-  const saveEquip=()=>{
-    if(!form.code||!form.name)return;
-    const updated=editTarget?equip.map(e=>e.id===editTarget.id?{...e,...form,hours:parseInt(form.hours)||0}:e):[...equip,{id:uid(),...form,hours:parseInt(form.hours)||0,lastMaint:form.lastMaint||new Date().toISOString().slice(0,10)}];
-    setData(d=>({...d,equip:updated}));saveData("equipment",updated);setShowForm(false);
+const EMPTY_EQ = { vesselId:"", code:"", name:"", category:"Motor Principal", maker:"", model:"", serialNo:"", year:"", status:"operativo", hours:"", criticality:"A" };
+
+function Equipment({data,setData}){
+  const {vessels,equipment} = data;
+  const [search,setSearch]=useState(""); const [fltVessel,setFltVessel]=useState("");
+  const [showForm,setShowForm]=useState(false); const [form,setForm]=useState(EMPTY_EQ); const [editTarget,setEditTarget]=useState(null);
+  const [editingHours,setEditingHours]=useState(null); const [confirmDel,setConfirmDel]=useState(null);
+
+  const visible=equipment.filter(e=>{
+    if(fltVessel&&e.vesselId!==fltVessel)return false;
+    if(search&&!e.name.toLowerCase().includes(search.toLowerCase())&&!e.code.toLowerCase().includes(search.toLowerCase()))return false;
+    return true;
+  });
+
+  const grouped=vessels.map(v=>({vessel:v,items:visible.filter(e=>e.vesselId===v.id)})).filter(g=>g.items.length>0||(!fltVessel&&!search));
+
+  const save=()=>{
+    if(!form.vesselId||!form.name)return;
+    const obj={...form,year:parseInt(form.year)||0,hours:parseInt(form.hours)||0};
+    const updated=editTarget?equipment.map(e=>e.id===editTarget.id?{...e,...obj}:e):[...equipment,{id:uid(),...obj}];
+    setData(d=>({...d,equipment:updated}));saveData("equipment",updated);setShowForm(false);
   };
-  const deleteEquip=id=>{const updated=equip.filter(e=>e.id!==id);setData(d=>({...d,equip:updated}));saveData("equipment",updated);setConfirmDel(null);};
-  const saveHours=()=>{if(!editingHours)return;const val=parseInt(editingHours.val)||0;const updated=equip.map(e=>e.id===editingHours.id?{...e,hours:val}:e);setData(d=>({...d,equip:updated}));saveData("equipment",updated);setEditingHours(null);};
+  const saveHours=()=>{
+    if(!editingHours)return;
+    const updated=equipment.map(e=>e.id===editingHours.id?{...e,hours:parseInt(editingHours.val)||0}:e);
+    setData(d=>({...d,equipment:updated}));saveData("equipment",updated);setEditingHours(null);
+  };
+  const del=id=>{const u=equipment.filter(e=>e.id!==id);setData(d=>({...d,equipment:u}));saveData("equipment",u);setConfirmDel(null);};
+
   return(
     <div className="p-6">
       <div className="flex items-center justify-between mb-5">
-        <div><h1 className="text-gray-900 font-bold text-xl">Equipos</h1><p className="text-gray-500 text-sm">{equip.length} equipos registrados</p></div>
-        {isSup&&<button onClick={openNew} style={{background:NV.blue}} className={btnPrimary}><Plus size={15}/>Nuevo Equipo</button>}
+        <div><h1 className="text-gray-900 font-bold text-xl">Equipos</h1><p className="text-gray-500 text-sm">{equipment.length} equipos registrados</p></div>
+        <button onClick={()=>{setForm(EMPTY_EQ);setEditTarget(null);setShowForm(true);}} style={{background:NV.blue}} className={btnPrimary}><Plus size={15}/>Nuevo Equipo</button>
       </div>
-      <div className="relative mb-5">
-        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
-        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar por nombre o código..." className={iCls+" pl-9 max-w-xs"}/>
+
+      <div className="flex gap-2 mb-5 flex-wrap">
+        <div className="relative flex-1 min-w-40">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar equipo..." className={`${iCls} pl-9`}/>
+        </div>
+        <select value={fltVessel} onChange={e=>setFltVessel(e.target.value)} className="bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-700 text-sm focus:outline-none focus:border-blue-400">
+          <option value="">Todos los buques</option>
+          {vessels.map(v=><option key={v.id} value={v.id}>{v.name}</option>)}
+        </select>
+        {(search||fltVessel)&&<button onClick={()=>{setSearch("");setFltVessel("");}} className="flex items-center gap-1 text-xs text-red-500 border border-red-200 bg-red-50 px-2.5 py-1.5 rounded-lg"><X size={11}/>Limpiar</button>}
       </div>
-      <div className="space-y-6">
-        {grouped.map(({group,items})=>(
-          <div key={group}>
+
+      <div className="space-y-5">
+        {grouped.filter(g=>g.items.length>0).map(({vessel,items})=>(
+          <div key={vessel.id}>
             <div className="flex items-center gap-2 mb-2">
-              <div className="w-2 h-5 rounded-full" style={{background:NV.blue}}/>
-              <h2 className="font-bold text-sm" style={{color:NV.navy}}>{group}</h2>
+              <Ship size={14} style={{color:NV.blue}}/>
+              <h2 className="font-bold text-sm" style={{color:NV.navy}}>{vessel.name}</h2>
               <span className="text-gray-400 text-xs">({items.length} equipos)</span>
             </div>
             <div className={`${card} overflow-hidden`}>
@@ -552,50 +659,53 @@ function Equipment({user,data,setData}){
                 <thead>
                   <tr className="text-xs text-white font-semibold uppercase tracking-wider" style={{background:NV.navyMid}}>
                     <th className="text-left px-4 py-2.5">Código</th>
-                    <th className="text-left px-4 py-2.5">Nombre</th>
-                    <th className="text-left px-4 py-2.5 hidden md:table-cell">Ubicación</th>
+                    <th className="text-left px-4 py-2.5">Nombre / Categoría</th>
+                    <th className="text-left px-4 py-2.5 hidden md:table-cell">Fabricante / Modelo</th>
                     <th className="text-left px-4 py-2.5">Criticidad</th>
                     <th className="text-left px-4 py-2.5">Estado</th>
-                    <th className="text-left px-4 py-2.5"><span className="flex items-center gap-1"><Gauge size={11}/>Horómetro</span></th>
-                    <th className="text-left px-4 py-2.5 hidden lg:table-cell">Próx. Mant.</th>
-                    {isSup&&<th className="px-4 py-2.5 text-center">Acciones</th>}
+                    <th className="text-left px-4 py-2.5"><span className="flex items-center gap-1"><Gauge size={11}/>Horas</span></th>
+                    <th className="px-4 py-2.5 text-center">Acción</th>
                   </tr>
                 </thead>
                 <tbody>
                   {items.map((e,i)=>{
-                    const isEditingThis=editingHours?.id===e.id;
+                    const es=EQUIP_STATUS[e.status]||EQUIP_STATUS.operativo;
+                    const isEditH=editingHours?.id===e.id;
                     return(
                       <tr key={e.id} className={`border-b border-gray-100 last:border-0 hover:bg-blue-50/30 transition ${i%2===0?"bg-white":"bg-gray-50/40"}`}>
                         <td className="px-4 py-2.5"><span className="font-mono font-bold text-xs" style={{color:NV.blue}}>{e.code}</span></td>
-                        <td className="px-4 py-2.5 text-gray-800 font-medium text-sm">{e.name}</td>
-                        <td className="px-4 py-2.5 hidden md:table-cell text-gray-500 text-xs">{e.location}</td>
-                        <td className="px-4 py-2.5"><span className={`px-2 py-0.5 rounded-full border text-xs font-bold ${CRIT_CLS[e.criticality]}`}>{CRIT_LABEL[e.criticality]}</span></td>
-                        <td className="px-4 py-2.5"><Badge s={e.status}/></td>
                         <td className="px-4 py-2.5">
-                          {isEditingThis?(
+                          <p className="font-semibold text-gray-800 text-sm">{e.name}</p>
+                          <p className="text-gray-400 text-xs">{e.category}</p>
+                        </td>
+                        <td className="px-4 py-2.5 hidden md:table-cell">
+                          <p className="text-gray-700 text-xs">{e.maker} {e.model}</p>
+                          {e.serialNo&&<p className="text-gray-400 text-xs">S/N: {e.serialNo}</p>}
+                        </td>
+                        <td className="px-4 py-2.5"><span className={`px-2 py-0.5 rounded-full border text-xs font-bold ${CRIT_CLS[e.criticality]}`}>{e.criticality}</span></td>
+                        <td className="px-4 py-2.5"><span className={`inline-flex px-2 py-0.5 rounded-full border text-xs font-semibold ${es.cls}`}>{es.label}</span></td>
+                        <td className="px-4 py-2.5">
+                          {isEditH?(
                             <div className="flex items-center gap-1">
-                              <input type="number" value={editingHours.val} onChange={e2=>setEditingHours(h=>({...h,val:e2.target.value}))}
-                                onKeyDown={e2=>{if(e2.key==="Enter")saveHours();if(e2.key==="Escape")setEditingHours(null);}}
-                                className="w-24 border border-blue-400 rounded-lg px-2 py-1 text-gray-900 text-xs focus:outline-none" autoFocus/>
-                              <button onClick={saveHours} className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0" style={{background:NV.blue}}><Check size={11} className="text-white"/></button>
-                              <button onClick={()=>setEditingHours(null)} className="w-6 h-6 bg-gray-200 rounded-full flex items-center justify-center flex-shrink-0"><X size={11} className="text-gray-600"/></button>
+                              <input type="number" value={editingHours.val} onChange={ev=>setEditingHours(h=>({...h,val:ev.target.value}))}
+                                onKeyDown={ev=>{if(ev.key==="Enter")saveHours();if(ev.key==="Escape")setEditingHours(null);}}
+                                className="w-24 border border-blue-400 rounded-lg px-2 py-1 text-xs focus:outline-none" autoFocus/>
+                              <button onClick={saveHours} className="w-6 h-6 rounded-full flex items-center justify-center" style={{background:NV.blue}}><Check size={11} className="text-white"/></button>
+                              <button onClick={()=>setEditingHours(null)} className="w-6 h-6 bg-gray-200 rounded-full flex items-center justify-center"><X size={11} className="text-gray-600"/></button>
                             </div>
                           ):(
-                            <div className="flex items-center gap-2 group">
-                              <span className="text-gray-700 font-mono text-sm font-semibold">{e.hours.toLocaleString()}<span className="text-gray-400 text-xs ml-0.5">h</span></span>
-                              {isSup&&<button onClick={()=>setEditingHours({id:e.id,val:String(e.hours)})} className="opacity-0 group-hover:opacity-100 transition p-1 rounded hover:bg-blue-50"><Edit2 size={11} style={{color:NV.blue}}/></button>}
+                            <div className="flex items-center gap-1 group">
+                              <span className="text-gray-700 font-mono text-sm font-semibold">{(e.hours||0).toLocaleString()}<span className="text-gray-400 text-xs ml-0.5">h</span></span>
+                              <button onClick={()=>setEditingHours({id:e.id,val:String(e.hours||0)})} className="opacity-0 group-hover:opacity-100 transition p-1 rounded hover:bg-blue-50"><Edit2 size={11} style={{color:NV.blue}}/></button>
                             </div>
                           )}
                         </td>
-                        <td className="px-4 py-2.5 hidden lg:table-cell text-gray-500 text-xs">{fmt(e.nextMaint)}</td>
-                        {isSup&&(
-                          <td className="px-4 py-2.5">
-                            <div className="flex items-center justify-center gap-1">
-                              <button onClick={()=>openEdit(e)} className="p-1.5 rounded-lg hover:bg-blue-50 transition" style={{color:NV.blue}}><Edit2 size={13}/></button>
-                              <button onClick={()=>setConfirmDel(e)} className="p-1.5 rounded-lg text-red-500 hover:bg-red-50 transition"><Trash2 size={13}/></button>
-                            </div>
-                          </td>
-                        )}
+                        <td className="px-4 py-2.5">
+                          <div className="flex items-center justify-center gap-1">
+                            <button onClick={()=>{setForm({...e,year:String(e.year),hours:String(e.hours)});setEditTarget(e);setShowForm(true);}} className="p-1.5 rounded-lg hover:bg-blue-50" style={{color:NV.blue}}><Edit2 size={13}/></button>
+                            <button onClick={()=>setConfirmDel(e)} className="p-1.5 rounded-lg text-red-500 hover:bg-red-50"><Trash2 size={13}/></button>
+                          </div>
+                        </td>
                       </tr>
                     );
                   })}
@@ -604,12 +714,25 @@ function Equipment({user,data,setData}){
             </div>
           </div>
         ))}
+        {visible.length===0&&<div className="text-center py-12 text-gray-400"><Package size={36} className="mx-auto mb-3 text-gray-300"/><p>Sin equipos encontrados</p></div>}
       </div>
 
       {showForm&&(
-        <Modal title={editTarget?"Editar Equipo":"Nuevo Equipo"} onClose={()=>setShowForm(false)}>
+        <Modal title={editTarget?"Editar Equipo":"Nuevo Equipo"} onClose={()=>setShowForm(false)} wide>
           <div className="grid grid-cols-2 gap-3">
-            {[["code","CÓDIGO"],["name","NOMBRE"],["type","TIPO"],["location","UBICACIÓN"]].map(([k,l])=>(
+            <div className="col-span-2"><label className="text-gray-500 text-xs font-medium mb-1 block">BUQUE</label>
+              <select value={form.vesselId} onChange={e=>setForm(f=>({...f,vesselId:e.target.value}))} className={sCls}>
+                <option value="">Seleccionar buque...</option>
+                {vessels.map(v=><option key={v.id} value={v.id}>{v.name}</option>)}
+              </select></div>
+            {[["code","CÓDIGO"],["name","NOMBRE"]].map(([k,l])=>(
+              <div key={k}><label className="text-gray-500 text-xs font-medium mb-1 block">{l}</label><input value={form[k]} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))} className={iCls}/></div>
+            ))}
+            <div className="col-span-2"><label className="text-gray-500 text-xs font-medium mb-1 block">CATEGORÍA</label>
+              <select value={form.category} onChange={e=>setForm(f=>({...f,category:e.target.value}))} className={sCls}>
+                {EQUIP_CATEGORIES.map(c=><option key={c}>{c}</option>)}
+              </select></div>
+            {[["maker","FABRICANTE"],["model","MODELO"],["serialNo","N° SERIE"],["year","AÑO"],["hours","HORAS"]].map(([k,l])=>(
               <div key={k}><label className="text-gray-500 text-xs font-medium mb-1 block">{l}</label><input value={form[k]} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))} className={iCls}/></div>
             ))}
             <div><label className="text-gray-500 text-xs font-medium mb-1 block">CRITICIDAD</label>
@@ -618,26 +741,20 @@ function Equipment({user,data,setData}){
               </select></div>
             <div><label className="text-gray-500 text-xs font-medium mb-1 block">ESTADO</label>
               <select value={form.status} onChange={e=>setForm(f=>({...f,status:e.target.value}))} className={sCls}>
-                <option value="operativo">Operativo</option><option value="mantenimiento">Mantenimiento</option><option value="falla">Falla</option>
+                {Object.entries(EQUIP_STATUS).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
               </select></div>
-            <div><label className="text-gray-500 text-xs font-medium mb-1 block">HORÓMETRO (h)</label><input type="number" value={form.hours} onChange={e=>setForm(f=>({...f,hours:e.target.value}))} className={iCls}/></div>
-            <div><label className="text-gray-500 text-xs font-medium mb-1 block">PRÓX. MANTENCIÓN</label><input type="date" value={form.nextMaint} onChange={e=>setForm(f=>({...f,nextMaint:e.target.value}))} className={iCls}/></div>
-            <div className="col-span-2"><label className="text-gray-500 text-xs font-medium mb-1 block">ÚLTIMO MANTENCIÓN</label><input type="date" value={form.lastMaint} onChange={e=>setForm(f=>({...f,lastMaint:e.target.value}))} className={iCls}/></div>
           </div>
-          <ModalActions onSave={saveEquip} onCancel={()=>setShowForm(false)} label={editTarget?"Guardar Cambios":"Crear Equipo"}/>
+          <ModalActions onSave={save} onCancel={()=>setShowForm(false)} label={editTarget?"Guardar Cambios":"Crear Equipo"}/>
         </Modal>
       )}
       {confirmDel&&(
         <div className="fixed inset-0 bg-black/25 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white border border-gray-200 rounded-2xl shadow-xl p-6 w-full max-w-sm">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 bg-red-50 border border-red-200 rounded-xl flex items-center justify-center flex-shrink-0"><Trash2 size={18} className="text-red-600"/></div>
-              <div><p className="text-gray-900 font-bold text-sm">Eliminar {confirmDel.code}</p><p className="text-gray-500 text-xs">{confirmDel.name}</p></div>
-            </div>
-            <p className="text-gray-600 text-sm mb-5">Esta acción no se puede deshacer.</p>
+            <p className="font-bold text-gray-900 mb-2">Eliminar {confirmDel.name}</p>
+            <p className="text-gray-500 text-sm mb-5">Esta acción no se puede deshacer.</p>
             <div className="flex gap-2">
-              <button onClick={()=>deleteEquip(confirmDel.id)} className="flex-1 bg-red-600 hover:bg-red-500 text-white font-semibold py-2.5 rounded-lg text-sm transition">Eliminar</button>
-              <button onClick={()=>setConfirmDel(null)} className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2.5 rounded-lg text-sm transition">Cancelar</button>
+              <button onClick={()=>del(confirmDel.id)} className="flex-1 bg-red-600 hover:bg-red-500 text-white font-semibold py-2.5 rounded-lg text-sm">Eliminar</button>
+              <button onClick={()=>setConfirmDel(null)} className="flex-1 bg-gray-100 text-gray-700 py-2.5 rounded-lg text-sm">Cancelar</button>
             </div>
           </div>
         </div>
@@ -646,251 +763,425 @@ function Equipment({user,data,setData}){
   );
 }
 
-// ─── PLANS ───────────────────────────────────────────────────────────────────
-const EMPTY_PLAN={name:"",frequency:"",unit:"días",nextDate:"",estimatedHours:"",technician:"",tasks:""};
-function Plans({user,data,setData}){
-  const {plans,equip,users,wos}=data;
-  const [showForm,setShowForm]=useState(false); const [showMasivo,setShowMasivo]=useState(false);
-  const [form,setForm]=useState({equipId:"",...EMPTY_PLAN});
-  const [mForm,setMForm]=useState(EMPTY_PLAN); const [selEquips,setSelEquips]=useState([]); const [mName,setMName]=useState("");
-  const genOT=(plan,allWOs)=>{
-    const eq=equip.find(e=>e.id===plan.equipId);if(!eq)return null;
-    const priority=eq.criticality==="A"?"alta":eq.criticality==="B"?"media":"baja";
-    return {id:uid(),code:nextOTCode(allWOs),type:"preventivo",equipId:plan.equipId,planId:plan.id,title:plan.name,priority,status:"asignada",assignedTo:plan.technician,createdAt:new Date().toISOString(),scheduledDate:plan.nextDate,estimatedHours:parseFloat(plan.estimatedHours)||0,actualHours:null,description:`OT automática. Tareas: ${Array.isArray(plan.tasks)?plan.tasks.join(", "):plan.tasks}`,observations:"",parts:[],source:"plan"};
+// ─── CERTIFICATES ─────────────────────────────────────────────────────────────
+const EMPTY_CERT = { vesselId:"", type:"Safety Equipment Certificate", number:"", issueDate:"", expiryDate:"", issuedBy:"Bureau Veritas", notes:"" };
+
+function Certificates({data,setData}){
+  const {vessels,certificates} = data;
+  const [fltVessel,setFltVessel]=useState(""); const [fltStatus,setFltStatus]=useState("");
+  const [showForm,setShowForm]=useState(false); const [form,setForm]=useState(EMPTY_CERT); const [editTarget,setEditTarget]=useState(null);
+  const [confirmDel,setConfirmDel]=useState(null);
+
+  const visible=certificates.filter(c=>{
+    if(fltVessel&&c.vesselId!==fltVessel)return false;
+    if(fltStatus){const s=certStatus(c.expiryDate).s;if(s!==fltStatus)return false;}
+    return true;
+  }).sort((a,b)=>(certStatus(a.expiryDate).days||999)-(certStatus(b.expiryDate).days||999));
+
+  const total=certificates.length;
+  const expired  =certificates.filter(c=>certStatus(c.expiryDate).s==="expired").length;
+  const critical =certificates.filter(c=>certStatus(c.expiryDate).s==="critical").length;
+  const expiring =certificates.filter(c=>certStatus(c.expiryDate).s==="expiring").length;
+  const valid    =certificates.filter(c=>certStatus(c.expiryDate).s==="valid").length;
+
+  const save=()=>{
+    if(!form.vesselId||!form.type||!form.expiryDate)return;
+    const updated=editTarget?certificates.map(c=>c.id===editTarget.id?{...c,...form}:c):[...certificates,{id:uid(),...form}];
+    setData(d=>({...d,certificates:updated}));saveData("certificates",updated);setShowForm(false);
   };
-  const addPlan=()=>{
-    if(!form.equipId||!form.name)return;
-    const np={id:uid(),...form,frequency:parseInt(form.frequency)||0,estimatedHours:parseFloat(form.estimatedHours)||0,tasks:form.tasks.split("\n").filter(Boolean)};
-    const updP=[...plans,np];const newOT=genOT(np,wos);const updW=newOT?[...wos,newOT]:wos;
-    setData(d=>({...d,plans:updP,wos:updW}));saveData("plans",updP);saveData("workOrders",updW);
-    setShowForm(false);if(newOT)alert(`✅ OT ${newOT.code} generada`);
-  };
-  const addMasivo=()=>{
-    if(selEquips.length===0||!mName)return;
-    let allWOs=[...wos];let newPlans=[...plans];
-    selEquips.forEach(eqId=>{const eq=equip.find(e=>e.id===eqId);if(!eq)return;
-      const planName=mName.replace("{equipo}",eq.name).replace("{codigo}",eq.code);
-      const np={id:uid(),equipId:eqId,name:planName,frequency:parseInt(mForm.frequency)||0,unit:mForm.unit,nextDate:mForm.nextDate,tasks:mForm.tasks.split("\n").filter(Boolean),estimatedHours:parseFloat(mForm.estimatedHours)||0,technician:mForm.technician};
-      newPlans.push(np);const newOT=genOT(np,allWOs);if(newOT)allWOs.push(newOT);
+  const del=id=>{const u=certificates.filter(c=>c.id!==id);setData(d=>({...d,certificates:u}));saveData("certificates",u);setConfirmDel(null);};
+
+  const downloadCSV=()=>{
+    const rows=visible.map(c=>{
+      const v=vessels.find(v=>v.id===c.vesselId);
+      const cs=certStatus(c.expiryDate);
+      return{"Buque":v?.name||"—","Certificado":c.type,"Número":c.number,"Emitido por":c.issuedBy,"Fecha emisión":c.issueDate,"Fecha vencimiento":c.expiryDate,"Días restantes":cs.days??""," Estado":cs.s};
     });
-    setData(d=>({...d,plans:newPlans,wos:allWOs}));saveData("plans",newPlans);saveData("workOrders",allWOs);
-    setShowMasivo(false);setSelEquips([]);setMForm(EMPTY_PLAN);setMName("");
-    alert(`✅ ${selEquips.length} planes creados`);
+    if(!rows.length)return;
+    const h=Object.keys(rows[0]);
+    const lines=[h.join(","),...rows.map(r=>h.map(k=>`"${(r[k]??"")}"`).join(","))];
+    const blob=new Blob([lines.join("\n")],{type:"text/csv;charset=utf-8;"});
+    const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`certificados_${new Date().toISOString().slice(0,10)}.csv`;a.click();
   };
-  const generateOT=plan=>{const newOT=genOT(plan,wos);if(!newOT)return;const updW=[...wos,newOT];setData(d=>({...d,wos:updW}));saveData("workOrders",updW);alert(`✅ OT ${newOT.code} — Prioridad ${newOT.priority.toUpperCase()}`);};
+
   return(
     <div className="p-6">
       <div className="flex items-center justify-between mb-5">
-        <div><h1 className="text-gray-900 font-bold text-xl">Plan de Mantenimiento Preventivo</h1><p className="text-gray-500 text-sm">Programación automática de OT</p></div>
-        {user.role==="supervisor"&&<div className="flex gap-2">
-          <button onClick={()=>setShowMasivo(true)} className={btnPrimary} style={{background:`linear-gradient(90deg,${NV.navy},${NV.blue})`}}><Layers size={15}/>Plan Masivo</button>
-          <button onClick={()=>setShowForm(true)}   className={btnPrimary} style={{background:NV.blue}}><Plus size={15}/>Nuevo Plan</button>
-        </div>}
-      </div>
-      {plans.length===0&&<div className="text-center py-16 text-gray-400"><Calendar size={40} className="mx-auto mb-3 text-gray-300"/><p className="font-medium">Sin planes de mantenimiento</p><p className="text-sm mt-1">Crea un plan individual o aplica un plan masivo a múltiples equipos</p></div>}
-      <div className="space-y-4">
-        {plans.map(p=>{
-          const eq=equip.find(e=>e.id===p.equipId);const tech=users.find(u=>u.id===p.technician);
-          const linked=wos.filter(w=>w.planId===p.id);const daysLeft=Math.ceil((new Date(p.nextDate)-new Date())/86400000);
-          return(
-            <div key={p.id} className={`${card} p-5 hover:shadow-md transition`}>
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-2 flex-wrap">
-                    <span className="font-mono font-bold text-xs" style={{color:NV.blue}}>{eq?.code}</span>
-                    <span className={`px-2 py-0.5 rounded-full border text-xs font-bold ${daysLeft<=0?"text-red-700 bg-red-50 border-red-200":daysLeft<=7?"text-red-700 bg-red-50 border-red-200":daysLeft<=30?"text-amber-700 bg-amber-50 border-amber-200":"text-emerald-700 bg-emerald-50 border-emerald-200"}`}>
-                      {daysLeft<=0?"VENCIDO":`En ${daysLeft}d`}
-                    </span>
-                  </div>
-                  <p className="text-gray-800 font-semibold text-sm mb-2">{p.name}</p>
-                  <div className="flex items-center gap-4 text-xs text-gray-400 flex-wrap">
-                    <span className="flex items-center gap-1"><RefreshCw size={10}/>Cada {p.frequency} {p.unit}</span>
-                    <span className="flex items-center gap-1"><Calendar size={10}/>Prox: {fmt(p.nextDate)}</span>
-                    <span className="flex items-center gap-1"><Clock size={10}/>{p.estimatedHours}h est.</span>
-                    {tech&&<span className="flex items-center gap-1"><Users size={10}/>{tech.name}</span>}
-                  </div>
-                  {Array.isArray(p.tasks)&&p.tasks.length>0&&<div className="flex flex-wrap gap-1.5 mt-3">{p.tasks.map((t,i)=><span key={i} className="text-xs border px-2 py-0.5 rounded-full" style={{background:NV.light,borderColor:"#BFD9F2",color:NV.navy}}>{t}</span>)}</div>}
-                </div>
-                <div className="flex flex-col items-end gap-2 flex-shrink-0">
-                  <span className="text-gray-400 text-xs">{linked.length} OT</span>
-                  {user.role==="supervisor"&&<button onClick={()=>generateOT(p)} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg hover:opacity-90 transition font-medium text-white" style={{background:NV.blue}}><Zap size={12}/>Generar OT</button>}
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      {showForm&&(
-        <Modal title="Nuevo Plan de Mantenimiento" onClose={()=>setShowForm(false)}>
-          <div className="space-y-3">
-            <div><label className="text-gray-500 text-xs font-medium mb-1 block">EQUIPO</label><select value={form.equipId} onChange={e=>setForm(f=>({...f,equipId:e.target.value}))} className={sCls}><option value="">Seleccionar...</option>{equip.map(e=><option key={e.id} value={e.id}>{e.name} ({e.code})</option>)}</select></div>
-            <div><label className="text-gray-500 text-xs font-medium mb-1 block">NOMBRE DEL PLAN</label><input value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))} className={iCls}/></div>
-            <div className="grid grid-cols-2 gap-3">
-              <div><label className="text-gray-500 text-xs font-medium mb-1 block">FRECUENCIA</label><input type="number" value={form.frequency} onChange={e=>setForm(f=>({...f,frequency:e.target.value}))} className={iCls}/></div>
-              <div><label className="text-gray-500 text-xs font-medium mb-1 block">UNIDAD</label><select value={form.unit} onChange={e=>setForm(f=>({...f,unit:e.target.value}))} className={sCls}><option value="días">Días</option><option value="horas">Horas</option><option value="semanas">Semanas</option></select></div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div><label className="text-gray-500 text-xs font-medium mb-1 block">PRÓXIMA FECHA</label><input type="date" value={form.nextDate} onChange={e=>setForm(f=>({...f,nextDate:e.target.value}))} className={iCls}/></div>
-              <div><label className="text-gray-500 text-xs font-medium mb-1 block">HRS ESTIMADAS</label><input type="number" value={form.estimatedHours} onChange={e=>setForm(f=>({...f,estimatedHours:e.target.value}))} className={iCls}/></div>
-            </div>
-            <div><label className="text-gray-500 text-xs font-medium mb-1 block">TÉCNICO ASIGNADO</label><select value={form.technician} onChange={e=>setForm(f=>({...f,technician:e.target.value}))} className={sCls}><option value="">Seleccionar...</option>{users.filter(u=>u.role==="mecanico").map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select></div>
-            <div><label className="text-gray-500 text-xs font-medium mb-1 block">TAREAS (una por línea)</label><textarea value={form.tasks} onChange={e=>setForm(f=>({...f,tasks:e.target.value}))} rows={4} className={iCls+" resize-none"} placeholder={"Cambio aceite motor\nFiltro hidráulico\nRevisión frenos"}/></div>
-          </div>
-          <ModalActions onSave={addPlan} onCancel={()=>setShowForm(false)} label="Guardar y Generar OT"/>
-        </Modal>
-      )}
-      {showMasivo&&(
-        <Modal title="Plan Masivo — Múltiples equipos" onClose={()=>setShowMasivo(false)} wide={true}>
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 text-blue-700 text-xs flex items-start gap-2">
-            <Info size={14} className="flex-shrink-0 mt-0.5"/>
-            <span>Usa <strong>{"{equipo}"}</strong> o <strong>{"{codigo}"}</strong> en el nombre para personalizarlo por equipo.</span>
-          </div>
-          <div className="grid grid-cols-2 gap-5">
-            <div>
-              <p className="text-gray-700 font-semibold text-sm mb-2">Equipos <span style={{color:NV.blue}}>({selEquips.length})</span></p>
-              <div className="space-y-1.5 max-h-72 overflow-y-auto pr-1">
-                {equip.map(e=>{const checked=selEquips.includes(e.id);return(
-                  <label key={e.id} className={`flex items-center gap-2.5 p-2.5 rounded-lg border cursor-pointer transition ${checked?"border-blue-300":"bg-gray-50 border-gray-200 hover:border-gray-300"}`} style={checked?{background:NV.light}:{}}>
-                    <input type="checkbox" checked={checked} onChange={()=>setSelEquips(s=>s.includes(e.id)?s.filter(x=>x!==e.id):[...s,e.id])} className="w-4 h-4" style={{accentColor:NV.blue}}/>
-                    <div><p className="text-gray-800 text-xs font-semibold">{e.name}</p><p className="text-gray-400 text-xs">{e.code}</p></div>
-                  </label>
-                );})}
-              </div>
-              <div className="flex gap-2 mt-2">
-                <button onClick={()=>setSelEquips(equip.map(e=>e.id))} className="flex-1 text-xs hover:underline py-1" style={{color:NV.blue}}>Todos</button>
-                <button onClick={()=>setSelEquips([])} className="flex-1 text-xs text-gray-400 hover:underline py-1">Limpiar</button>
-              </div>
-            </div>
-            <div className="space-y-3">
-              <div><label className="text-gray-500 text-xs font-medium mb-1 block">NOMBRE</label><input value={mName} onChange={e=>setMName(e.target.value)} className={iCls} placeholder="Servicio 250h - {equipo}"/></div>
-              <div className="grid grid-cols-2 gap-2">
-                <div><label className="text-gray-500 text-xs font-medium mb-1 block">FRECUENCIA</label><input type="number" value={mForm.frequency} onChange={e=>setMForm(f=>({...f,frequency:e.target.value}))} className={iCls}/></div>
-                <div><label className="text-gray-500 text-xs font-medium mb-1 block">UNIDAD</label><select value={mForm.unit} onChange={e=>setMForm(f=>({...f,unit:e.target.value}))} className={sCls}><option value="días">Días</option><option value="horas">Horas</option><option value="semanas">Semanas</option></select></div>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div><label className="text-gray-500 text-xs font-medium mb-1 block">PRÓXIMA FECHA</label><input type="date" value={mForm.nextDate} onChange={e=>setMForm(f=>({...f,nextDate:e.target.value}))} className={iCls}/></div>
-                <div><label className="text-gray-500 text-xs font-medium mb-1 block">HRS ESTIMADAS</label><input type="number" value={mForm.estimatedHours} onChange={e=>setMForm(f=>({...f,estimatedHours:e.target.value}))} className={iCls}/></div>
-              </div>
-              <div><label className="text-gray-500 text-xs font-medium mb-1 block">TÉCNICO</label><select value={mForm.technician} onChange={e=>setMForm(f=>({...f,technician:e.target.value}))} className={sCls}><option value="">Seleccionar...</option>{users.filter(u=>u.role==="mecanico").map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select></div>
-              <div><label className="text-gray-500 text-xs font-medium mb-1 block">TAREAS (una por línea)</label><textarea value={mForm.tasks} onChange={e=>setMForm(f=>({...f,tasks:e.target.value}))} rows={3} className={iCls+" resize-none"} placeholder={"Cambio aceite\nFiltros\nRevisión general"}/></div>
-            </div>
-          </div>
-          {selEquips.length>0&&mName&&(
-            <div className="mt-4 rounded-lg p-3 text-xs border" style={{background:NV.light,borderColor:"#BFD9F2",color:NV.navy}}>
-              <p className="font-semibold mb-1">Vista previa:</p>
-              {selEquips.slice(0,3).map(id=>{const eq=equip.find(e=>e.id===id);return<p key={id}>• {mName.replace("{equipo}",eq?.name||"").replace("{codigo}",eq?.code||"")}</p>;})}
-              {selEquips.length>3&&<p className="opacity-60">... y {selEquips.length-3} más</p>}
-            </div>
-          )}
-          <ModalActions onSave={addMasivo} onCancel={()=>setShowMasivo(false)} label={`Crear ${selEquips.length} Planes`}/>
-        </Modal>
-      )}
-    </div>
-  );
-}
-
-// ─── INDICADORES ─────────────────────────────────────────────────────────────
-function Indicadores({data}){
-  const {wos,equip}=data;
-  const calc=eqId=>{const eq=equip.find(e=>e.id===eqId);const corr=wos.filter(w=>w.equipId===eqId&&w.type==="correctivo");const comp=corr.filter(w=>w.status==="completada"&&w.actualHours);const n=corr.length;const mttr=comp.length>0?(comp.reduce((s,w)=>s+(w.actualHours||0),0)/comp.length):null;const mtbf=n>0&&eq?(eq.hours/n):null;const disp=(mtbf!==null&&mttr!==null&&(mtbf+mttr)>0)?(mtbf/(mtbf+mttr)*100):null;return {n,mttr,mtbf,disp};};
-  const gC=wos.filter(w=>w.type==="correctivo");const gCo=gC.filter(w=>w.status==="completada"&&w.actualHours);
-  const gMTTR=gCo.length>0?(gCo.reduce((s,w)=>s+(w.actualHours||0),0)/gCo.length):null;
-  const tH=equip.reduce((s,e)=>s+e.hours,0);const gMTBF=gC.length>0?(tH/gC.length):null;const gD=(gMTBF!==null&&gMTTR!==null&&(gMTBF+gMTTR)>0)?(gMTBF/(gMTBF+gMTTR)*100):null;
-  const fH=v=>v===null?"N/D":`${v.toFixed(1)}h`;const fP=v=>v===null?"N/D":`${v.toFixed(1)}%`;const dC=v=>v===null?"text-gray-400":v>=90?"text-emerald-600":v>=70?"text-amber-600":"text-red-600";
-  return(
-    <div className="p-6 space-y-6">
-      <div><h1 className="text-gray-900 font-bold text-xl">Indicadores de Mantenimiento</h1><p className="text-gray-500 text-sm">MTBF · MTTR · Disponibilidad</p></div>
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard icon={Clock}         label="MTBF Global"    value={fH(gMTBF)}    sub="horas entre fallas"         color="blue"/>
-        <StatCard icon={Wrench}        label="MTTR Global"    value={fH(gMTTR)}    sub="horas por reparación"       color="amber"/>
-        <StatCard icon={TrendingUp}    label="Disponibilidad" value={fP(gD)}       sub="de la flota"                color="emerald"/>
-        <StatCard icon={AlertTriangle} label="Total Fallas"   value={gC.length}    sub="OT correctivas registradas" color="red"/>
-      </div>
-      <div className={`${card} overflow-hidden`}>
-        <div className="px-4 py-3 text-xs text-white font-semibold uppercase tracking-wider flex items-center gap-2" style={{background:NV.navyMid}}>
-          <BarChart2 size={14}/>KPIs por Equipo
+        <div><h1 className="text-gray-900 font-bold text-xl">Certificados</h1><p className="text-gray-500 text-sm">{total} certificados registrados</p></div>
+        <div className="flex gap-2">
+          {visible.length>0&&<button onClick={downloadCSV} className={btnSecondary} style={{borderColor:NV.blue,color:NV.blue,background:"white"}}><FileDown size={14}/>Exportar</button>}
+          <button onClick={()=>{setForm(EMPTY_CERT);setEditTarget(null);setShowForm(true);}} style={{background:NV.blue}} className={btnPrimary}><Plus size={15}/>Nuevo Certificado</button>
         </div>
+      </div>
+
+      {/* Summary stats */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+        {[["Vencidos",expired,"text-red-700 bg-red-50 border-red-200","expired"],["Críticos (≤30d)",critical,"text-red-700 bg-red-50 border-red-200","critical"],["Por vencer (≤90d)",expiring,"text-amber-700 bg-amber-50 border-amber-200","expiring"],["Vigentes",valid,"text-emerald-700 bg-emerald-50 border-emerald-200","valid"]].map(([l,n,cls,s])=>(
+          <button key={s} onClick={()=>setFltStatus(fltStatus===s?"":s)}
+            className={`${card} p-4 text-center cursor-pointer hover:shadow-md transition ${fltStatus===s?"ring-2 ring-blue-400":""}`}>
+            <p className={`text-2xl font-bold ${cls.split(" ")[0]}`}>{n}</p>
+            <p className="text-gray-500 text-xs mt-1">{l}</p>
+          </button>
+        ))}
+      </div>
+
+      {/* Filters */}
+      <div className="flex gap-2 mb-4 flex-wrap items-center">
+        <Filter size={14} className="text-gray-400 flex-shrink-0"/>
+        <select value={fltVessel} onChange={e=>setFltVessel(e.target.value)} className="bg-white border border-gray-300 rounded-lg px-3 py-1.5 text-gray-700 text-xs focus:outline-none focus:border-blue-400">
+          <option value="">Todos los buques</option>
+          {vessels.map(v=><option key={v.id} value={v.id}>{v.name}</option>)}
+        </select>
+        {(fltVessel||fltStatus)&&<button onClick={()=>{setFltVessel("");setFltStatus("");}} className="flex items-center gap-1 text-xs text-red-500 border border-red-200 bg-red-50 px-2.5 py-1.5 rounded-lg"><X size={11}/>Limpiar</button>}
+      </div>
+
+      {/* Certificate list */}
+      <div className={`${card} overflow-hidden`}>
         <table className="w-full text-sm">
-          <thead><tr className="bg-gray-50 border-b border-gray-200 text-xs text-gray-500 font-semibold uppercase tracking-wider">
-            <th className="text-left px-4 py-3">Equipo</th><th className="text-left px-4 py-3">Crit.</th>
-            <th className="text-right px-4 py-3">Horas</th><th className="text-right px-4 py-3">Fallas</th>
-            <th className="text-right px-4 py-3">MTBF</th><th className="text-right px-4 py-3">MTTR</th><th className="text-center px-4 py-3">Disponib.</th>
-          </tr></thead>
-          <tbody>{equip.map((e,i)=>{const m=calc(e.id);return(
-            <tr key={e.id} className={`border-b border-gray-100 last:border-0 hover:bg-blue-50/30 transition ${i%2===0?"bg-white":"bg-gray-50/40"}`}>
-              <td className="px-4 py-2.5"><p className="text-gray-800 font-medium text-sm">{e.name}</p><p className="font-mono text-xs" style={{color:NV.blue}}>{e.code}</p></td>
-              <td className="px-4 py-2.5"><span className={`px-2 py-0.5 rounded-full border text-xs font-bold ${CRIT_CLS[e.criticality]}`}>{e.criticality}</span></td>
-              <td className="px-4 py-2.5 text-right text-gray-600 text-xs font-mono">{e.hours.toLocaleString()}h</td>
-              <td className="px-4 py-2.5 text-right"><span className={`font-bold text-sm ${m.n>0?"text-red-600":"text-gray-400"}`}>{m.n}</span></td>
-              <td className="px-4 py-2.5 text-right font-semibold text-sm" style={{color:NV.blue}}>{fH(m.mtbf)}</td>
-              <td className="px-4 py-2.5 text-right text-amber-700 font-semibold text-sm">{fH(m.mttr)}</td>
-              <td className="px-4 py-2.5 text-center">
-                {m.disp!==null?(<div className="flex flex-col items-center gap-1">
-                  <span className={`font-bold text-sm ${dC(m.disp)}`}>{fP(m.disp)}</span>
-                  <div className="w-16 h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                    <div className={`h-full rounded-full ${m.disp>=90?"bg-emerald-500":m.disp>=70?"bg-amber-400":"bg-red-500"}`} style={{width:`${Math.min(100,m.disp)}%`}}/>
-                  </div>
-                </div>):<span className="text-gray-400 text-xs">Sin datos</span>}
-              </td>
+          <thead>
+            <tr className="text-xs text-white font-semibold uppercase tracking-wider" style={{background:NV.navyMid}}>
+              <th className="text-left px-4 py-2.5">Buque</th>
+              <th className="text-left px-4 py-2.5">Certificado</th>
+              <th className="text-left px-4 py-2.5 hidden md:table-cell">Número / Emitido por</th>
+              <th className="text-left px-4 py-2.5">Vencimiento</th>
+              <th className="text-left px-4 py-2.5">Estado</th>
+              <th className="px-4 py-2.5 text-center">Acción</th>
             </tr>
-          );})}
+          </thead>
+          <tbody>
+            {visible.map((c,i)=>{
+              const v=vessels.find(v=>v.id===c.vesselId);
+              const cs=certStatus(c.expiryDate);
+              return(
+                <tr key={c.id} className={`border-b border-gray-100 last:border-0 hover:bg-blue-50/30 transition ${i%2===0?"bg-white":"bg-gray-50/40"}`}>
+                  <td className="px-4 py-3">
+                    <p className="text-gray-800 font-semibold text-xs">{v?.name||"—"}</p>
+                    <p className="text-gray-400 text-xs">IMO {v?.imo}</p>
+                  </td>
+                  <td className="px-4 py-3">
+                    <p className="text-gray-800 font-medium text-xs">{c.type}</p>
+                    {c.notes&&<p className="text-gray-400 text-xs mt-0.5 truncate max-w-xs">{c.notes}</p>}
+                  </td>
+                  <td className="px-4 py-3 hidden md:table-cell">
+                    <p className="text-gray-700 font-mono text-xs">{c.number||"—"}</p>
+                    <p className="text-gray-400 text-xs">{c.issuedBy}</p>
+                  </td>
+                  <td className="px-4 py-3">
+                    <p className="text-gray-700 text-xs font-semibold">{fmt(c.expiryDate)}</p>
+                    <p className="text-gray-400 text-xs">Emitido: {fmt(c.issueDate)}</p>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={`inline-flex px-2 py-0.5 rounded-full border text-xs font-bold ${cs.cls}`}>{cs.label}</span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center justify-center gap-1">
+                      <button onClick={()=>{setForm({...c});setEditTarget(c);setShowForm(true);}} className="p-1.5 rounded-lg hover:bg-blue-50" style={{color:NV.blue}}><Edit2 size={13}/></button>
+                      <button onClick={()=>setConfirmDel(c)} className="p-1.5 rounded-lg text-red-500 hover:bg-red-50"><Trash2 size={13}/></button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+            {visible.length===0&&<tr><td colSpan={6} className="text-center py-12 text-gray-400 text-sm">Sin certificados para los filtros seleccionados</td></tr>}
           </tbody>
         </table>
       </div>
+
+      {showForm&&(
+        <Modal title={editTarget?"Editar Certificado":"Nuevo Certificado"} onClose={()=>setShowForm(false)} wide>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2"><label className="text-gray-500 text-xs font-medium mb-1 block">BUQUE</label>
+              <select value={form.vesselId} onChange={e=>setForm(f=>({...f,vesselId:e.target.value}))} className={sCls}>
+                <option value="">Seleccionar buque...</option>
+                {vessels.map(v=><option key={v.id} value={v.id}>{v.name} — IMO {v.imo}</option>)}
+              </select></div>
+            <div className="col-span-2"><label className="text-gray-500 text-xs font-medium mb-1 block">TIPO DE CERTIFICADO</label>
+              <select value={form.type} onChange={e=>setForm(f=>({...f,type:e.target.value}))} className={sCls}>
+                {CERT_TYPES.map(t=><option key={t}>{t}</option>)}
+              </select></div>
+            <div><label className="text-gray-500 text-xs font-medium mb-1 block">NÚMERO DE CERTIFICADO</label><input value={form.number} onChange={e=>setForm(f=>({...f,number:e.target.value}))} className={iCls} placeholder="ej: CL-SEC-2024-001"/></div>
+            <div><label className="text-gray-500 text-xs font-medium mb-1 block">EMITIDO POR</label>
+              <select value={form.issuedBy} onChange={e=>setForm(f=>({...f,issuedBy:e.target.value}))} className={sCls}>
+                {["Bureau Veritas","DNV GL","Lloyd's Register","ABS","ClassNK","RINA","Armada de Chile","Flag State Administration","Otra"].map(s=><option key={s}>{s}</option>)}
+              </select></div>
+            <div><label className="text-gray-500 text-xs font-medium mb-1 block">FECHA DE EMISIÓN</label><input type="date" value={form.issueDate} onChange={e=>setForm(f=>({...f,issueDate:e.target.value}))} className={iCls}/></div>
+            <div><label className="text-gray-500 text-xs font-medium mb-1 block">FECHA DE VENCIMIENTO *</label><input type="date" value={form.expiryDate} onChange={e=>setForm(f=>({...f,expiryDate:e.target.value}))} className={iCls}/></div>
+            <div className="col-span-2"><label className="text-gray-500 text-xs font-medium mb-1 block">NOTAS / OBSERVACIONES</label><textarea value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} rows={2} className={`${iCls} resize-none`} placeholder="Surveys pendientes, condiciones especiales..."/></div>
+          </div>
+          <ModalActions onSave={save} onCancel={()=>setShowForm(false)} label={editTarget?"Guardar Cambios":"Registrar Certificado"}/>
+        </Modal>
+      )}
+      {confirmDel&&(
+        <div className="fixed inset-0 bg-black/25 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white border border-gray-200 rounded-2xl shadow-xl p-6 w-full max-w-sm">
+            <p className="font-bold text-gray-900 mb-2">Eliminar certificado</p>
+            <p className="text-gray-500 text-sm mb-1">{confirmDel.type}</p>
+            <p className="text-gray-400 text-xs mb-5">{vessels.find(v=>v.id===confirmDel.vesselId)?.name}</p>
+            <div className="flex gap-2">
+              <button onClick={()=>del(confirmDel.id)} className="flex-1 bg-red-600 hover:bg-red-500 text-white font-semibold py-2.5 rounded-lg text-sm">Eliminar</button>
+              <button onClick={()=>setConfirmDel(null)} className="flex-1 bg-gray-100 text-gray-700 py-2.5 rounded-lg text-sm">Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-// ─── REQUESTS ────────────────────────────────────────────────────────────────
-function Requests({user,data,setData}){
-  const {requests,equip,users,wos}=data;
+// ─── WORK ORDERS ─────────────────────────────────────────────────────────────
+function WorkOrders({data,setData}){
+  const {vessels,equipment,workorders,users} = data;
+  const [search,setSearch]=useState(""); const [fltStatus,setFltStatus]=useState(""); const [fltVessel,setFltVessel]=useState("");
+  const [sel,setSel]=useState(null); const [showNew,setShowNew]=useState(false);
+  const [form,setForm]=useState({vesselId:"",equipId:"",title:"",type:"correctivo",priority:"media",description:"",scheduledDate:new Date().toISOString().slice(0,10),estimatedHours:"",assignedTo:""});
+  const [repForm,setRepForm]=useState({actualHours:"",observations:"",status:"completada"}); const [showRep,setShowRep]=useState(false);
+
+  const visible=workorders.filter(w=>{
+    if(fltStatus&&w.status!==fltStatus)return false;
+    if(fltVessel&&w.vesselId!==fltVessel)return false;
+    if(search&&!w.title.toLowerCase().includes(search.toLowerCase())&&!w.code.toLowerCase().includes(search.toLowerCase()))return false;
+    return true;
+  });
+
+  const saveNew=()=>{
+    if(!form.vesselId||!form.title)return;
+    const wo={id:uid(),code:nextOTCode(workorders),...form,estimatedHours:parseFloat(form.estimatedHours)||0,status:"asignada",createdAt:new Date().toISOString(),actualHours:null,observations:""};
+    const updated=[...workorders,wo];setData(d=>({...d,workorders:updated}));saveData("workorders",updated);setShowNew(false);setSel(wo);
+  };
+  const updStatus=(id,s)=>{const u=workorders.map(w=>w.id===id?{...w,status:s}:w);setData(d=>({...d,workorders:u}));saveData("workorders",u);if(sel?.id===id)setSel(w=>({...w,status:s}));};
+  const submitRep=()=>{
+    if(!repForm.actualHours)return;
+    const u=workorders.map(w=>w.id===sel.id?{...w,...repForm,actualHours:parseFloat(repForm.actualHours)}:w);
+    setData(d=>({...d,workorders:u}));saveData("workorders",u);setSel(w=>({...w,...repForm,actualHours:parseFloat(repForm.actualHours)}));setShowRep(false);
+  };
+
+  const cur=sel?workorders.find(w=>w.id===sel.id):null;
+  const curEq=cur?equipment.find(e=>e.id===cur.equipId):null;
+  const curV=cur?vessels.find(v=>v.id===cur.vesselId):null;
+
+  return(
+    <div className="p-6 flex gap-5 h-full">
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center justify-between mb-5">
+          <div><h1 className="text-gray-900 font-bold text-xl">Órdenes de Trabajo</h1><p className="text-gray-500 text-sm">{visible.length} registros</p></div>
+          <button onClick={()=>setShowNew(true)} style={{background:NV.blue}} className={btnPrimary}><Plus size={15}/>Nueva OT</button>
+        </div>
+        <div className="flex gap-2 mb-4 flex-wrap">
+          <div className="relative flex-1 min-w-40"><Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar OT..." className={`${iCls} pl-9`}/></div>
+          <select value={fltStatus} onChange={e=>setFltStatus(e.target.value)} className="bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-700 text-xs focus:outline-none">
+            <option value="">Estado: Todos</option>
+            {Object.entries(WO_STATUS).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
+          </select>
+          <select value={fltVessel} onChange={e=>setFltVessel(e.target.value)} className="bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-700 text-xs focus:outline-none">
+            <option value="">Buque: Todos</option>
+            {vessels.map(v=><option key={v.id} value={v.id}>{v.name}</option>)}
+          </select>
+          {(search||fltStatus||fltVessel)&&<button onClick={()=>{setSearch("");setFltStatus("");setFltVessel("");}} className="flex items-center gap-1 text-xs text-red-500 border border-red-200 bg-red-50 px-2.5 py-1.5 rounded-lg"><X size={11}/>Limpiar</button>}
+        </div>
+        <div className="space-y-2">
+          {visible.map(w=>{
+            const v=vessels.find(v2=>v2.id===w.vesselId); const eq=equipment.find(e=>e.id===w.equipId);
+            const st=WO_STATUS[w.status]||WO_STATUS.pendiente;
+            return(
+              <div key={w.id} onClick={()=>setSel(w)}
+                className={`bg-white border rounded-xl p-4 cursor-pointer transition-all ${sel?.id===w.id?"shadow-sm":"border-gray-200 hover:border-blue-300 hover:shadow-sm"}`}
+                style={sel?.id===w.id?{borderColor:NV.blue,background:"#EBF4FF"}:{}}>
+                <div className="flex items-start gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
+                      <span className="text-xs font-mono font-bold" style={{color:NV.blue}}>{w.code}</span>
+                      <span className={`inline-flex px-2 py-0.5 rounded-full border text-xs font-semibold ${w.type==="preventivo"?"text-blue-700 bg-blue-50 border-blue-200":"text-orange-700 bg-orange-50 border-orange-200"}`}>{w.type}</span>
+                      <span className={`inline-flex px-2 py-0.5 rounded-full border text-xs font-semibold ${st.cls}`}>{st.label}</span>
+                    </div>
+                    <p className="text-gray-800 text-sm font-semibold truncate">{w.title}</p>
+                    <div className="flex items-center gap-3 mt-1 flex-wrap text-xs text-gray-400">
+                      {v&&<span className="flex items-center gap-1"><Ship size={10}/>{v.name}</span>}
+                      {eq&&<span className="flex items-center gap-1"><Package size={10}/>{eq.code}</span>}
+                      <span className="flex items-center gap-1"><Calendar size={10}/>{fmt(w.scheduledDate)}</span>
+                    </div>
+                  </div>
+                  <span className={`px-2 py-0.5 rounded-full border text-xs font-bold flex-shrink-0 ${w.priority==="alta"?"text-red-700 bg-red-50 border-red-200":w.priority==="media"?"text-amber-700 bg-amber-50 border-amber-200":"text-emerald-700 bg-emerald-50 border-emerald-200"}`}>{(w.priority||"").toUpperCase()}</span>
+                </div>
+              </div>
+            );
+          })}
+          {visible.length===0&&<div className="text-center py-12 text-gray-400 text-sm">Sin órdenes de trabajo</div>}
+        </div>
+      </div>
+      {cur&&(
+        <div className={`w-72 flex-shrink-0 ${card} p-5 h-fit sticky top-6`}>
+          <div className="flex items-center justify-between mb-4">
+            <span className="text-xs font-mono font-bold" style={{color:NV.blue}}>{cur.code}</span>
+            <button onClick={()=>setSel(null)}><X size={16} className="text-gray-400 hover:text-gray-700"/></button>
+          </div>
+          <h3 className="text-gray-900 font-semibold text-sm mb-3">{cur.title}</h3>
+          <div className="flex flex-wrap gap-1.5 mb-4">
+            <span className={`inline-flex px-2 py-0.5 rounded-full border text-xs font-semibold ${(WO_STATUS[cur.status]||WO_STATUS.pendiente).cls}`}>{(WO_STATUS[cur.status]||WO_STATUS.pendiente).label}</span>
+            <span className={`px-2 py-0.5 rounded-full border text-xs font-bold ${cur.priority==="alta"?"text-red-700 bg-red-50 border-red-200":cur.priority==="media"?"text-amber-700 bg-amber-50 border-amber-200":"text-emerald-700 bg-emerald-50 border-emerald-200"}`}>{(cur.priority||"").toUpperCase()}</span>
+          </div>
+          <div className="space-y-1.5 mb-4 text-xs">
+            {[["Buque",curV?.name||"—"],["Equipo",curEq?.name||"—"],["Tipo",cur.type],["Programado",fmt(cur.scheduledDate)],["Horas Est.",`${cur.estimatedHours}h`]].map(([k,v])=>(
+              <div key={k} className="flex justify-between gap-2"><span className="text-gray-400">{k}</span><span className="text-gray-700 text-right">{v}</span></div>
+            ))}
+            {cur.actualHours&&<div className="flex justify-between"><span className="text-gray-400">Horas Reales</span><span className="text-emerald-600 font-semibold">{cur.actualHours}h</span></div>}
+          </div>
+          {cur.description&&<div className="bg-gray-50 border border-gray-100 rounded-lg p-3 mb-3 text-gray-600 text-xs">{cur.description}</div>}
+          {cur.observations&&<div className="bg-emerald-50 border border-emerald-100 rounded-lg p-3 mb-3 text-xs"><span className="text-emerald-700 font-semibold">Obs: </span>{cur.observations}</div>}
+          <div className="space-y-2 mt-4">
+            {cur.status!=="completada"&&cur.status!=="cancelada"&&(
+              <>
+                {cur.status==="asignada"&&<button onClick={()=>updStatus(cur.id,"en_proceso")} className="w-full text-sm py-2 rounded-lg border font-medium transition" style={{background:NV.light,borderColor:NV.blue,color:NV.blue}}>Iniciar Trabajo</button>}
+                <button onClick={()=>setShowRep(true)} className="w-full text-white text-sm py-2 rounded-lg font-medium transition hover:opacity-90" style={{background:NV.blue}}>Reportar Trabajo</button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+      {showNew&&(
+        <Modal title="Nueva Orden de Trabajo" onClose={()=>setShowNew(false)} wide>
+          <div className="space-y-3">
+            <div><label className="text-gray-500 text-xs font-medium mb-1 block">BUQUE</label>
+              <select value={form.vesselId} onChange={e=>setForm(f=>({...f,vesselId:e.target.value,equipId:""}))} className={sCls}>
+                <option value="">Seleccionar...</option>{vessels.map(v=><option key={v.id} value={v.id}>{v.name}</option>)}
+              </select></div>
+            {form.vesselId&&<div><label className="text-gray-500 text-xs font-medium mb-1 block">EQUIPO</label>
+              <select value={form.equipId} onChange={e=>setForm(f=>({...f,equipId:e.target.value}))} className={sCls}>
+                <option value="">Seleccionar...</option>{equipment.filter(e=>e.vesselId===form.vesselId).map(e=><option key={e.id} value={e.id}>{e.code} — {e.name}</option>)}
+              </select></div>}
+            <div><label className="text-gray-500 text-xs font-medium mb-1 block">TÍTULO *</label><input value={form.title} onChange={e=>setForm(f=>({...f,title:e.target.value}))} className={iCls} placeholder="Descripción breve del trabajo"/></div>
+            <div className="grid grid-cols-2 gap-3">
+              <div><label className="text-gray-500 text-xs font-medium mb-1 block">TIPO</label>
+                <select value={form.type} onChange={e=>setForm(f=>({...f,type:e.target.value}))} className={sCls}><option value="preventivo">Preventivo</option><option value="correctivo">Correctivo</option></select></div>
+              <div><label className="text-gray-500 text-xs font-medium mb-1 block">PRIORIDAD</label>
+                <select value={form.priority} onChange={e=>setForm(f=>({...f,priority:e.target.value}))} className={sCls}><option value="alta">Alta</option><option value="media">Media</option><option value="baja">Baja</option></select></div>
+              <div><label className="text-gray-500 text-xs font-medium mb-1 block">FECHA PROGRAMADA</label><input type="date" value={form.scheduledDate} onChange={e=>setForm(f=>({...f,scheduledDate:e.target.value}))} className={iCls}/></div>
+              <div><label className="text-gray-500 text-xs font-medium mb-1 block">HORAS ESTIMADAS</label><input type="number" value={form.estimatedHours} onChange={e=>setForm(f=>({...f,estimatedHours:e.target.value}))} className={iCls}/></div>
+            </div>
+            <div><label className="text-gray-500 text-xs font-medium mb-1 block">DESCRIPCIÓN</label><textarea value={form.description} onChange={e=>setForm(f=>({...f,description:e.target.value}))} rows={3} className={`${iCls} resize-none`}/></div>
+          </div>
+          <ModalActions onSave={saveNew} onCancel={()=>setShowNew(false)} label="Crear OT"/>
+        </Modal>
+      )}
+      {showRep&&(
+        <Modal title={`Reportar — ${cur?.code}`} onClose={()=>setShowRep(false)}>
+          <div className="space-y-3">
+            <div><label className="text-gray-500 text-xs font-medium mb-1 block">HORAS REALES *</label><input type="number" step="0.5" value={repForm.actualHours} onChange={e=>setRepForm(r=>({...r,actualHours:e.target.value}))} className={iCls} placeholder="ej: 3.5"/></div>
+            <div><label className="text-gray-500 text-xs font-medium mb-1 block">OBSERVACIONES</label><textarea value={repForm.observations} onChange={e=>setRepForm(r=>({...r,observations:e.target.value}))} rows={3} className={`${iCls} resize-none`}/></div>
+            <div><label className="text-gray-500 text-xs font-medium mb-1 block">ESTADO FINAL</label>
+              <select value={repForm.status} onChange={e=>setRepForm(r=>({...r,status:e.target.value}))} className={sCls}><option value="completada">Completada</option><option value="en_proceso">En Proceso (parcial)</option></select></div>
+          </div>
+          <ModalActions onSave={submitRep} onCancel={()=>setShowRep(false)} label="Enviar Reporte"/>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ─── PLANS (PMS) ─────────────────────────────────────────────────────────────
+function Plans({data,setData}){
+  const {vessels,equipment,plans,workorders} = data;
   const [showForm,setShowForm]=useState(false);
-  const [form,setForm]=useState({equipId:"",title:"",description:"",priority:"media"});
-  const canCreate=user.role==="operaciones"||user.role==="supervisor";
-  const visible=user.role==="supervisor"?requests:requests.filter(r=>r.requestedBy===user.id);
-  const createReq=()=>{if(!form.equipId||!form.title)return;const nr={id:uid(),...form,status:"pendiente",requestedBy:user.id,requestedAt:new Date().toISOString(),approvedBy:null,otId:null};const updated=[...requests,nr];setData(d=>({...d,requests:updated}));saveData("requests",updated);setShowForm(false);setForm({equipId:"",title:"",description:"",priority:"media"});};
-  const approve=req=>{const eq=equip.find(e=>e.id===req.equipId);const priority=req.priority==="alta"||eq?.criticality==="A"?"alta":req.priority;const mec=users.find(u=>u.role==="mecanico");const newOT={id:uid(),code:nextOTCode(wos),type:"correctivo",equipId:req.equipId,planId:null,title:`Reparación ${eq?.name||""} - ${req.title}`,priority,status:"asignada",assignedTo:mec?.id||"",createdAt:new Date().toISOString(),scheduledDate:new Date().toISOString().slice(0,10),estimatedHours:priority==="alta"?4:2,actualHours:null,description:req.description,observations:"",parts:[],source:"solicitud",reqId:req.id};const updW=[...wos,newOT];const updR=requests.map(r=>r.id===req.id?{...r,status:"aprobada",approvedBy:user.id,otId:newOT.id}:r);setData(d=>({...d,wos:updW,requests:updR}));saveData("workOrders",updW);saveData("requests",updR);alert(`✅ OT ${newOT.code} generada — Prioridad ${priority.toUpperCase()}`);};
-  const reject=req=>{const updated=requests.map(r=>r.id===req.id?{...r,status:"rechazada",approvedBy:user.id}:r);setData(d=>({...d,requests:updated}));saveData("requests",updated);};
+  const [form,setForm]=useState({vesselId:"",equipId:"",name:"",frequency:"",lastHorometro:"",estimatedHours:"",tasks:""});
+
+  const addPlan=()=>{
+    if(!form.vesselId||!form.equipId||!form.name||!form.frequency)return;
+    const lastH=parseFloat(form.lastHorometro)||0;
+    const freq=parseInt(form.frequency)||0;
+    const np={id:uid(),...form,frequency:freq,lastHorometro:lastH,horometroTarget:lastH+freq,estimatedHours:parseFloat(form.estimatedHours)||0,tasks:form.tasks.split("\n").filter(Boolean)};
+    const updated=[...plans,np];setData(d=>({...d,plans:updated}));saveData("plans",updated);setShowForm(false);
+  };
+  const generateOT=(plan)=>{
+    const eq=equipment.find(e=>e.id===plan.equipId);
+    const v=vessels.find(v=>v.id===plan.vesselId);
+    if(!eq||!v)return;
+    const wo={id:uid(),code:nextOTCode(workorders),type:"preventivo",vesselId:plan.vesselId,equipId:plan.equipId,planId:plan.id,title:plan.name,priority:eq.criticality==="A"?"alta":eq.criticality==="B"?"media":"baja",status:"asignada",createdAt:new Date().toISOString(),scheduledDate:new Date().toISOString().slice(0,10),estimatedHours:plan.estimatedHours||0,actualHours:null,description:`PMS: ${Array.isArray(plan.tasks)?plan.tasks.join(", "):plan.tasks}`,observations:""};
+    const updated=[...workorders,wo];setData(d=>({...d,workorders:updated}));saveData("workorders",updated);
+    alert(`✅ OT ${wo.code} generada para ${v.name} — ${eq.name}`);
+  };
+  const delPlan=(id)=>{const u=plans.filter(p=>p.id!==id);setData(d=>({...d,plans:u}));saveData("plans",u);};
+
+  const byVessel=vessels.map(v=>({vessel:v,plans:plans.filter(p=>p.vesselId===v.id)})).filter(g=>g.plans.length>0);
+
   return(
     <div className="p-6">
       <div className="flex items-center justify-between mb-5">
-        <div><h1 className="text-gray-900 font-bold text-xl">Solicitudes de Reparación</h1><p className="text-gray-500 text-sm">{visible.length} solicitudes</p></div>
-        {canCreate&&<button onClick={()=>setShowForm(true)} style={{background:NV.blue}} className={btnPrimary}><Plus size={15}/>Nueva Solicitud</button>}
+        <div><h1 className="text-gray-900 font-bold text-xl">Plan de Mantenimiento Preventivo</h1><p className="text-gray-500 text-sm">PMS — Programación por horómetro / horas de motor</p></div>
+        <button onClick={()=>setShowForm(true)} style={{background:NV.blue}} className={btnPrimary}><Plus size={15}/>Nuevo Plan</button>
       </div>
-      {visible.length===0&&<div className="text-center py-16 text-gray-400"><Bell size={40} className="mx-auto mb-3 text-gray-300"/><p className="font-medium">Sin solicitudes</p></div>}
-      <div className="space-y-3">
-        {visible.map(r=>{const eq=equip.find(e=>e.id===r.equipId);const reqBy=users.find(u=>u.id===r.requestedBy);const linkedOT=wos.find(w=>w.id===r.otId);return(
-          <div key={r.id} className={`bg-white border rounded-xl p-5 shadow-sm ${r.status==="pendiente"?"border-blue-300":"border-gray-200"}`}>
-            <div className="flex items-start justify-between gap-4">
-              <div className="flex-1">
-                <div className="flex items-center gap-2 mb-2 flex-wrap">
-                  <Badge s={r.status}/><span className={`px-2 py-0.5 rounded-full border text-xs font-bold ${PRI_CLS[r.priority]}`}>{r.priority.toUpperCase()}</span>
-                  {eq?.criticality&&<span className={`px-2 py-0.5 rounded-full border text-xs font-bold ${CRIT_CLS[eq.criticality]}`}>Equipo {CRIT_LABEL[eq.criticality]}</span>}
-                </div>
-                <p className="text-gray-800 font-semibold text-sm mb-1">{r.title}</p>
-                <p className="text-gray-500 text-xs mb-2">{r.description}</p>
-                <div className="flex items-center gap-2 text-xs text-gray-400 flex-wrap"><span>{eq?.name||"—"}</span><span>·</span><span>{reqBy?.name||"—"}</span><span>·</span><span>{fmtDT(r.requestedAt)}</span></div>
-                {linkedOT&&<div className="mt-2 inline-flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs px-3 py-1 rounded-full font-medium"><CheckCircle size={10}/>OT: {linkedOT.code}</div>}
-              </div>
-              {user.role==="supervisor"&&r.status==="pendiente"&&(
-                <div className="flex gap-2 flex-shrink-0">
-                  <button onClick={()=>approve(r)} className="flex items-center gap-1.5 text-white text-xs px-3 py-1.5 rounded-lg hover:opacity-90 transition font-medium" style={{background:NV.blue}}><Check size={12}/>Aprobar + OT</button>
-                  <button onClick={()=>reject(r)}  className="flex items-center gap-1.5 bg-red-50 border border-red-200 text-red-700 text-xs px-3 py-1.5 rounded-lg hover:bg-red-100 transition font-medium"><X size={12}/>Rechazar</button>
-                </div>
-              )}
+      {plans.length===0&&<div className="text-center py-16 text-gray-400"><Calendar size={40} className="mx-auto mb-3 text-gray-300"/><p className="font-medium">Sin planes de mantenimiento preventivo</p><p className="text-sm mt-1">Crea planes basados en horas de operación para cada equipo</p></div>}
+      <div className="space-y-6">
+        {byVessel.map(({vessel,plans:vplans})=>(
+          <div key={vessel.id}>
+            <div className="flex items-center gap-2 mb-3">
+              <Ship size={14} style={{color:NV.blue}}/><h2 className="font-bold text-sm" style={{color:NV.navy}}>{vessel.name}</h2>
+              <span className="text-gray-400 text-xs">({vplans.length} planes)</span>
+            </div>
+            <div className="space-y-3">
+              {vplans.map(p=>{
+                const eq=equipment.find(e=>e.id===p.equipId);
+                const curH=eq?.hours||0;
+                const hoursLeft=p.horometroTarget-curH;
+                const overdue=curH>=p.horometroTarget;
+                const soon=!overdue&&hoursLeft<=(p.frequency||500)*0.15;
+                const range=p.horometroTarget-p.lastHorometro;
+                const pct=range>0?Math.min(100,Math.max(0,((curH-p.lastHorometro)/range)*100)):100;
+                return(
+                  <div key={p.id} className={`${card} p-4`}>
+                    <div className="flex items-start gap-4">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                          {overdue&&<span className="px-2 py-0.5 rounded-full border text-xs font-bold text-red-700 bg-red-50 border-red-200">VENCIDO</span>}
+                          {soon&&!overdue&&<span className="px-2 py-0.5 rounded-full border text-xs font-bold text-amber-700 bg-amber-50 border-amber-200">PRÓXIMO</span>}
+                          {!overdue&&!soon&&<span className="px-2 py-0.5 rounded-full border text-xs font-bold text-emerald-700 bg-emerald-50 border-emerald-200">En {Math.round(hoursLeft)}h</span>}
+                          <span className="text-gray-500 text-xs">{eq?.code} — {eq?.name}</span>
+                        </div>
+                        <p className="text-gray-800 font-semibold text-sm mb-2">{p.name}</p>
+                        <div className="mb-2">
+                          <div className="flex justify-between text-xs text-gray-400 mb-1">
+                            <span>{p.lastHorometro.toLocaleString()}h</span>
+                            <span className="font-semibold" style={{color:overdue?"#b91c1c":NV.navy}}>Actual: {curH.toLocaleString()}h</span>
+                            <span>Meta: {p.horometroTarget.toLocaleString()}h</span>
+                          </div>
+                          <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+                            <div className={`h-full rounded-full transition-all ${overdue?"bg-red-500":soon?"bg-amber-400":"bg-emerald-500"}`} style={{width:`${pct}%`}}/>
+                          </div>
+                          <p className="text-xs text-gray-400 mt-1">Frecuencia: cada {p.frequency}h · {p.estimatedHours}h estimadas</p>
+                        </div>
+                        {Array.isArray(p.tasks)&&p.tasks.length>0&&<div className="flex flex-wrap gap-1.5 mt-2">{p.tasks.map((t,i)=><span key={i} className="text-xs border px-2 py-0.5 rounded-full" style={{background:NV.light,borderColor:"#BFD9F2",color:NV.navy}}>{t}</span>)}</div>}
+                      </div>
+                      <div className="flex flex-col gap-2 flex-shrink-0">
+                        <button onClick={()=>generateOT(p)} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg text-white font-medium hover:opacity-90" style={{background:NV.blue}}><Zap size={12}/>Generar OT</button>
+                        <button onClick={()=>delPlan(p.id)} className="text-gray-300 hover:text-red-500 text-xs text-center p-1"><Trash2 size={13}/></button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
-        );})}
+        ))}
       </div>
       {showForm&&(
-        <Modal title="Nueva Solicitud de Reparación" onClose={()=>setShowForm(false)}>
+        <Modal title="Nuevo Plan PMS" onClose={()=>setShowForm(false)} wide>
           <div className="space-y-3">
-            <div><label className="text-gray-500 text-xs font-medium mb-1 block">EQUIPO</label><select value={form.equipId} onChange={e=>setForm(f=>({...f,equipId:e.target.value}))} className={sCls}><option value="">Seleccionar...</option>{equip.map(e=><option key={e.id} value={e.id}>{e.name} ({e.code})</option>)}</select></div>
-            <div><label className="text-gray-500 text-xs font-medium mb-1 block">FALLA DETECTADA</label><input value={form.title} onChange={e=>setForm(f=>({...f,title:e.target.value}))} className={iCls}/></div>
-            <div><label className="text-gray-500 text-xs font-medium mb-1 block">DESCRIPCIÓN</label><textarea value={form.description} onChange={e=>setForm(f=>({...f,description:e.target.value}))} rows={3} className={iCls+" resize-none"}/></div>
-            <div><label className="text-gray-500 text-xs font-medium mb-1 block">PRIORIDAD</label><select value={form.priority} onChange={e=>setForm(f=>({...f,priority:e.target.value}))} className={sCls}><option value="alta">Alta — Detiene operaciones</option><option value="media">Media — Afecta rendimiento</option><option value="baja">Baja — Sin impacto inmediato</option></select></div>
+            <div><label className="text-gray-500 text-xs font-medium mb-1 block">BUQUE</label>
+              <select value={form.vesselId} onChange={e=>setForm(f=>({...f,vesselId:e.target.value,equipId:""}))} className={sCls}>
+                <option value="">Seleccionar...</option>{vessels.map(v=><option key={v.id} value={v.id}>{v.name}</option>)}
+              </select></div>
+            {form.vesselId&&<div><label className="text-gray-500 text-xs font-medium mb-1 block">EQUIPO</label>
+              <select value={form.equipId} onChange={e=>setForm(f=>({...f,equipId:e.target.value}))} className={sCls}>
+                <option value="">Seleccionar...</option>{equipment.filter(e=>e.vesselId===form.vesselId).map(e=><option key={e.id} value={e.id}>{e.code} — {e.name} ({(e.hours||0).toLocaleString()}h actuales)</option>)}
+              </select></div>}
+            <div><label className="text-gray-500 text-xs font-medium mb-1 block">NOMBRE DEL PLAN</label><input value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))} className={iCls} placeholder="ej: Servicio 500h Motor Principal"/></div>
+            <div className="grid grid-cols-2 gap-3">
+              <div><label className="text-gray-500 text-xs font-medium mb-1 block">FRECUENCIA (horas)</label><input type="number" value={form.frequency} onChange={e=>setForm(f=>({...f,frequency:e.target.value}))} className={iCls} placeholder="500"/></div>
+              <div><label className="text-gray-500 text-xs font-medium mb-1 block">ÚLTIMO HORÓMETRO (h)</label><input type="number" value={form.lastHorometro} onChange={e=>setForm(f=>({...f,lastHorometro:e.target.value}))} className={iCls}/></div>
+              <div><label className="text-gray-500 text-xs font-medium mb-1 block">HORAS ESTIMADAS</label><input type="number" value={form.estimatedHours} onChange={e=>setForm(f=>({...f,estimatedHours:e.target.value}))} className={iCls}/></div>
+            </div>
+            {form.frequency&&form.lastHorometro&&<div className="bg-blue-50 border border-blue-100 rounded-lg p-2.5 text-xs" style={{color:NV.navy}}>Próxima intervención a: <strong>{(parseFloat(form.lastHorometro)+parseInt(form.frequency)).toLocaleString()}h</strong></div>}
+            <div><label className="text-gray-500 text-xs font-medium mb-1 block">TAREAS (una por línea)</label><textarea value={form.tasks} onChange={e=>setForm(f=>({...f,tasks:e.target.value}))} rows={4} className={`${iCls} resize-none`} placeholder={"Cambio aceite motor\nFiltros hidráulicos\nAjuste válvulas\nRevisión inyectores"}/></div>
           </div>
-          <ModalActions onSave={createReq} onCancel={()=>setShowForm(false)} label="Enviar Solicitud"/>
+          <ModalActions onSave={addPlan} onCancel={()=>setShowForm(false)} label="Guardar Plan"/>
         </Modal>
       )}
     </div>
@@ -899,37 +1190,52 @@ function Requests({user,data,setData}){
 
 // ─── REPORTS ─────────────────────────────────────────────────────────────────
 function Reports({data}){
-  const {wos,equip}=data;
-  const completed=wos.filter(w=>w.status==="completada");const prev=wos.filter(w=>w.type==="preventivo");const corr=wos.filter(w=>w.type==="correctivo");
-  const totalHrs=completed.reduce((s,w)=>s+(w.actualHours||0),0);
-  const byEquip=equip.map(e=>({...e,totalWOs:wos.filter(w=>w.equipId===e.id).length,completedWOs:completed.filter(w=>w.equipId===e.id).length,hrs:completed.filter(w=>w.equipId===e.id).reduce((s,w)=>s+(w.actualHours||0),0)})).sort((a,b)=>b.totalWOs-a.totalWOs);
+  const {vessels,equipment,workorders,certificates} = data;
+  const byVessel=vessels.map(v=>({
+    ...v,
+    totalWO:workorders.filter(w=>w.vesselId===v.id).length,
+    completedWO:workorders.filter(w=>w.vesselId===v.id&&w.status==="completada").length,
+    hrs:workorders.filter(w=>w.vesselId===v.id&&w.status==="completada").reduce((s,w)=>s+(w.actualHours||0),0),
+    equipFalla:equipment.filter(e=>e.vesselId===v.id&&e.status==="falla").length,
+    certAlerts:certificates.filter(c=>c.vesselId===v.id&&["expired","critical","expiring"].includes(certStatus(c.expiryDate).s)).length,
+  }));
+
+  const totalWO=workorders.length; const completedWO=workorders.filter(w=>w.status==="completada").length;
+  const totalHrs=workorders.filter(w=>w.status==="completada").reduce((s,w)=>s+(w.actualHours||0),0);
+
   return(
     <div className="p-6 space-y-6">
-      <div><h1 className="text-gray-900 font-bold text-xl">Informes y Análisis</h1></div>
+      <div className="flex items-center justify-between">
+        <h1 className="text-gray-900 font-bold text-xl">Informes KPI</h1>
+      </div>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard icon={CheckCircle}   label="OT Completadas" value={completed.length}         color="emerald"/>
-        <StatCard icon={Wrench}        label="Preventivas"    value={prev.length}               color="blue"/>
-        <StatCard icon={AlertTriangle} label="Correctivas"    value={corr.length}               color="red"/>
-        <StatCard icon={Clock}         label="Horas Totales"  value={`${totalHrs.toFixed(1)}h`} color="amber"/>
+        <StatCard icon={Ship}          label="Buques en Flota"     value={vessels.length}     color="navy"/>
+        <StatCard icon={CheckCircle}   label="OT Completadas"      value={completedWO}        color="emerald"/>
+        <StatCard icon={AlertTriangle} label="Equipos en Falla"    value={equipment.filter(e=>e.status==="falla").length} color="red"/>
+        <StatCard icon={Clock}         label="Horas Trabajadas"    value={`${totalHrs.toFixed(1)}h`} color="amber"/>
       </div>
       <div className={`${card} overflow-hidden`}>
-        <div className="px-4 py-3 text-xs text-white font-semibold uppercase tracking-wider" style={{background:NV.navyMid}}>OT por Equipo</div>
+        <div className="px-4 py-3 text-xs text-white font-semibold uppercase tracking-wider" style={{background:NV.navyMid}}>KPIs por Buque</div>
         <table className="w-full text-sm">
-          <thead><tr className="bg-gray-50 text-xs text-gray-500 font-semibold uppercase tracking-wider border-b border-gray-200">
-            <th className="text-left px-4 py-3">Equipo</th><th className="text-left px-4 py-3">Crit.</th>
-            <th className="text-right px-4 py-3">Total OT</th><th className="text-right px-4 py-3">Completadas</th><th className="text-right px-4 py-3">Horas</th>
+          <thead><tr className="bg-gray-50 border-b border-gray-200 text-xs text-gray-500 font-semibold uppercase tracking-wider">
+            <th className="text-left px-4 py-3">Buque</th><th className="text-left px-4 py-3">Estado</th>
+            <th className="text-right px-4 py-3">OT Total</th><th className="text-right px-4 py-3">Completadas</th>
+            <th className="text-right px-4 py-3">Horas</th><th className="text-center px-4 py-3">Equipos Falla</th><th className="text-center px-4 py-3">Cert. Alertas</th>
           </tr></thead>
-          <tbody>{byEquip.filter(e=>e.totalWOs>0).map((e,i)=>(
-            <tr key={e.id} className={`border-b border-gray-100 last:border-0 hover:bg-blue-50/30 transition ${i%2===0?"bg-white":"bg-gray-50/40"}`}>
-              <td className="px-4 py-2.5"><p className="text-gray-800 font-medium text-sm">{e.name}</p><p className="font-mono text-xs" style={{color:NV.blue}}>{e.code}</p></td>
-              <td className="px-4 py-2.5"><span className={`px-2 py-0.5 rounded-full border text-xs font-bold ${CRIT_CLS[e.criticality]}`}>{e.criticality}</span></td>
-              <td className="px-4 py-2.5 text-right text-gray-700 font-medium">{e.totalWOs}</td>
-              <td className="px-4 py-2.5 text-right text-emerald-600 font-semibold">{e.completedWOs}</td>
-              <td className="px-4 py-2.5 text-right text-gray-600">{e.hrs.toFixed(1)}h</td>
-            </tr>
-          ))}
-          {byEquip.filter(e=>e.totalWOs>0).length===0&&<tr><td colSpan={5} className="text-center py-8 text-gray-400 text-sm">Sin OT registradas aún</td></tr>}
-          </tbody>
+          <tbody>{byVessel.map((v,i)=>{
+            const vs=VESSEL_STATUS[v.status]||VESSEL_STATUS.in_port;
+            return(
+              <tr key={v.id} className={`border-b border-gray-100 last:border-0 hover:bg-blue-50/30 ${i%2===0?"bg-white":"bg-gray-50/40"}`}>
+                <td className="px-4 py-2.5"><p className="text-gray-800 font-semibold text-sm">{v.name}</p><p className="font-mono text-xs text-gray-400">IMO {v.imo}</p></td>
+                <td className="px-4 py-2.5"><span className={`inline-flex px-2 py-0.5 rounded-full border text-xs font-semibold ${vs.cls}`}>{vs.label}</span></td>
+                <td className="px-4 py-2.5 text-right text-gray-700 font-medium">{v.totalWO}</td>
+                <td className="px-4 py-2.5 text-right text-emerald-600 font-semibold">{v.completedWO}</td>
+                <td className="px-4 py-2.5 text-right text-gray-600">{v.hrs.toFixed(1)}h</td>
+                <td className="px-4 py-2.5 text-center"><span className={`font-bold ${v.equipFalla>0?"text-red-600":"text-gray-400"}`}>{v.equipFalla}</span></td>
+                <td className="px-4 py-2.5 text-center"><span className={`font-bold ${v.certAlerts>0?"text-amber-600":"text-gray-400"}`}>{v.certAlerts}</span></td>
+              </tr>
+            );
+          })}</tbody>
         </table>
       </div>
     </div>
@@ -938,67 +1244,65 @@ function Reports({data}){
 
 // ─── USERS ───────────────────────────────────────────────────────────────────
 function UsersPage({data,setData}){
-  const {users}=data;const [showForm,setShowForm]=useState(false);
-  const [form,setForm]=useState({name:"",email:"",password:"",role:"mecanico"});
-  const addUser=()=>{if(!form.name||!form.email||!form.password)return;const nu={id:uid(),...form,avatar:form.name.split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase()};const updated=[...users,nu];setData(d=>({...d,users:updated}));saveData("users",updated);setShowForm(false);setForm({name:"",email:"",password:"",role:"mecanico"});};
+  const {users} = data;
+  const [showForm,setShowForm]=useState(false);
+  const [form,setForm]=useState({name:"",email:"",role:"mechanic"});
+  const addUser=()=>{
+    if(!form.name||!form.email)return;
+    const nu={uid:uid(),...form,avatar:form.name.split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase()};
+    const updated=[...users,nu];setData(d=>({...d,users:updated}));saveData("users",updated);setShowForm(false);setForm({name:"",email:"",role:"mechanic"});
+  };
+  const ROLE_LABELS={fleet_manager:"Fleet Manager",vessel_chief:"Chief Engineer",mechanic:"Mecánico",admin:"Admin"};
   return(
     <div className="p-6">
       <div className="flex items-center justify-between mb-5">
-        <div><h1 className="text-gray-900 font-bold text-xl">Gestión de Usuarios</h1><p className="text-gray-500 text-sm">{users.length} usuarios</p></div>
+        <div><h1 className="text-gray-900 font-bold text-xl">Usuarios</h1><p className="text-gray-500 text-sm">{users.length} usuarios · Los usuarios deben crearse también en Firebase Auth Console</p></div>
         <button onClick={()=>setShowForm(true)} style={{background:NV.blue}} className={btnPrimary}><Plus size={15}/>Nuevo Usuario</button>
       </div>
+      <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-5 text-xs text-amber-700">
+        <strong>Importante:</strong> Para que un usuario pueda iniciar sesión, debe ser creado en <strong>Firebase Console → Authentication → Users</strong> con su email y contraseña inicial. El registro aquí solo guarda el perfil (nombre, rol).
+      </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {users.map(u=>{const cfg=ROLE_CFG[u.role];const RoleIcon=cfg.icon;return(
-          <div key={u.id} className={`${card} p-5 flex items-center gap-4 hover:shadow-md transition`}>
-            <div className="w-12 h-12 rounded-full flex items-center justify-center font-bold text-sm text-white" style={{background:NV.navyMid}}>{u.avatar}</div>
+        {users.map(u=>(
+          <div key={u.uid} className={`${card} p-5 flex items-center gap-4`}>
+            <div className="w-12 h-12 rounded-full flex items-center justify-center font-bold text-sm text-white flex-shrink-0" style={{background:NV.navyMid}}>{u.avatar||"?"}</div>
             <div className="flex-1 min-w-0">
               <p className="text-gray-800 font-semibold text-sm">{u.name}</p>
               <p className="text-gray-400 text-xs">{u.email}</p>
-              <p className={`flex items-center gap-1.5 mt-1 text-xs font-medium ${cfg.color.replace("text-","text-").replace("300","700")}`} style={{color:u.role==="supervisor"?NV.navy:u.role==="operaciones"?NV.blue:"#92400e"}}><RoleIcon size={11}/>{cfg.label}</p>
+              <span className="text-xs px-2 py-0.5 rounded-full font-medium text-white mt-1 inline-block" style={{background:NV.blue}}>{ROLE_LABELS[u.role]||u.role}</span>
             </div>
-            <span className="text-xs px-2 py-1 rounded-full font-medium text-white" style={{background:NV.blue}}>{ROLE_CFG[u.role].label}</span>
           </div>
-        );})}
+        ))}
       </div>
       {showForm&&(
         <Modal title="Nuevo Usuario" onClose={()=>setShowForm(false)}>
           <div className="space-y-3">
-            {[["name","NOMBRE COMPLETO","text"],["email","CORREO NAVIMAG","email"],["password","CONTRASEÑA","text"]].map(([k,l,t])=>(
-              <div key={k}><label className="text-gray-500 text-xs font-medium mb-1 block">{l}</label><input type={t} value={form[k]} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))} className={iCls}/></div>
+            {[["name","NOMBRE COMPLETO"],["email","CORREO (debe existir en Firebase Auth)"]].map(([k,l])=>(
+              <div key={k}><label className="text-gray-500 text-xs font-medium mb-1 block">{l}</label><input value={form[k]} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))} className={iCls}/></div>
             ))}
             <div><label className="text-gray-500 text-xs font-medium mb-1 block">ROL</label>
               <select value={form.role} onChange={e=>setForm(f=>({...f,role:e.target.value}))} className={sCls}>
-                <option value="supervisor">Supervisor — Acceso completo</option>
-                <option value="mecanico">Mecánico — Reportar trabajos</option>
-                <option value="operaciones">Operaciones — Solicitudes y notificaciones</option>
+                <option value="fleet_manager">Fleet Manager — Acceso completo</option>
+                <option value="vessel_chief">Chief Engineer — Su buque</option>
+                <option value="mechanic">Mecánico — OT y planes</option>
+                <option value="admin">Admin — Acceso completo</option>
               </select></div>
           </div>
-          <ModalActions onSave={addUser} onCancel={()=>setShowForm(false)} label="Crear Usuario"/>
+          <ModalActions onSave={addUser} onCancel={()=>setShowForm(false)} label="Crear Perfil"/>
         </Modal>
       )}
     </div>
   );
 }
 
-// ─── NOTIFICATIONS ───────────────────────────────────────────────────────────
-function Notifications({user,data}){
-  const {wos,equip,requests}=data;
-  const items=[
-    ...equip.filter(e=>e.status==="falla").map(e=>({icon:AlertTriangle,cls:"text-red-600",bg:"bg-red-50 border-red-200",title:`Equipo en falla: ${e.name}`,sub:`${e.location} · Criticidad ${e.criticality}`,time:"Activo"})),
-    ...requests.filter(r=>r.requestedBy===user.id).map(r=>{const eq=equip.find(e=>e.id===r.equipId);const linkedOT=wos.find(w=>w.id===r.otId);return {icon:r.status==="aprobada"?CheckCircle:r.status==="rechazada"?X:Clock,cls:r.status==="aprobada"?"text-emerald-600":r.status==="rechazada"?"text-red-600":"text-amber-600",bg:"bg-white border-gray-200",title:`Solicitud: ${r.title}`,sub:`${eq?.name||"—"} · ${ST[r.status]?.label}${linkedOT?` · ${linkedOT.code}`:""}`,time:fmtDT(r.requestedAt)};})
-  ];
+// ─── LOADING SCREEN ───────────────────────────────────────────────────────────
+function Loading(){
   return(
-    <div className="p-6">
-      <div className="mb-5"><h1 className="text-gray-900 font-bold text-xl">Notificaciones</h1></div>
-      {items.length===0&&<div className="text-center py-16 text-gray-400"><Bell size={40} className="mx-auto mb-3 text-gray-300"/><p className="font-medium">Sin notificaciones</p></div>}
-      <div className="space-y-3">
-        {items.map((n,i)=>(
-          <div key={i} className={`border rounded-xl p-4 flex items-start gap-3 shadow-sm ${n.bg}`}>
-            <n.icon size={16} className={`${n.cls} flex-shrink-0 mt-0.5`}/>
-            <div className="flex-1"><p className={`font-semibold text-sm ${n.cls}`}>{n.title}</p><p className="text-gray-500 text-xs mt-0.5">{n.sub}</p></div>
-            <span className="text-gray-400 text-xs">{n.time}</span>
-          </div>
-        ))}
+    <div className="min-h-screen flex items-center justify-center" style={{background:`linear-gradient(160deg,${NV.navy},${NV.blue})`}}>
+      <div className="text-center">
+        <div className="w-16 h-16 bg-white/20 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-white/30"><Ship size={32} className="text-white animate-pulse"/></div>
+        <p className="text-white font-bold text-lg">MANTEK Maritime</p>
+        <p className="text-blue-200 text-sm mt-1">Conectando con la base de datos...</p>
       </div>
     </div>
   );
@@ -1006,55 +1310,101 @@ function Notifications({user,data}){
 
 // ─── APP ROOT ─────────────────────────────────────────────────────────────────
 export default function App(){
-  const [user,setUser]=useState(null);const [page,setPage]=useState("dashboard");
-  const [online,setOnline]=useState(true);const [loading,setLoading]=useState(true);
-  const [data,setData]=useState({users:SEED_USERS,equip:SEED_EQUIPMENT,plans:SEED_PM_PLANS,requests:SEED_REQUESTS,wos:SEED_WORK_ORDERS});
-  const unsubs=useRef([]);
+  const [authUser, setAuthUser] = useState(undefined); // undefined = loading
+  const [page, setPage]         = useState("dashboard");
+  const [online, setOnline]     = useState(true);
+  const [dbLoading, setDbLoading] = useState(true);
+  const [showChangePwd, setShowChangePwd] = useState(false);
+  const [profile, setProfile]   = useState(null);
 
+  const [data, setData] = useState({
+    vessels:      SEED_VESSELS,
+    equipment:    SEED_EQUIPMENT,
+    certificates: SEED_CERTIFICATES,
+    workorders:   SEED_WORK_ORDERS,
+    plans:        SEED_PLANS,
+    users:        SEED_USERS_PROFILE,
+  });
+
+  const unsubs = useRef([]);
+
+  // Firebase Auth listener
   useEffect(()=>{
-    const keys=["users","equipment","plans","requests","workOrders"];
-    const seeds={users:SEED_USERS,equipment:SEED_EQUIPMENT,plans:SEED_PM_PLANS,requests:SEED_REQUESTS,workOrders:SEED_WORK_ORDERS};
-    const dk={users:"users",equipment:"equip",plans:"plans",requests:"requests",workOrders:"wos"};
-    (async()=>{
-      for(const k of keys) await initIfEmpty(k,seeds[k]);
-      unsubs.current=keys.map(k=>onSnapshot(doc(db,COLL,k),
-        snap=>{setOnline(true);if(snap.exists())setData(d=>({...d,[dk[k]]:snap.data().data}));},
-        ()=>setOnline(false)
-      ));
-      setLoading(false);
-    })();
-    return()=>unsubs.current.forEach(u=>u());
+    const unsub = onAuthStateChanged(auth, user => {
+      setAuthUser(user || null);
+    });
+    return ()=>unsub();
   },[]);
 
-  if(loading) return(
-    <div className="min-h-screen flex items-center justify-center" style={{background:`linear-gradient(160deg,${NV.navy},${NV.blue})`}}>
-      <div className="text-center">
-        <div className="w-16 h-16 bg-white/20 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-white/30"><Wrench size={32} className="text-white animate-pulse"/></div>
-        <p className="text-white font-bold text-lg">MANTEK ERP</p>
-        <p className="text-blue-200 text-sm mt-1">Conectando con la base de datos...</p>
-      </div>
-    </div>
-  );
+  // Load profile when auth user changes
+  useEffect(()=>{
+    if(!authUser){ setProfile(null); return; }
+    // Try to load profile from Firestore users collection
+    getDoc(doc(db,COLL,"users")).then(snap=>{
+      if(snap.exists()){
+        const users=snap.data().data||[];
+        const p=users.find(u=>u.email===authUser.email);
+        if(p) setProfile(p);
+        else setProfile({uid:authUser.uid,email:authUser.email,name:authUser.email,role:"mechanic",avatar:authUser.email[0].toUpperCase()});
+      } else {
+        setProfile({uid:authUser.uid,email:authUser.email,name:authUser.email,role:"fleet_manager",avatar:authUser.email[0].toUpperCase()});
+      }
+    }).catch(()=>{
+      setProfile({uid:authUser.uid,email:authUser.email,name:authUser.email,role:"fleet_manager",avatar:authUser.email[0].toUpperCase()});
+    });
+  },[authUser]);
 
-  const pendingReqs=data.requests.filter(r=>r.status==="pendiente").length;
-  if(!user) return <LoginPage users={data.users} onLogin={u=>{setUser(u);setPage("dashboard");}}/>;
+  // Firestore real-time listeners
+  useEffect(()=>{
+    if(!authUser) return;
+    const keys={vessels:"vessels",equipment:"equipment",certificates:"certificates",workorders:"workorders",plans:"plans",users:"users"};
+    const seeds={vessels:SEED_VESSELS,equipment:SEED_EQUIPMENT,certificates:SEED_CERTIFICATES,workorders:SEED_WORK_ORDERS,plans:SEED_PLANS,users:SEED_USERS_PROFILE};
+    (async()=>{
+      for(const key of Object.keys(keys)) await initIfEmpty(key,seeds[key]);
+      unsubs.current=Object.entries(keys).map(([k,v])=>onSnapshot(
+        doc(db,COLL,k),
+        snap=>{ setOnline(true); if(snap.exists())setData(d=>({...d,[v]:snap.data().data})); },
+        ()=>setOnline(false)
+      ));
+      setDbLoading(false);
+    })();
+    return()=>{ unsubs.current.forEach(u=>u()); unsubs.current=[]; };
+  },[authUser]);
 
-  const PAGES={
-    dashboard:     <Dashboard     user={user} data={data} onNav={setPage}/>,
-    workorders:    <WorkOrders    user={user} data={data} setData={setData}/>,
-    equipment:     <Equipment     user={user} data={data} setData={setData}/>,
-    plans:         <Plans         user={user} data={data} setData={setData}/>,
-    indicadores:   <Indicadores   data={data}/>,
-    requests:      <Requests      user={user} data={data} setData={setData}/>,
-    notifications: <Notifications user={user} data={data}/>,
-    reports:       <Reports       data={data}/>,
-    users:         <UsersPage     data={data} setData={setData}/>,
+  // Cert alerts count
+  const certAlerts = data.certificates.filter(c=>{const s=certStatus(c.expiryDate).s;return s==="critical"||s==="expired";}).length;
+
+  // Screens
+  if(authUser===undefined) return <Loading/>;
+  if(!authUser) return <LoginPage/>;
+  if(dbLoading) return <Loading/>;
+
+  const PAGES = {
+    dashboard:    <Dashboard    data={data} onNav={setPage}/>,
+    fleet:        <Fleet        data={data} setData={setData}/>,
+    equipment:    <Equipment    data={data} setData={setData}/>,
+    workorders:   <WorkOrders   data={data} setData={setData}/>,
+    certificates: <Certificates data={data} setData={setData}/>,
+    plans:        <Plans        data={data} setData={setData}/>,
+    reports:      <Reports      data={data}/>,
+    users:        <UsersPage    data={data} setData={setData}/>,
   };
 
   return(
     <div className="min-h-screen bg-gray-50 flex">
-      <Sidebar user={user} active={page} onNav={setPage} onLogout={()=>{setUser(null);setPage("dashboard");}} notifications={pendingReqs} online={online}/>
-      <main className="flex-1 min-h-screen overflow-y-auto">{PAGES[page]||PAGES.dashboard}</main>
+      <Sidebar
+        profile={profile}
+        active={page}
+        onNav={setPage}
+        onLogout={()=>signOut(auth)}
+        onChangePwd={()=>setShowChangePwd(true)}
+        certAlerts={certAlerts}
+        online={online}
+      />
+      <main className="flex-1 min-h-screen overflow-y-auto">
+        {PAGES[page]||PAGES.dashboard}
+      </main>
+      {showChangePwd&&<ChangePasswordModal onClose={()=>setShowChangePwd(false)}/>}
     </div>
   );
 }
