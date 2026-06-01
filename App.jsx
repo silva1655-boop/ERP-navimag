@@ -3,7 +3,7 @@ import {
   AlertTriangle, CheckCircle, Clock, Wrench, BarChart2, Package,
   Users, FileText, Bell, LogOut, ChevronRight, Plus, X,
   Calendar, Zap, Shield, Search, ClipboardList, AlertCircle,
-  Check, RefreshCw, Activity, ArrowRight, Edit2, Trash2,
+  Check, RefreshCw, Activity, Edit2, Trash2,
   TrendingUp, Layers, Info, Wifi, WifiOff, Gauge
 } from "lucide-react";
 import { db } from "./firebase.js";
@@ -36,15 +36,14 @@ const SEED_EQUIPMENT = [
   { id:"lif1",   code:"LIF-01",  name:"Liftec 1",    type:"Montacargas",      location:"Bodega",         criticality:"B", status:"operativo", lastMaint:"", nextMaint:"", hours:0 },
   { id:"lif2",   code:"LIF-02",  name:"Liftec 2",    type:"Montacargas",      location:"Bodega",         criticality:"B", status:"operativo", lastMaint:"", nextMaint:"", hours:0 },
   { id:"lif3",   code:"LIF-03",  name:"Liftec 3",    type:"Montacargas",      location:"Bodega",         criticality:"B", status:"operativo", lastMaint:"", nextMaint:"", hours:0 },
-  { id:"gru39",  code:"GRU-39",  name:"Grúa 39",     type:"Grúa Portuaria",   location:"Muelle",         criticality:"A", status:"operativo", lastMaint:"", nextMaint:"", hours:0 },
-  { id:"gru40",  code:"GRU-40",  name:"Grúa 40",     type:"Grúa Portuaria",   location:"Muelle",         criticality:"A", status:"operativo", lastMaint:"", nextMaint:"", hours:0 },
-  { id:"gru41",  code:"GRU-41",  name:"Grúa 41",     type:"Grúa Portuaria",   location:"Muelle",         criticality:"A", status:"operativo", lastMaint:"", nextMaint:"", hours:0 },
+  { id:"gru39",  code:"GRU-39",  name:"Grua 39",     type:"Grua Portuaria",   location:"Muelle",         criticality:"A", status:"operativo", lastMaint:"", nextMaint:"", hours:0 },
+  { id:"gru40",  code:"GRU-40",  name:"Grua 40",     type:"Grua Portuaria",   location:"Muelle",         criticality:"A", status:"operativo", lastMaint:"", nextMaint:"", hours:0 },
+  { id:"gru41",  code:"GRU-41",  name:"Grua 41",     type:"Grua Portuaria",   location:"Muelle",         criticality:"A", status:"operativo", lastMaint:"", nextMaint:"", hours:0 },
 ];
 
-const SEED_PM_PLANS    = [];
-const SEED_REQUESTS    = [];
+const SEED_PM_PLANS = [];
+const SEED_REQUESTS = [];
 const SEED_WORK_ORDERS = [];
-
 const COLL = "mantek_v2";
 
 async function saveData(key, arr) {
@@ -58,43 +57,37 @@ const fmt   = d => d ? new Date(d).toLocaleDateString("es-CL",{day:"2-digit",mon
 const fmtDT = d => d ? new Date(d).toLocaleString("es-CL",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"}) : "—";
 const uid = () => Math.random().toString(36).slice(2,10);
 const nextOTCode = wos => `OT-${new Date().getFullYear()}-${String(wos.length+1).padStart(3,"0")}`;
-const CRIT_LABEL = { A:"Crítico", B:"Importante", C:"Rutinario" };
+const CRIT_LABEL = { A:"Critico", B:"Importante", C:"Rutinario" };
 
-const NV = {
-  navy:    "#002060",
-  blue:    "#0055A4",
-  cyan:    "#00AEEF",
-  navyMid: "#003087",
-  light:   "#E8F2FB",
-};
+const NV = { navy:"#002060", blue:"#0055A4", cyan:"#00AEEF", navyMid:"#003087", light:"#E8F2FB" };
 
 const ST = {
-  pendiente:     {label:"Pendiente",     cls:"text-gray-600    bg-gray-100    border-gray-300"   },
-  asignada:      {label:"Asignada",      cls:"text-blue-700    bg-blue-50     border-blue-200"   },
-  en_proceso:    {label:"En Proceso",    cls:"text-amber-700   bg-amber-50    border-amber-200"  },
+  pendiente:     {label:"Pendiente",     cls:"text-gray-600    bg-gray-100    border-gray-300"},
+  asignada:      {label:"Asignada",      cls:"text-blue-700    bg-blue-50     border-blue-200"},
+  en_proceso:    {label:"En Proceso",    cls:"text-amber-700   bg-amber-50    border-amber-200"},
   completada:    {label:"Completada",    cls:"text-emerald-700 bg-emerald-50  border-emerald-200"},
-  cancelada:     {label:"Cancelada",     cls:"text-red-700     bg-red-50      border-red-200"    },
+  cancelada:     {label:"Cancelada",     cls:"text-red-700     bg-red-50      border-red-200"},
   aprobada:      {label:"Aprobada",      cls:"text-emerald-700 bg-emerald-50  border-emerald-200"},
-  rechazada:     {label:"Rechazada",     cls:"text-red-700     bg-red-50      border-red-200"    },
+  rechazada:     {label:"Rechazada",     cls:"text-red-700     bg-red-50      border-red-200"},
   operativo:     {label:"Operativo",     cls:"text-emerald-700 bg-emerald-50  border-emerald-200"},
-  mantenimiento: {label:"Mantenimiento", cls:"text-amber-700   bg-amber-50    border-amber-200"  },
-  falla:         {label:"Falla",         cls:"text-red-700     bg-red-50      border-red-200"    },
+  mantenimiento: {label:"Mantenimiento", cls:"text-amber-700   bg-amber-50    border-amber-200"},
+  falla:         {label:"Falla",         cls:"text-red-700     bg-red-50      border-red-200"},
 };
-const CRIT_CLS={A:"text-red-700 bg-red-50 border-red-200",B:"text-amber-700 bg-amber-50 border-amber-200",C:"text-emerald-700 bg-emerald-50 border-emerald-200"};
-const PRI_CLS ={alta:"text-red-700 bg-red-50 border-red-200",media:"text-amber-700 bg-amber-50 border-amber-200",baja:"text-emerald-700 bg-emerald-50 border-emerald-200"};
+const CRIT_CLS = {A:"text-red-700 bg-red-50 border-red-200",B:"text-amber-700 bg-amber-50 border-amber-200",C:"text-emerald-700 bg-emerald-50 border-emerald-200"};
+const PRI_CLS  = {alta:"text-red-700 bg-red-50 border-red-200",media:"text-amber-700 bg-amber-50 border-amber-200",baja:"text-emerald-700 bg-emerald-50 border-emerald-200"};
 
-const Badge=({s,label})=>{const c=ST[s]||{label:s,cls:"text-gray-600 bg-gray-100 border-gray-300"};return<span className={`inline-flex px-2 py-0.5 rounded-full border text-xs font-semibold ${c.cls}`}>{label||c.label}</span>;};
+const Badge = ({s,label}) => { const c=ST[s]||{label:s,cls:"text-gray-600 bg-gray-100 border-gray-300"}; return <span className={`inline-flex px-2 py-0.5 rounded-full border text-xs font-semibold ${c.cls}`}>{label||c.label}</span>; };
 
-const ROLE_CFG={
-  supervisor: {label:"Supervisor", color:"text-cyan-300",  icon:Shield,   nav:["dashboard","workorders","equipment","plans","indicadores","requests","reports","users"]},
-  mecanico:   {label:"Mecánico",   color:"text-amber-300", icon:Wrench,   nav:["dashboard","workorders","reports"]},
-  operaciones:{label:"Operaciones",color:"text-sky-300",   icon:Activity, nav:["dashboard","requests","notifications"]},
+const ROLE_CFG = {
+  supervisor:  {label:"Supervisor",  color:"text-cyan-300",  icon:Shield,   nav:["dashboard","workorders","equipment","plans","indicadores","requests","reports","users"]},
+  mecanico:    {label:"Mecanico",    color:"text-amber-300", icon:Wrench,   nav:["dashboard","workorders","reports"]},
+  operaciones: {label:"Operaciones", color:"text-sky-300",   icon:Activity, nav:["dashboard","requests","notifications"]},
 };
 
-const iCls="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 text-sm focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100";
-const sCls="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 text-sm focus:outline-none focus:border-blue-400";
-const card="bg-white border border-gray-200 rounded-xl shadow-sm";
-const btnPrimary="flex items-center gap-2 text-white font-semibold px-4 py-2 rounded-lg text-sm transition shadow-sm hover:opacity-90";
+const iCls = "w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 text-sm focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100";
+const sCls = "w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 text-sm focus:outline-none focus:border-blue-400";
+const card = "bg-white border border-gray-200 rounded-xl shadow-sm";
+const btnP = "flex items-center gap-2 text-white font-semibold px-4 py-2 rounded-lg text-sm transition shadow-sm hover:opacity-90";
 
 function Modal({title,onClose,children,wide=false}){
   return(
@@ -112,7 +105,7 @@ function Modal({title,onClose,children,wide=false}){
 function ModalActions({onSave,onCancel,label="Guardar"}){
   return(
     <div className="flex gap-2 mt-5">
-      <button onClick={onSave}   style={{background:NV.blue}} className="flex-1 text-white font-semibold py-2.5 rounded-lg text-sm transition hover:opacity-90">{label}</button>
+      <button onClick={onSave} style={{background:NV.blue}} className="flex-1 text-white font-semibold py-2.5 rounded-lg text-sm transition hover:opacity-90">{label}</button>
       <button onClick={onCancel} className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2.5 rounded-lg text-sm transition">Cancelar</button>
     </div>
   );
@@ -136,8 +129,7 @@ function LoginPage({users,onLogin}){
   const [email,setEmail]=useState(""); const [pass,setPass]=useState(""); const [err,setErr]=useState(""); const [show,setShow]=useState(false);
   const handle=()=>{const u=users.find(x=>x.email.toLowerCase()===email.trim().toLowerCase()&&x.password===pass);if(u)onLogin(u);else setErr("Credenciales incorrectas");};
   return(
-    <div className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden"
-      style={{background:`linear-gradient(160deg, ${NV.navy} 0%, ${NV.navyMid} 40%, ${NV.blue} 70%, ${NV.cyan} 100%)`}}>
+    <div className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden" style={{background:`linear-gradient(160deg, ${NV.navy} 0%, ${NV.navyMid} 40%, ${NV.blue} 70%, ${NV.cyan} 100%)`}}>
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <svg viewBox="0 0 1440 320" className="absolute bottom-0 w-full opacity-20" preserveAspectRatio="none">
           <path fill="white" d="M0,192L60,202.7C120,213,240,235,360,224C480,213,600,171,720,165.3C840,160,960,192,1080,197.3C1200,203,1320,181,1380,170.7L1440,160L1440,320L0,320Z"/>
@@ -151,9 +143,7 @@ function LoginPage({users,onLogin}){
       <div className="w-full max-w-sm relative z-10">
         <div className="text-center mb-8">
           <div className="inline-flex flex-col items-center gap-2">
-            <div className="w-16 h-16 bg-white/15 backdrop-blur-sm rounded-2xl flex items-center justify-center border border-white/30 shadow-xl">
-              <Wrench size={32} className="text-white"/>
-            </div>
+            <div className="w-16 h-16 bg-white/15 backdrop-blur-sm rounded-2xl flex items-center justify-center border border-white/30 shadow-xl"><Wrench size={32} className="text-white"/></div>
             <div>
               <p className="text-white font-bold text-2xl tracking-wide">MANTEK ERP</p>
               <p className="text-blue-200 text-xs tracking-widest font-medium">NAVIMAG · MANTENIMIENTO</p>
@@ -161,7 +151,7 @@ function LoginPage({users,onLogin}){
           </div>
         </div>
         <div className="bg-white/95 backdrop-blur-sm rounded-2xl p-8 shadow-2xl border border-white/50">
-          <p className="font-bold mb-6 text-sm" style={{color:NV.navy}}>Iniciar Sesión</p>
+          <p className="font-bold mb-6 text-sm" style={{color:NV.navy}}>Iniciar Sesion</p>
           {err&&<div className="bg-red-50 border border-red-200 text-red-700 text-xs p-3 rounded-lg mb-4">{err}</div>}
           <div className="space-y-4">
             <div>
@@ -169,16 +159,13 @@ function LoginPage({users,onLogin}){
               <input value={email} onChange={e=>setEmail(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handle()} className={iCls} placeholder="usuario@navimag.cl"/>
             </div>
             <div>
-              <label className="text-gray-500 text-xs font-medium mb-1 block">CONTRASEÑA</label>
+              <label className="text-gray-500 text-xs font-medium mb-1 block">CONTRASENA</label>
               <div className="relative">
-                <input type={show?"text":"password"} value={pass} onChange={e=>setPass(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handle()} className={iCls+" pr-16"} placeholder="••••••"/>
+                <input type={show?"text":"password"} value={pass} onChange={e=>setPass(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handle()} className={iCls+" pr-16"} placeholder="      "/>
                 <button type="button" onClick={()=>setShow(s=>!s)} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs font-medium">{show?"Ocultar":"Mostrar"}</button>
               </div>
             </div>
-            <button onClick={handle} style={{background:`linear-gradient(90deg, ${NV.navy}, ${NV.blue})`}}
-              className="w-full text-white font-bold py-3 rounded-xl text-sm transition shadow-md hover:opacity-90 mt-2">
-              INGRESAR
-            </button>
+            <button onClick={handle} style={{background:`linear-gradient(90deg, ${NV.navy}, ${NV.blue})`}} className="w-full text-white font-bold py-3 rounded-xl text-sm transition shadow-md hover:opacity-90 mt-2">INGRESAR</button>
           </div>
           <div className="flex items-center gap-2 mt-6 pt-4 border-t border-gray-100">
             <div className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0" style={{background:NV.blue}}>
@@ -192,9 +179,9 @@ function LoginPage({users,onLogin}){
   );
 }
 
-const NAV_ITEMS={
+const NAV_ITEMS = {
   dashboard:     {label:"Dashboard",          icon:BarChart2},
-  workorders:    {label:"Órdenes de Trabajo", icon:ClipboardList},
+  workorders:    {label:"Ordenes de Trabajo", icon:ClipboardList},
   equipment:     {label:"Equipos",            icon:Package},
   plans:         {label:"Plan Preventivo",    icon:Calendar},
   indicadores:   {label:"Indicadores KPI",    icon:TrendingUp},
@@ -205,18 +192,16 @@ const NAV_ITEMS={
 };
 
 function Sidebar({user,active,onNav,onLogout,notifications,online}){
-  const cfg=ROLE_CFG[user.role]; const RoleIcon=cfg.icon;
+  const cfg=ROLE_CFG[user.role]||ROLE_CFG.supervisor; const RoleIcon=cfg.icon;
   return(
     <div className="w-56 flex flex-col h-screen sticky top-0 flex-shrink-0 shadow-xl" style={{background:NV.navy}}>
       <div className="p-4 border-b border-white/10">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 bg-white/15 rounded-lg flex items-center justify-center flex-shrink-0 border border-white/20">
-            <Wrench size={15} className="text-white"/>
-          </div>
+          <div className="w-8 h-8 bg-white/15 rounded-lg flex items-center justify-center flex-shrink-0 border border-white/20"><Wrench size={15} className="text-white"/></div>
           <div>
             <p className="text-white font-bold text-sm">MANTEK ERP</p>
             <div className="flex items-center gap-1">
-              {online?<><Wifi size={9} className="text-emerald-400"/><p className="text-emerald-400 text-xs">En línea</p></>:<><WifiOff size={9} className="text-red-400"/><p className="text-red-400 text-xs">Sin conexión</p></>}
+              {online?<><Wifi size={9} className="text-emerald-400"/><p className="text-emerald-400 text-xs">En linea</p></>:<><WifiOff size={9} className="text-red-400"/><p className="text-red-400 text-xs">Sin conexion</p></>}
             </div>
           </div>
         </div>
@@ -245,7 +230,7 @@ function Sidebar({user,active,onNav,onLogout,notifications,online}){
           </div>
         </div>
         <button onClick={onLogout} className="w-full flex items-center gap-2 px-3 py-2 text-blue-300 hover:text-red-400 text-sm rounded-lg hover:bg-red-400/10 transition-all">
-          <LogOut size={14}/><span>Cerrar Sesión</span>
+          <LogOut size={14}/><span>Cerrar Sesion</span>
         </button>
       </div>
     </div>
@@ -262,14 +247,14 @@ function Dashboard({user,data,onNav}){
     <div className="p-6 space-y-6">
       <div>
         <h1 className="text-gray-900 font-bold text-xl">Dashboard</h1>
-        <p className="text-gray-500 text-sm">Bienvenido, {user.name} · {ROLE_CFG[role].label}</p>
+        <p className="text-gray-500 text-sm">Bienvenido, {user.name} · {ROLE_CFG[role]?.label}</p>
       </div>
       {role==="supervisor"&&<>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard icon={ClipboardList} label="OT Activas"            value={pendingWOs.length} sub={`${pendingWOs.filter(w=>w.priority==="alta").length} críticas`} color="navy"/>
+          <StatCard icon={ClipboardList} label="OT Activas"            value={pendingWOs.length} sub={`${pendingWOs.filter(w=>w.priority==="alta").length} criticas`} color="navy"/>
           <StatCard icon={AlertTriangle} label="Equipos en Falla"      value={fallas.length} color="red"/>
           <StatCard icon={Bell}          label="Solicitudes Pendientes" value={requests.filter(r=>r.status==="pendiente").length} color="cyan"/>
-          <StatCard icon={CheckCircle}   label="OT Completadas"         value={completed} sub="total" color="emerald"/>
+          <StatCard icon={CheckCircle}   label="OT Completadas"         value={completed} color="emerald"/>
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div className={`${card} p-5`}>
@@ -277,7 +262,7 @@ function Dashboard({user,data,onNav}){
               <h2 className="font-semibold text-sm" style={{color:NV.navy}}>OT Recientes</h2>
               <button onClick={()=>onNav("workorders")} className="text-xs hover:underline flex items-center gap-1" style={{color:NV.blue}}>Ver todo<ChevronRight size={12}/></button>
             </div>
-            {wos.length===0&&<p className="text-gray-400 text-xs text-center py-4">Sin órdenes de trabajo</p>}
+            {wos.length===0&&<p className="text-gray-400 text-xs text-center py-4">Sin ordenes de trabajo</p>}
             {wos.slice(0,5).map(w=>(
               <div key={w.id} className="flex items-center gap-2 py-2 border-b border-gray-100 last:border-0">
                 <Badge s={w.status}/><span className="text-gray-700 text-xs flex-1 truncate">{w.title}</span>
@@ -291,10 +276,7 @@ function Dashboard({user,data,onNav}){
             </div>
             <div className="flex items-center gap-4 mb-3">
               {[["operativo","bg-emerald-500","Operativos"],["mantenimiento","bg-amber-400","En Mant."],["falla","bg-red-500","En Falla"]].map(([s,c,l])=>(
-                <div key={s} className="flex items-center gap-1.5">
-                  <span className={`w-2.5 h-2.5 rounded-full ${c}`}/>
-                  <span className="text-gray-600 text-xs">{equip.filter(e=>e.status===s).length} {l}</span>
-                </div>
+                <div key={s} className="flex items-center gap-1.5"><span className={`w-2.5 h-2.5 rounded-full ${c}`}/><span className="text-gray-600 text-xs">{equip.filter(e=>e.status===s).length} {l}</span></div>
               ))}
             </div>
             {fallas.length>0&&fallas.map(e=>(
@@ -304,24 +286,24 @@ function Dashboard({user,data,onNav}){
                 <span className="text-gray-400 text-xs">{e.code}</span>
               </div>
             ))}
-            {fallas.length===0&&<p className="text-emerald-600 text-xs text-center py-2">✅ Todos los equipos operativos</p>}
+            {fallas.length===0&&<p className="text-emerald-600 text-xs text-center py-2">Todos los equipos operativos</p>}
           </div>
         </div>
       </>}
       {role==="mecanico"&&<>
         <div className="grid grid-cols-2 gap-4">
           <StatCard icon={ClipboardList} label="Mis OT Pendientes" value={myWOs.length} color="navy"/>
-          <StatCard icon={CheckCircle}   label="Completadas"       value={wos.filter(w=>w.assignedTo===user.id&&w.status==="completada").length} color="emerald"/>
+          <StatCard icon={CheckCircle} label="Completadas" value={wos.filter(w=>w.assignedTo===user.id&&w.status==="completada").length} color="emerald"/>
         </div>
         <div className={`${card} p-5`}>
-          <h2 className="font-semibold text-sm mb-4" style={{color:NV.navy}}>Mis Órdenes de Trabajo</h2>
-          {myWOs.length===0&&<p className="text-gray-400 text-sm text-center py-6">No tienes órdenes asignadas</p>}
+          <h2 className="font-semibold text-sm mb-4" style={{color:NV.navy}}>Mis Ordenes de Trabajo</h2>
+          {myWOs.length===0&&<p className="text-gray-400 text-sm text-center py-6">No tienes ordenes asignadas</p>}
           {myWOs.map(w=>{const eq=data.equip.find(e=>e.id===w.equipId);return(
             <div key={w.id} className="bg-gray-50 border border-gray-200 rounded-xl p-4 mb-2 last:mb-0">
               <div className="flex items-start justify-between gap-2">
                 <div><p className="text-xs font-mono font-bold mb-1" style={{color:NV.blue}}>{w.code}</p>
                   <p className="text-gray-800 text-sm font-semibold">{w.title}</p>
-                  <p className="text-gray-500 text-xs mt-1">{eq?.name} · {fmt(w.scheduledDate)}</p></div>
+                  <p className="text-gray-500 text-xs mt-1">{eq?.name} - {fmt(w.scheduledDate)}</p></div>
                 <Badge s={w.status}/>
               </div>
             </div>
@@ -331,7 +313,7 @@ function Dashboard({user,data,onNav}){
       {role==="operaciones"&&<>
         <div className="grid grid-cols-2 gap-4">
           <StatCard icon={AlertTriangle} label="Equipos en Falla" value={fallas.length} color="red"/>
-          <StatCard icon={Bell}          label="Mis Solicitudes"  value={requests.filter(r=>r.requestedBy===user.id).length} color="cyan"/>
+          <StatCard icon={Bell} label="Mis Solicitudes" value={requests.filter(r=>r.requestedBy===user.id).length} color="cyan"/>
         </div>
         {fallas.length>0&&(
           <div className="bg-red-50 border border-red-200 rounded-xl p-5">
@@ -339,7 +321,7 @@ function Dashboard({user,data,onNav}){
             {fallas.map(e=>(
               <div key={e.id} className="bg-white rounded-lg p-3 mb-2 last:mb-0 border border-red-100">
                 <p className="text-gray-800 text-sm font-semibold">{e.name}</p>
-                <p className="text-gray-500 text-xs">{e.location} · Criticidad {e.criticality}</p>
+                <p className="text-gray-500 text-xs">{e.location} - Criticidad {e.criticality}</p>
               </div>
             ))}
           </div>
@@ -348,7 +330,7 @@ function Dashboard({user,data,onNav}){
           <h2 className="font-semibold text-sm mb-4" style={{color:NV.navy}}>Mis Solicitudes Recientes</h2>
           {requests.filter(r=>r.requestedBy===user.id).slice(0,5).map(r=>{
             const eq=equip.find(e=>e.id===r.equipId);
-            return<div key={r.id} className="flex items-center gap-2 py-2 border-b border-gray-100 last:border-0">
+            return <div key={r.id} className="flex items-center gap-2 py-2 border-b border-gray-100 last:border-0">
               <Badge s={r.status}/><span className="text-gray-700 text-xs flex-1 truncate">{r.title}</span><span className="text-gray-400 text-xs">{eq?.code}</span>
             </div>;
           })}
@@ -379,7 +361,7 @@ function WorkOrders({user,data,setData}){
   return(
     <div className="p-6 flex gap-5 h-full">
       <div className="flex-1 min-w-0">
-        <div className="mb-5"><h1 className="text-gray-900 font-bold text-xl">Órdenes de Trabajo</h1><p className="text-gray-500 text-sm">{visible.length} registros</p></div>
+        <div className="mb-5"><h1 className="text-gray-900 font-bold text-xl">Ordenes de Trabajo</h1><p className="text-gray-500 text-sm">{visible.length} registros</p></div>
         <div className="flex gap-2 mb-4 flex-wrap">
           <div className="relative flex-1 min-w-40">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
@@ -413,12 +395,12 @@ function WorkOrders({user,data,setData}){
                       {asn&&<span className="text-gray-400 text-xs flex items-center gap-1"><Users size={10}/>{asn.name}</span>}
                     </div>
                   </div>
-                  <span className={`px-2 py-0.5 rounded-full border text-xs font-bold flex-shrink-0 ${PRI_CLS[w.priority]}`}>{w.priority.toUpperCase()}</span>
+                  <span className={`px-2 py-0.5 rounded-full border text-xs font-bold flex-shrink-0 ${PRI_CLS[w.priority]}`}>{(w.priority||"").toUpperCase()}</span>
                 </div>
               </div>
             );
           })}
-          {visible.length===0&&<div className="text-center py-12 text-gray-400 text-sm">No se encontraron órdenes</div>}
+          {visible.length===0&&<div className="text-center py-12 text-gray-400 text-sm">No se encontraron ordenes</div>}
         </div>
       </div>
       {cur&&(
@@ -430,10 +412,10 @@ function WorkOrders({user,data,setData}){
           <h3 className="text-gray-900 font-semibold text-sm mb-3">{cur.title}</h3>
           <div className="flex flex-wrap gap-1.5 mb-4">
             <Badge s={cur.status}/>
-            <span className={`px-2 py-0.5 rounded-full border text-xs font-bold ${PRI_CLS[cur.priority]}`}>{cur.priority.toUpperCase()}</span>
+            <span className={`px-2 py-0.5 rounded-full border text-xs font-bold ${PRI_CLS[cur.priority]||""}`}>{(cur.priority||"").toUpperCase()}</span>
           </div>
           <div className="space-y-2 mb-4 text-xs">
-            {[["Equipo",curEq?.name||"—"],["Código",curEq?.code||"—"],["Tipo",cur.type],["Programado",fmt(cur.scheduledDate)],["Horas Est.",`${cur.estimatedHours}h`],["Asignado a",curAs?.name||"—"]].map(([k,v])=>(
+            {[["Equipo",curEq?.name||"—"],["Codigo",curEq?.code||"—"],["Tipo",cur.type],["Programado",fmt(cur.scheduledDate)],["Horas Est.",`${cur.estimatedHours}h`],["Asignado a",curAs?.name||"—"]].map(([k,v])=>(
               <div key={k} className="flex justify-between gap-2"><span className="text-gray-400">{k}</span><span className="text-gray-700 text-right">{v}</span></div>
             ))}
             {cur.actualHours&&<div className="flex justify-between"><span className="text-gray-400">Horas Reales</span><span className="text-emerald-600 font-semibold">{cur.actualHours}h</span></div>}
@@ -442,8 +424,8 @@ function WorkOrders({user,data,setData}){
           {cur.observations&&<div className="bg-emerald-50 border border-emerald-100 rounded-lg p-3 mb-3 text-xs"><span className="text-emerald-700 font-semibold">Obs: </span>{cur.observations}</div>}
           <div className="space-y-2 mt-4">
             {role==="mecanico"&&cur.assignedTo===user.id&&cur.status!=="completada"&&<>
-              {cur.status==="asignada"&&<button onClick={()=>updWO(cur.id,{status:"en_proceso"})} className="w-full border text-sm py-2 rounded-lg hover:opacity-90 transition font-medium" style={{background:NV.light,borderColor:NV.blue,color:NV.blue}}>Iniciar Trabajo</button>}
-              <button onClick={()=>setShowRep(true)} className="w-full text-white text-sm py-2 rounded-lg hover:opacity-90 transition font-medium" style={{background:NV.blue}}>Reportar Trabajo</button>
+              {cur.status==="asignada"&&<button onClick={()=>updWO(cur.id,{status:"en_proceso"})} className="w-full border text-sm py-2 rounded-lg font-medium" style={{background:NV.light,borderColor:NV.blue,color:NV.blue}}>Iniciar Trabajo</button>}
+              <button onClick={()=>setShowRep(true)} className="w-full text-white text-sm py-2 rounded-lg font-medium" style={{background:NV.blue}}>Reportar Trabajo</button>
             </>}
             {role==="supervisor"&&cur.status!=="completada"&&cur.status!=="cancelada"&&(
               <select value={cur.status} onChange={e=>updWO(cur.id,{status:e.target.value})} className={sCls}>
@@ -455,9 +437,9 @@ function WorkOrders({user,data,setData}){
         </div>
       )}
       {showRep&&(
-        <Modal title={`Reportar — ${cur?.code}`} onClose={()=>setShowRep(false)}>
+        <Modal title={`Reportar - ${cur?.code}`} onClose={()=>setShowRep(false)}>
           <div className="space-y-4">
-            <div><label className="text-gray-500 text-xs font-medium mb-1 block">HORAS REALES *</label><input type="number" step="0.5" value={rep.actualHours} onChange={e=>setRep(r=>({...r,actualHours:e.target.value}))} className={iCls} placeholder="ej: 3.5"/></div>
+            <div><label className="text-gray-500 text-xs font-medium mb-1 block">HORAS REALES</label><input type="number" step="0.5" value={rep.actualHours} onChange={e=>setRep(r=>({...r,actualHours:e.target.value}))} className={iCls} placeholder="ej: 3.5"/></div>
             <div><label className="text-gray-500 text-xs font-medium mb-1 block">OBSERVACIONES</label><textarea value={rep.observations} onChange={e=>setRep(r=>({...r,observations:e.target.value}))} rows={3} className={iCls+" resize-none"}/></div>
             <div><label className="text-gray-500 text-xs font-medium mb-1 block">ESTADO FINAL</label><select value={rep.status} onChange={e=>setRep(r=>({...r,status:e.target.value}))} className={sCls}><option value="completada">Completada</option><option value="en_proceso">En Proceso (parcial)</option></select></div>
           </div>
@@ -469,15 +451,16 @@ function WorkOrders({user,data,setData}){
 }
 
 const EMPTY_EQ={code:"",name:"",type:"",location:"",criticality:"B",status:"operativo",hours:"",lastMaint:"",nextMaint:""};
-const EQ_GROUPS=["Mol","Kalmar","Terberg","Liftec","Grúa","Otros"];
+const EQ_GROUPS=["Mol","Kalmar","Terberg","Liftec","Grua","Otros"];
 const getGroup=e=>{
   if(e.code.startsWith("MOL")) return "Mol";
   if(e.code.startsWith("KAL")) return "Kalmar";
   if(e.code.startsWith("TER")) return "Terberg";
   if(e.code.startsWith("LIF")) return "Liftec";
-  if(e.code.startsWith("GRU")) return "Grúa";
+  if(e.code.startsWith("GRU")) return "Grua";
   return "Otros";
 };
+
 function Equipment({user,data,setData}){
   const {equip}=data; const isSup=user.role==="supervisor";
   const [search,setSearch]=useState(""); const [showForm,setShowForm]=useState(false);
@@ -496,11 +479,11 @@ function Equipment({user,data,setData}){
     <div className="p-6">
       <div className="flex items-center justify-between mb-5">
         <div><h1 className="text-gray-900 font-bold text-xl">Equipos</h1><p className="text-gray-500 text-sm">{equip.length} equipos registrados</p></div>
-        {isSup&&<button onClick={()=>{setForm(EMPTY_EQ);setEditTarget(null);setShowForm(true);}} style={{background:NV.blue}} className={btnPrimary}><Plus size={15}/>Nuevo Equipo</button>}
+        {isSup&&<button onClick={()=>{setForm(EMPTY_EQ);setEditTarget(null);setShowForm(true);}} style={{background:NV.blue}} className={btnP}><Plus size={15}/>Nuevo Equipo</button>}
       </div>
       <div className="relative mb-5">
         <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
-        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar por nombre o código..." className={iCls+" pl-9 max-w-xs"}/>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar por nombre o codigo..." className={iCls+" pl-9 max-w-xs"}/>
       </div>
       <div className="space-y-6">
         {grouped.map(({group,items})=>(
@@ -514,12 +497,12 @@ function Equipment({user,data,setData}){
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-xs text-white font-semibold uppercase tracking-wider" style={{background:NV.navyMid}}>
-                    <th className="text-left px-4 py-2.5">Código</th>
+                    <th className="text-left px-4 py-2.5">Codigo</th>
                     <th className="text-left px-4 py-2.5">Nombre</th>
-                    <th className="text-left px-4 py-2.5 hidden md:table-cell">Ubicación</th>
+                    <th className="text-left px-4 py-2.5 hidden md:table-cell">Ubicacion</th>
                     <th className="text-left px-4 py-2.5">Criticidad</th>
                     <th className="text-left px-4 py-2.5">Estado</th>
-                    <th className="text-left px-4 py-2.5"><span className="flex items-center gap-1"><Gauge size={11}/>Horómetro</span></th>
+                    <th className="text-left px-4 py-2.5"><span className="flex items-center gap-1"><Gauge size={11}/>Horometro</span></th>
                     {isSup&&<th className="px-4 py-2.5 text-center">Acciones</th>}
                   </tr>
                 </thead>
@@ -569,20 +552,20 @@ function Equipment({user,data,setData}){
       {showForm&&(
         <Modal title={editTarget?"Editar Equipo":"Nuevo Equipo"} onClose={()=>setShowForm(false)}>
           <div className="grid grid-cols-2 gap-3">
-            {[["code","CÓDIGO"],["name","NOMBRE"],["type","TIPO"],["location","UBICACIÓN"]].map(([k,l])=>(
+            {[["code","CODIGO"],["name","NOMBRE"],["type","TIPO"],["location","UBICACION"]].map(([k,l])=>(
               <div key={k}><label className="text-gray-500 text-xs font-medium mb-1 block">{l}</label><input value={form[k]} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))} className={iCls}/></div>
             ))}
             <div><label className="text-gray-500 text-xs font-medium mb-1 block">CRITICIDAD</label>
               <select value={form.criticality} onChange={e=>setForm(f=>({...f,criticality:e.target.value}))} className={sCls}>
-                <option value="A">A — Crítico</option><option value="B">B — Importante</option><option value="C">C — Rutinario</option>
+                <option value="A">A - Critico</option><option value="B">B - Importante</option><option value="C">C - Rutinario</option>
               </select></div>
             <div><label className="text-gray-500 text-xs font-medium mb-1 block">ESTADO</label>
               <select value={form.status} onChange={e=>setForm(f=>({...f,status:e.target.value}))} className={sCls}>
                 <option value="operativo">Operativo</option><option value="mantenimiento">Mantenimiento</option><option value="falla">Falla</option>
               </select></div>
-            <div><label className="text-gray-500 text-xs font-medium mb-1 block">HORÓMETRO (h)</label><input type="number" value={form.hours} onChange={e=>setForm(f=>({...f,hours:e.target.value}))} className={iCls}/></div>
-            <div><label className="text-gray-500 text-xs font-medium mb-1 block">PRÓX. MANTENCIÓN</label><input type="date" value={form.nextMaint} onChange={e=>setForm(f=>({...f,nextMaint:e.target.value}))} className={iCls}/></div>
-            <div className="col-span-2"><label className="text-gray-500 text-xs font-medium mb-1 block">ÚLTIMO MANTENCIÓN</label><input type="date" value={form.lastMaint} onChange={e=>setForm(f=>({...f,lastMaint:e.target.value}))} className={iCls}/></div>
+            <div><label className="text-gray-500 text-xs font-medium mb-1 block">HOROMETRO (h)</label><input type="number" value={form.hours} onChange={e=>setForm(f=>({...f,hours:e.target.value}))} className={iCls}/></div>
+            <div><label className="text-gray-500 text-xs font-medium mb-1 block">PROX. MANTENCION</label><input type="date" value={form.nextMaint} onChange={e=>setForm(f=>({...f,nextMaint:e.target.value}))} className={iCls}/></div>
+            <div className="col-span-2"><label className="text-gray-500 text-xs font-medium mb-1 block">ULTIMO MANTENCION</label><input type="date" value={form.lastMaint} onChange={e=>setForm(f=>({...f,lastMaint:e.target.value}))} className={iCls}/></div>
           </div>
           <ModalActions onSave={saveEquip} onCancel={()=>setShowForm(false)} label={editTarget?"Guardar Cambios":"Crear Equipo"}/>
         </Modal>
@@ -591,7 +574,7 @@ function Equipment({user,data,setData}){
         <div className="fixed inset-0 bg-black/25 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white border border-gray-200 rounded-2xl shadow-xl p-6 w-full max-w-sm">
             <p className="text-gray-900 font-bold text-sm mb-1">Eliminar {confirmDel.code}</p>
-            <p className="text-gray-600 text-sm mb-5">Esta acción no se puede deshacer.</p>
+            <p className="text-gray-600 text-sm mb-5">Esta accion no se puede deshacer.</p>
             <div className="flex gap-2">
               <button onClick={()=>deleteEquip(confirmDel.id)} className="flex-1 bg-red-600 hover:bg-red-500 text-white font-semibold py-2.5 rounded-lg text-sm">Eliminar</button>
               <button onClick={()=>setConfirmDel(null)} className="flex-1 bg-gray-100 text-gray-700 py-2.5 rounded-lg text-sm">Cancelar</button>
@@ -603,7 +586,8 @@ function Equipment({user,data,setData}){
   );
 }
 
-const EMPTY_PLAN={name:"",frequency:"",unit:"días",nextDate:"",estimatedHours:"",technician:"",tasks:""};
+const EMPTY_PLAN={name:"",frequency:"",unit:"dias",nextDate:"",estimatedHours:"",technician:"",tasks:""};
+
 function Plans({user,data,setData}){
   const {plans,equip,users,wos}=data;
   const [showForm,setShowForm]=useState(false); const [showMasivo,setShowMasivo]=useState(false);
@@ -612,14 +596,14 @@ function Plans({user,data,setData}){
   const genOT=(plan,allWOs)=>{
     const eq=equip.find(e=>e.id===plan.equipId);if(!eq)return null;
     const priority=eq.criticality==="A"?"alta":eq.criticality==="B"?"media":"baja";
-    return {id:uid(),code:nextOTCode(allWOs),type:"preventivo",equipId:plan.equipId,planId:plan.id,title:plan.name,priority,status:"asignada",assignedTo:plan.technician,createdAt:new Date().toISOString(),scheduledDate:plan.nextDate,estimatedHours:parseFloat(plan.estimatedHours)||0,actualHours:null,description:`OT automática. Tareas: ${Array.isArray(plan.tasks)?plan.tasks.join(", "):plan.tasks}`,observations:"",source:"plan"};
+    return {id:uid(),code:nextOTCode(allWOs),type:"preventivo",equipId:plan.equipId,planId:plan.id,title:plan.name,priority,status:"asignada",assignedTo:plan.technician,createdAt:new Date().toISOString(),scheduledDate:plan.nextDate,estimatedHours:parseFloat(plan.estimatedHours)||0,actualHours:null,description:`OT automatica. Tareas: ${Array.isArray(plan.tasks)?plan.tasks.join(", "):plan.tasks}`,observations:"",source:"plan"};
   };
   const addPlan=()=>{
     if(!form.equipId||!form.name)return;
     const np={id:uid(),...form,frequency:parseInt(form.frequency)||0,estimatedHours:parseFloat(form.estimatedHours)||0,tasks:form.tasks.split("\n").filter(Boolean)};
     const updP=[...plans,np];const newOT=genOT(np,wos);const updW=newOT?[...wos,newOT]:wos;
     setData(d=>({...d,plans:updP,wos:updW}));saveData("plans",updP);saveData("workOrders",updW);
-    setShowForm(false);if(newOT)alert(`✅ OT ${newOT.code} generada`);
+    setShowForm(false);if(newOT)alert("OT "+newOT.code+" generada");
   };
   const addMasivo=()=>{
     if(selEquips.length===0||!mName)return;
@@ -631,24 +615,24 @@ function Plans({user,data,setData}){
     });
     setData(d=>({...d,plans:newPlans,wos:allWOs}));saveData("plans",newPlans);saveData("workOrders",allWOs);
     setShowMasivo(false);setSelEquips([]);setMForm(EMPTY_PLAN);setMName("");
-    alert(`✅ ${selEquips.length} planes creados`);
+    alert(selEquips.length+" planes creados");
   };
-  const generateOT=plan=>{const newOT=genOT(plan,wos);if(!newOT)return;const updW=[...wos,newOT];setData(d=>({...d,wos:updW}));saveData("workOrders",updW);alert(`✅ OT ${newOT.code} generada`);};
-  const daysLeft=p=>Math.ceil((new Date(p.nextDate)-new Date())/86400000);
+  const generateOT=plan=>{const newOT=genOT(plan,wos);if(!newOT)return;const updW=[...wos,newOT];setData(d=>({...d,wos:updW}));saveData("workOrders",updW);alert("OT "+newOT.code+" generada");};
+  const dL=p=>Math.ceil((new Date(p.nextDate)-new Date())/86400000);
   return(
     <div className="p-6">
       <div className="flex items-center justify-between mb-5">
-        <div><h1 className="text-gray-900 font-bold text-xl">Plan de Mantenimiento Preventivo</h1><p className="text-gray-500 text-sm">Programación automática de OT</p></div>
+        <div><h1 className="text-gray-900 font-bold text-xl">Plan de Mantenimiento Preventivo</h1><p className="text-gray-500 text-sm">Programacion automatica de OT</p></div>
         {user.role==="supervisor"&&<div className="flex gap-2">
-          <button onClick={()=>setShowMasivo(true)} className={btnPrimary} style={{background:`linear-gradient(90deg,${NV.navy},${NV.blue})`}}><Layers size={15}/>Plan Masivo</button>
-          <button onClick={()=>setShowForm(true)} className={btnPrimary} style={{background:NV.blue}}><Plus size={15}/>Nuevo Plan</button>
+          <button onClick={()=>setShowMasivo(true)} className={btnP} style={{background:`linear-gradient(90deg,${NV.navy},${NV.blue})`}}><Layers size={15}/>Plan Masivo</button>
+          <button onClick={()=>setShowForm(true)} className={btnP} style={{background:NV.blue}}><Plus size={15}/>Nuevo Plan</button>
         </div>}
       </div>
       {plans.length===0&&<div className="text-center py-16 text-gray-400"><Calendar size={40} className="mx-auto mb-3 text-gray-300"/><p className="font-medium">Sin planes de mantenimiento</p></div>}
       <div className="space-y-4">
         {plans.map(p=>{
           const eq=equip.find(e=>e.id===p.equipId);const tech=users.find(u=>u.id===p.technician);
-          const dl=daysLeft(p); const linked=wos.filter(w=>w.planId===p.id);
+          const dl=dL(p); const linked=wos.filter(w=>w.planId===p.id);
           return(
             <div key={p.id} className={`${card} p-5`}>
               <div className="flex items-start justify-between gap-4">
@@ -662,7 +646,7 @@ function Plans({user,data,setData}){
                   <p className="text-gray-800 font-semibold text-sm mb-2">{p.name}</p>
                   <div className="flex items-center gap-4 text-xs text-gray-400 flex-wrap">
                     <span className="flex items-center gap-1"><RefreshCw size={10}/>Cada {p.frequency} {p.unit}</span>
-                    <span className="flex items-center gap-1"><Calendar size={10}/>Próx: {fmt(p.nextDate)}</span>
+                    <span className="flex items-center gap-1"><Calendar size={10}/>Prox: {fmt(p.nextDate)}</span>
                     <span className="flex items-center gap-1"><Clock size={10}/>{p.estimatedHours}h est.</span>
                     {tech&&<span className="flex items-center gap-1"><Users size={10}/>{tech.name}</span>}
                   </div>
@@ -684,23 +668,23 @@ function Plans({user,data,setData}){
             <div><label className="text-gray-500 text-xs font-medium mb-1 block">NOMBRE DEL PLAN</label><input value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))} className={iCls}/></div>
             <div className="grid grid-cols-2 gap-3">
               <div><label className="text-gray-500 text-xs font-medium mb-1 block">FRECUENCIA</label><input type="number" value={form.frequency} onChange={e=>setForm(f=>({...f,frequency:e.target.value}))} className={iCls}/></div>
-              <div><label className="text-gray-500 text-xs font-medium mb-1 block">UNIDAD</label><select value={form.unit} onChange={e=>setForm(f=>({...f,unit:e.target.value}))} className={sCls}><option value="días">Días</option><option value="horas">Horas</option><option value="semanas">Semanas</option></select></div>
+              <div><label className="text-gray-500 text-xs font-medium mb-1 block">UNIDAD</label><select value={form.unit} onChange={e=>setForm(f=>({...f,unit:e.target.value}))} className={sCls}><option value="dias">Dias</option><option value="horas">Horas</option><option value="semanas">Semanas</option></select></div>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <div><label className="text-gray-500 text-xs font-medium mb-1 block">PRÓXIMA FECHA</label><input type="date" value={form.nextDate} onChange={e=>setForm(f=>({...f,nextDate:e.target.value}))} className={iCls}/></div>
+              <div><label className="text-gray-500 text-xs font-medium mb-1 block">PROXIMA FECHA</label><input type="date" value={form.nextDate} onChange={e=>setForm(f=>({...f,nextDate:e.target.value}))} className={iCls}/></div>
               <div><label className="text-gray-500 text-xs font-medium mb-1 block">HRS ESTIMADAS</label><input type="number" value={form.estimatedHours} onChange={e=>setForm(f=>({...f,estimatedHours:e.target.value}))} className={iCls}/></div>
             </div>
-            <div><label className="text-gray-500 text-xs font-medium mb-1 block">TÉCNICO ASIGNADO</label><select value={form.technician} onChange={e=>setForm(f=>({...f,technician:e.target.value}))} className={sCls}><option value="">Seleccionar...</option>{users.filter(u=>u.role==="mecanico").map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select></div>
-            <div><label className="text-gray-500 text-xs font-medium mb-1 block">TAREAS (una por línea)</label><textarea value={form.tasks} onChange={e=>setForm(f=>({...f,tasks:e.target.value}))} rows={4} className={iCls+" resize-none"} placeholder={"Cambio aceite motor\nFiltro hidráulico\nRevisión frenos"}/></div>
+            <div><label className="text-gray-500 text-xs font-medium mb-1 block">TECNICO ASIGNADO</label><select value={form.technician} onChange={e=>setForm(f=>({...f,technician:e.target.value}))} className={sCls}><option value="">Seleccionar...</option>{users.filter(u=>u.role==="mecanico").map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select></div>
+            <div><label className="text-gray-500 text-xs font-medium mb-1 block">TAREAS (una por linea)</label><textarea value={form.tasks} onChange={e=>setForm(f=>({...f,tasks:e.target.value}))} rows={4} className={iCls+" resize-none"} placeholder="Cambio aceite motor"/></div>
           </div>
           <ModalActions onSave={addPlan} onCancel={()=>setShowForm(false)} label="Guardar y Generar OT"/>
         </Modal>
       )}
       {showMasivo&&(
-        <Modal title="Plan Masivo — Múltiples equipos" onClose={()=>setShowMasivo(false)} wide>
+        <Modal title="Plan Masivo" onClose={()=>setShowMasivo(false)} wide>
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 text-blue-700 text-xs flex items-start gap-2">
             <Info size={14} className="flex-shrink-0 mt-0.5"/>
-            <span>Usa <strong>{"{equipo}"}</strong> o <strong>{"{codigo}"}</strong> en el nombre para personalizarlo.</span>
+            <span>Usa {"{equipo}"} o {"{codigo}"} en el nombre para personalizarlo.</span>
           </div>
           <div className="grid grid-cols-2 gap-5">
             <div>
@@ -722,13 +706,13 @@ function Plans({user,data,setData}){
               <div><label className="text-gray-500 text-xs font-medium mb-1 block">NOMBRE</label><input value={mName} onChange={e=>setMName(e.target.value)} className={iCls} placeholder="Servicio 250h - {equipo}"/></div>
               <div className="grid grid-cols-2 gap-2">
                 <div><label className="text-gray-500 text-xs font-medium mb-1 block">FRECUENCIA</label><input type="number" value={mForm.frequency} onChange={e=>setMForm(f=>({...f,frequency:e.target.value}))} className={iCls}/></div>
-                <div><label className="text-gray-500 text-xs font-medium mb-1 block">UNIDAD</label><select value={mForm.unit} onChange={e=>setMForm(f=>({...f,unit:e.target.value}))} className={sCls}><option value="días">Días</option><option value="horas">Horas</option><option value="semanas">Semanas</option></select></div>
+                <div><label className="text-gray-500 text-xs font-medium mb-1 block">UNIDAD</label><select value={mForm.unit} onChange={e=>setMForm(f=>({...f,unit:e.target.value}))} className={sCls}><option value="dias">Dias</option><option value="horas">Horas</option><option value="semanas">Semanas</option></select></div>
               </div>
               <div className="grid grid-cols-2 gap-2">
-                <div><label className="text-gray-500 text-xs font-medium mb-1 block">PRÓXIMA FECHA</label><input type="date" value={mForm.nextDate} onChange={e=>setMForm(f=>({...f,nextDate:e.target.value}))} className={iCls}/></div>
+                <div><label className="text-gray-500 text-xs font-medium mb-1 block">PROXIMA FECHA</label><input type="date" value={mForm.nextDate} onChange={e=>setMForm(f=>({...f,nextDate:e.target.value}))} className={iCls}/></div>
                 <div><label className="text-gray-500 text-xs font-medium mb-1 block">HRS ESTIMADAS</label><input type="number" value={mForm.estimatedHours} onChange={e=>setMForm(f=>({...f,estimatedHours:e.target.value}))} className={iCls}/></div>
               </div>
-              <div><label className="text-gray-500 text-xs font-medium mb-1 block">TÉCNICO</label><select value={mForm.technician} onChange={e=>setMForm(f=>({...f,technician:e.target.value}))} className={sCls}><option value="">Seleccionar...</option>{users.filter(u=>u.role==="mecanico").map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select></div>
+              <div><label className="text-gray-500 text-xs font-medium mb-1 block">TECNICO</label><select value={mForm.technician} onChange={e=>setMForm(f=>({...f,technician:e.target.value}))} className={sCls}><option value="">Seleccionar...</option>{users.filter(u=>u.role==="mecanico").map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select></div>
               <div><label className="text-gray-500 text-xs font-medium mb-1 block">TAREAS</label><textarea value={mForm.tasks} onChange={e=>setMForm(f=>({...f,tasks:e.target.value}))} rows={3} className={iCls+" resize-none"}/></div>
             </div>
           </div>
@@ -741,17 +725,17 @@ function Plans({user,data,setData}){
 
 function Indicadores({data}){
   const {wos,equip}=data;
-  const calc=eqId=>{const eq=equip.find(e=>e.id===eqId);const corr=wos.filter(w=>w.equipId===eqId&&w.type==="correctivo");const comp=corr.filter(w=>w.status==="completada"&&w.actualHours);const n=corr.length;const mttr=comp.length>0?(comp.reduce((s,w)=>s+(w.actualHours||0),0)/comp.length):null;const mtbf=n>0&&eq?(eq.hours/n):null;const disp=(mtbf!==null&&mttr!==null&&(mtbf+mttr)>0)?(mtbf/(mtbf+mttr)*100):null;return {n,mttr,mtbf,disp};};
+  const calc=eqId=>{const eq=equip.find(e=>e.id===eqId);const corr=wos.filter(w=>w.equipId===eqId&&w.type==="correctivo");const comp=corr.filter(w=>w.status==="completada"&&w.actualHours);const n=corr.length;const mttr=comp.length>0?(comp.reduce((s,w)=>s+(w.actualHours||0),0)/comp.length):null;const mtbf=n>0&&eq?((eq.hours||0)/n):null;const disp=(mtbf!==null&&mttr!==null&&(mtbf+mttr)>0)?(mtbf/(mtbf+mttr)*100):null;return {n,mttr,mtbf,disp};};
   const gC=wos.filter(w=>w.type==="correctivo");const gCo=gC.filter(w=>w.status==="completada"&&w.actualHours);
   const gMTTR=gCo.length>0?(gCo.reduce((s,w)=>s+(w.actualHours||0),0)/gCo.length):null;
   const tH=equip.reduce((s,e)=>s+(e.hours||0),0);const gMTBF=gC.length>0?(tH/gC.length):null;const gD=(gMTBF!==null&&gMTTR!==null&&(gMTBF+gMTTR)>0)?(gMTBF/(gMTBF+gMTTR)*100):null;
   const fH=v=>v===null?"N/D":`${v.toFixed(1)}h`;const fP=v=>v===null?"N/D":`${v.toFixed(1)}%`;const dC=v=>v===null?"text-gray-400":v>=90?"text-emerald-600":v>=70?"text-amber-600":"text-red-600";
   return(
     <div className="p-6 space-y-6">
-      <div><h1 className="text-gray-900 font-bold text-xl">Indicadores de Mantenimiento</h1><p className="text-gray-500 text-sm">MTBF · MTTR · Disponibilidad</p></div>
+      <div><h1 className="text-gray-900 font-bold text-xl">Indicadores de Mantenimiento</h1><p className="text-gray-500 text-sm">MTBF - MTTR - Disponibilidad</p></div>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard icon={Clock} label="MTBF Global" value={fH(gMTBF)} sub="horas entre fallas" color="blue"/>
-        <StatCard icon={Wrench} label="MTTR Global" value={fH(gMTTR)} sub="horas por reparación" color="amber"/>
+        <StatCard icon={Wrench} label="MTTR Global" value={fH(gMTTR)} sub="horas por reparacion" color="amber"/>
         <StatCard icon={TrendingUp} label="Disponibilidad" value={fP(gD)} sub="de la flota" color="emerald"/>
         <StatCard icon={AlertTriangle} label="Total Fallas" value={gC.length} sub="OT correctivas" color="red"/>
       </div>
@@ -790,13 +774,13 @@ function Requests({user,data,setData}){
   const canCreate=user.role==="operaciones"||user.role==="supervisor";
   const visible=user.role==="supervisor"?requests:requests.filter(r=>r.requestedBy===user.id);
   const createReq=()=>{if(!form.equipId||!form.title)return;const nr={id:uid(),...form,status:"pendiente",requestedBy:user.id,requestedAt:new Date().toISOString(),approvedBy:null,otId:null};const updated=[...requests,nr];setData(d=>({...d,requests:updated}));saveData("requests",updated);setShowForm(false);setForm({equipId:"",title:"",description:"",priority:"media"});};
-  const approve=req=>{const eq=equip.find(e=>e.id===req.equipId);const priority=req.priority==="alta"||eq?.criticality==="A"?"alta":req.priority;const mec=users.find(u=>u.role==="mecanico");const newOT={id:uid(),code:nextOTCode(wos),type:"correctivo",equipId:req.equipId,planId:null,title:`Reparación ${eq?.name||""} - ${req.title}`,priority,status:"asignada",assignedTo:mec?.id||"",createdAt:new Date().toISOString(),scheduledDate:new Date().toISOString().slice(0,10),estimatedHours:priority==="alta"?4:2,actualHours:null,description:req.description,observations:"",source:"solicitud",reqId:req.id};const updW=[...wos,newOT];const updR=requests.map(r=>r.id===req.id?{...r,status:"aprobada",approvedBy:user.id,otId:newOT.id}:r);setData(d=>({...d,wos:updW,requests:updR}));saveData("workOrders",updW);saveData("requests",updR);alert(`✅ OT ${newOT.code} generada`);};
+  const approve=req=>{const eq=equip.find(e=>e.id===req.equipId);const priority=req.priority==="alta"||eq?.criticality==="A"?"alta":req.priority;const mec=users.find(u=>u.role==="mecanico");const newOT={id:uid(),code:nextOTCode(wos),type:"correctivo",equipId:req.equipId,planId:null,title:`Reparacion ${eq?.name||""} - ${req.title}`,priority,status:"asignada",assignedTo:mec?.id||"",createdAt:new Date().toISOString(),scheduledDate:new Date().toISOString().slice(0,10),estimatedHours:priority==="alta"?4:2,actualHours:null,description:req.description,observations:"",source:"solicitud",reqId:req.id};const updW=[...wos,newOT];const updR=requests.map(r=>r.id===req.id?{...r,status:"aprobada",approvedBy:user.id,otId:newOT.id}:r);setData(d=>({...d,wos:updW,requests:updR}));saveData("workOrders",updW);saveData("requests",updR);alert("OT "+newOT.code+" generada");};
   const reject=req=>{const updated=requests.map(r=>r.id===req.id?{...r,status:"rechazada",approvedBy:user.id}:r);setData(d=>({...d,requests:updated}));saveData("requests",updated);};
   return(
     <div className="p-6">
       <div className="flex items-center justify-between mb-5">
-        <div><h1 className="text-gray-900 font-bold text-xl">Solicitudes de Reparación</h1><p className="text-gray-500 text-sm">{visible.length} solicitudes</p></div>
-        {canCreate&&<button onClick={()=>setShowForm(true)} style={{background:NV.blue}} className={btnPrimary}><Plus size={15}/>Nueva Solicitud</button>}
+        <div><h1 className="text-gray-900 font-bold text-xl">Solicitudes de Reparacion</h1><p className="text-gray-500 text-sm">{visible.length} solicitudes</p></div>
+        {canCreate&&<button onClick={()=>setShowForm(true)} style={{background:NV.blue}} className={btnP}><Plus size={15}/>Nueva Solicitud</button>}
       </div>
       {visible.length===0&&<div className="text-center py-16 text-gray-400"><Bell size={40} className="mx-auto mb-3 text-gray-300"/><p>Sin solicitudes</p></div>}
       <div className="space-y-3">
@@ -826,4 +810,169 @@ function Requests({user,data,setData}){
         <Modal title="Nueva Solicitud" onClose={()=>setShowForm(false)}>
           <div className="space-y-3">
             <div><label className="text-gray-500 text-xs font-medium mb-1 block">EQUIPO</label><select value={form.equipId} onChange={e=>setForm(f=>({...f,equipId:e.target.value}))} className={sCls}><option value="">Seleccionar...</option>{equip.map(e=><option key={e.id} value={e.id}>{e.name} ({e.code})</option>)}</select></div>
-            <div><label cl
+            <div><label className="text-gray-500 text-xs font-medium mb-1 block">FALLA DETECTADA</label><input value={form.title} onChange={e=>setForm(f=>({...f,title:e.target.value}))} className={iCls}/></div>
+            <div><label className="text-gray-500 text-xs font-medium mb-1 block">DESCRIPCION</label><textarea value={form.description} onChange={e=>setForm(f=>({...f,description:e.target.value}))} rows={3} className={iCls+" resize-none"}/></div>
+            <div><label className="text-gray-500 text-xs font-medium mb-1 block">PRIORIDAD</label><select value={form.priority} onChange={e=>setForm(f=>({...f,priority:e.target.value}))} className={sCls}><option value="alta">Alta</option><option value="media">Media</option><option value="baja">Baja</option></select></div>
+          </div>
+          <ModalActions onSave={createReq} onCancel={()=>setShowForm(false)} label="Enviar Solicitud"/>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function Reports({data}){
+  const {wos,equip}=data;
+  const completed=wos.filter(w=>w.status==="completada");
+  const totalHrs=completed.reduce((s,w)=>s+(w.actualHours||0),0);
+  const byEquip=equip.map(e=>({...e,totalWOs:wos.filter(w=>w.equipId===e.id).length,completedWOs:completed.filter(w=>w.equipId===e.id).length,hrs:completed.filter(w=>w.equipId===e.id).reduce((s,w)=>s+(w.actualHours||0),0)})).sort((a,b)=>b.totalWOs-a.totalWOs);
+  return(
+    <div className="p-6 space-y-6">
+      <h1 className="text-gray-900 font-bold text-xl">Informes y Analisis</h1>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard icon={CheckCircle} label="OT Completadas" value={completed.length} color="emerald"/>
+        <StatCard icon={Wrench} label="Preventivas" value={wos.filter(w=>w.type==="preventivo").length} color="blue"/>
+        <StatCard icon={AlertTriangle} label="Correctivas" value={wos.filter(w=>w.type==="correctivo").length} color="red"/>
+        <StatCard icon={Clock} label="Horas Totales" value={`${totalHrs.toFixed(1)}h`} color="amber"/>
+      </div>
+      <div className={`${card} overflow-hidden`}>
+        <div className="px-4 py-3 text-xs text-white font-semibold uppercase tracking-wider" style={{background:NV.navyMid}}>OT por Equipo</div>
+        <table className="w-full text-sm">
+          <thead><tr className="bg-gray-50 text-xs text-gray-500 font-semibold uppercase tracking-wider border-b border-gray-200">
+            <th className="text-left px-4 py-3">Equipo</th><th className="text-left px-4 py-3">Crit.</th>
+            <th className="text-right px-4 py-3">Total OT</th><th className="text-right px-4 py-3">Completadas</th><th className="text-right px-4 py-3">Horas</th>
+          </tr></thead>
+          <tbody>{byEquip.filter(e=>e.totalWOs>0).map((e,i)=>(
+            <tr key={e.id} className={`border-b border-gray-100 last:border-0 hover:bg-blue-50/30 ${i%2===0?"bg-white":"bg-gray-50/40"}`}>
+              <td className="px-4 py-2.5"><p className="text-gray-800 font-medium text-sm">{e.name}</p><p className="font-mono text-xs" style={{color:NV.blue}}>{e.code}</p></td>
+              <td className="px-4 py-2.5"><span className={`px-2 py-0.5 rounded-full border text-xs font-bold ${CRIT_CLS[e.criticality]}`}>{e.criticality}</span></td>
+              <td className="px-4 py-2.5 text-right text-gray-700">{e.totalWOs}</td>
+              <td className="px-4 py-2.5 text-right text-emerald-600 font-semibold">{e.completedWOs}</td>
+              <td className="px-4 py-2.5 text-right text-gray-600">{e.hrs.toFixed(1)}h</td>
+            </tr>
+          ))}
+          {byEquip.filter(e=>e.totalWOs>0).length===0&&<tr><td colSpan={5} className="text-center py-8 text-gray-400 text-sm">Sin OT registradas aun</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function UsersPage({data,setData}){
+  const {users}=data; const [showForm,setShowForm]=useState(false);
+  const [form,setForm]=useState({name:"",email:"",password:"",role:"mecanico"});
+  const addUser=()=>{if(!form.name||!form.email||!form.password)return;const nu={id:uid(),...form,avatar:form.name.split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase()};const updated=[...users,nu];setData(d=>({...d,users:updated}));saveData("users",updated);setShowForm(false);setForm({name:"",email:"",password:"",role:"mecanico"});};
+  return(
+    <div className="p-6">
+      <div className="flex items-center justify-between mb-5">
+        <div><h1 className="text-gray-900 font-bold text-xl">Gestion de Usuarios</h1><p className="text-gray-500 text-sm">{users.length} usuarios</p></div>
+        <button onClick={()=>setShowForm(true)} style={{background:NV.blue}} className={btnP}><Plus size={15}/>Nuevo Usuario</button>
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {users.map(u=>{const cfg=ROLE_CFG[u.role]||ROLE_CFG.mecanico;const RoleIcon=cfg.icon;return(
+          <div key={u.id} className={`${card} p-5 flex items-center gap-4`}>
+            <div className="w-12 h-12 rounded-full flex items-center justify-center font-bold text-sm text-white" style={{background:NV.navyMid}}>{u.avatar}</div>
+            <div className="flex-1 min-w-0">
+              <p className="text-gray-800 font-semibold text-sm">{u.name}</p>
+              <p className="text-gray-400 text-xs">{u.email}</p>
+              <p className="flex items-center gap-1 mt-1 text-xs font-medium text-gray-600"><RoleIcon size={11}/>{cfg.label}</p>
+            </div>
+            <span className="text-xs px-2 py-1 rounded-full font-medium text-white" style={{background:NV.blue}}>{cfg.label}</span>
+          </div>
+        );})}
+      </div>
+      {showForm&&(
+        <Modal title="Nuevo Usuario" onClose={()=>setShowForm(false)}>
+          <div className="space-y-3">
+            {[["name","NOMBRE COMPLETO","text"],["email","CORREO","email"],["password","CONTRASENA","text"]].map(([k,l,t])=>(
+              <div key={k}><label className="text-gray-500 text-xs font-medium mb-1 block">{l}</label><input type={t} value={form[k]} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))} className={iCls}/></div>
+            ))}
+            <div><label className="text-gray-500 text-xs font-medium mb-1 block">ROL</label>
+              <select value={form.role} onChange={e=>setForm(f=>({...f,role:e.target.value}))} className={sCls}>
+                <option value="supervisor">Supervisor</option><option value="mecanico">Mecanico</option><option value="operaciones">Operaciones</option>
+              </select></div>
+          </div>
+          <ModalActions onSave={addUser} onCancel={()=>setShowForm(false)} label="Crear Usuario"/>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function Notifications({user,data}){
+  const {wos,equip,requests}=data;
+  const items=[
+    ...equip.filter(e=>e.status==="falla").map(e=>({icon:AlertTriangle,cls:"text-red-600",bg:"bg-red-50 border-red-200",title:`Equipo en falla: ${e.name}`,sub:`${e.location} - Criticidad ${e.criticality}`,time:"Activo"})),
+    ...requests.filter(r=>r.requestedBy===user.id).map(r=>{const eq=equip.find(e=>e.id===r.equipId);const linkedOT=wos.find(w=>w.id===r.otId);return{icon:r.status==="aprobada"?CheckCircle:r.status==="rechazada"?X:Clock,cls:r.status==="aprobada"?"text-emerald-600":r.status==="rechazada"?"text-red-600":"text-amber-600",bg:"bg-white border-gray-200",title:`Solicitud: ${r.title}`,sub:`${eq?.name||"—"} - ${ST[r.status]?.label}${linkedOT?` - ${linkedOT.code}`:""}`,time:fmtDT(r.requestedAt)};})
+  ];
+  return(
+    <div className="p-6">
+      <div className="mb-5"><h1 className="text-gray-900 font-bold text-xl">Notificaciones</h1></div>
+      {items.length===0&&<div className="text-center py-16 text-gray-400"><Bell size={40} className="mx-auto mb-3 text-gray-300"/><p>Sin notificaciones</p></div>}
+      <div className="space-y-3">
+        {items.map((n,i)=>(
+          <div key={i} className={`border rounded-xl p-4 flex items-start gap-3 shadow-sm ${n.bg}`}>
+            <n.icon size={16} className={`${n.cls} flex-shrink-0 mt-0.5`}/>
+            <div className="flex-1"><p className={`font-semibold text-sm ${n.cls}`}>{n.title}</p><p className="text-gray-500 text-xs mt-0.5">{n.sub}</p></div>
+            <span className="text-gray-400 text-xs">{n.time}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export default function App(){
+  const [user,setUser]=useState(null); const [page,setPage]=useState("dashboard");
+  const [online,setOnline]=useState(true); const [loading,setLoading]=useState(true);
+  const [data,setData]=useState({users:SEED_USERS,equip:SEED_EQUIPMENT,plans:SEED_PM_PLANS,requests:SEED_REQUESTS,wos:SEED_WORK_ORDERS});
+  const unsubs=useRef([]);
+
+  useEffect(()=>{
+    const keys=["users","equipment","plans","requests","workOrders"];
+    const seeds={users:SEED_USERS,equipment:SEED_EQUIPMENT,plans:SEED_PM_PLANS,requests:SEED_REQUESTS,workOrders:SEED_WORK_ORDERS};
+    const dk={users:"users",equipment:"equip",plans:"plans",requests:"requests",workOrders:"wos"};
+    (async()=>{
+      for(const k of keys) await initIfEmpty(k,seeds[k]);
+      unsubs.current=keys.map(k=>onSnapshot(doc(db,COLL,k),
+        snap=>{setOnline(true);if(snap.exists())setData(d=>({...d,[dk[k]]:snap.data().data}));},
+        ()=>setOnline(false)
+      ));
+      setLoading(false);
+    })();
+    return()=>unsubs.current.forEach(u=>u());
+  },[]);
+
+  if(loading) return(
+    <div className="min-h-screen flex items-center justify-center" style={{background:`linear-gradient(160deg,${NV.navy},${NV.blue})`}}>
+      <div className="text-center">
+        <div className="w-16 h-16 bg-white/20 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-white/30"><Wrench size={32} className="text-white animate-pulse"/></div>
+        <p className="text-white font-bold text-lg">MANTEK ERP</p>
+        <p className="text-blue-200 text-sm mt-1">Conectando con la base de datos...</p>
+      </div>
+    </div>
+  );
+
+  const pendingReqs=data.requests.filter(r=>r.status==="pendiente").length;
+  if(!user) return <LoginPage users={data.users} onLogin={u=>{setUser(u);setPage("dashboard");}}/>;
+
+  const PAGES={
+    dashboard:     <Dashboard     user={user} data={data} onNav={setPage}/>,
+    workorders:    <WorkOrders    user={user} data={data} setData={setData}/>,
+    equipment:     <Equipment     user={user} data={data} setData={setData}/>,
+    plans:         <Plans         user={user} data={data} setData={setData}/>,
+    indicadores:   <Indicadores   data={data}/>,
+    requests:      <Requests      user={user} data={data} setData={setData}/>,
+    notifications: <Notifications user={user} data={data}/>,
+    reports:       <Reports       data={data}/>,
+    users:         <UsersPage     data={data} setData={setData}/>,
+  };
+
+  return(
+    <div className="min-h-screen bg-gray-50 flex">
+      <Sidebar user={user} active={page} onNav={setPage} onLogout={()=>{setUser(null);setPage("dashboard");}} notifications={pendingReqs} online={online}/>
+      <main className="flex-1 min-h-screen overflow-y-auto">{PAGES[page]||PAGES.dashboard}</main>
+    </div>
+  );
+}
