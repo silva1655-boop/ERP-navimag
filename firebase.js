@@ -1,13 +1,13 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 const firebaseConfig = {
-  apiKey: "AIzaSyA3V4tMMUlho_pKrQjxdC7R98sOYZJQ4GA",
-  authDomain: "mantek-erp.firebaseapp.com",
-  projectId: "mantek-erp",
-  storageBucket: "mantek-erp.firebasestorage.app",
-  messagingSenderId: "112584321289",
-  appId: "1:112584321289:web:8a6be54be443123bb34bd8",
-  measurementId: "G-T8V8SQFRR7"
+  apiKey: "AIzaSyAGYsVTMOVfklVkZ1Kzpld7mEEIIoISAtw",
+  authDomain: "man-navimag.firebaseapp.com",
+  projectId: "man-navimag",
+  storageBucket: "man-navimag.firebasestorage.app",
+  messagingSenderId: "873554402392",
+  appId: "1:873554402392:web:586c5ce9c79f9dc44c7e2d",
+  measurementId: "G-PCSE0QLBFV"
 };
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
