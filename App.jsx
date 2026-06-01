@@ -692,12 +692,10 @@ function WorkOrders({user,data,setData}){
 const {wos,equip,users,requests,plans}=data;
   const [filter,setFilter]=useState("all"); const [search,setSearch]=useState("");
   const [flt,setFlt]=useState({status:"",type:"",equipId:"",assignedTo:""});
-  const [search,setSearch]=useState("");
   const [showWorkload,setShowWorkload]=useState(false);
 const [sel,setSel]=useState(null); const [showRep,setShowRep]=useState(false);
 const [rep,setRep]=useState({actualHours:"",observations:"",status:"completada"});
   const [showSig,setShowSig]=useState(false);
-  const [sigData,setSigData]=useState(null);
 const role=user.role;
   const mechanics=users.filter(u=>u.role==="mecanico");
   const thisMonth=new Date().toISOString().slice(0,7);
@@ -712,7 +710,6 @@ if(search&&!w.title.toLowerCase().includes(search.toLowerCase())&&!w.code.toLowe
 return true;
 });
 const updWO=(id,patch)=>{const u=wos.map(w=>w.id===id?{...w,...patch}:w);setData(d=>({...d,wos:u}));saveData("workOrders",u);if(sel?.id===id)setSel(s=>({...s,...patch}));};
-  const submitRep=()=>{
   const doSubmitRep=(signature)=>{
 if(!rep.actualHours)return;
     updWO(sel.id,{status:rep.status,actualHours:parseFloat(rep.actualHours),observations:rep.observations});
@@ -728,8 +725,7 @@ const eqH=equip.find(e=>e.id===sel.equipId)?.hours||0;
 const updP=plans.map(p=>p.id===sel.planId?{...p,lastHorometro:eqH,horometroTarget:eqH+(p.frequency||0)}:p);
 setData(d=>({...d,plans:updP}));saveData("plans",updP);
 }
-    setShowRep(false);setRep({actualHours:"",observations:"",status:"completada"});
-    setShowRep(false);setShowSig(false);setSigData(null);setRep({actualHours:"",observations:"",status:"completada"});
+    setShowRep(false);setShowSig(false);setRep({actualHours:"",observations:"",status:"completada"});
 };
   const submitRep=()=>{if(!rep.actualHours)return;setShowSig(true);};
 const cur=sel?wos.find(w=>w.id===sel.id):null;
@@ -740,7 +736,6 @@ return(
 <div className="p-6 flex gap-5 h-full">
 <div className="flex-1 min-w-0">
 <div className="mb-5"><h1 className="text-gray-900 font-bold text-xl">Órdenes de Trabajo</h1><p className="text-gray-500 text-sm">{visible.length} registros</p></div>
-        <div className="flex gap-2 mb-4 flex-wrap">
 
         {/* Mechanic workload panel — supervisor only */}
         {role==="supervisor"&&(
@@ -836,7 +831,7 @@ style={sel?.id===w.id?{borderColor:NV.blue,background:"#EBF4FF"}:{}}>
 {asn&&<span className="text-gray-400 text-xs flex items-center gap-1"><Users size={10}/>{asn.name}</span>}
 </div>
 </div>
-<span className={`px-2 py-0.5 rounded-full border text-xs font-bold flex-shrink-0 ${PRI_CLS[w.priority]}`}>{w.priority.toUpperCase()}</span>
+<span className={`px-2 py-0.5 rounded-full border text-xs font-bold flex-shrink-0 ${PRI_CLS[w.priority||"media"]}`}>{String(w.priority||"media").toUpperCase()}</span>
 </div>
 </div>
 );
@@ -853,7 +848,7 @@ style={sel?.id===w.id?{borderColor:NV.blue,background:"#EBF4FF"}:{}}>
 <h3 className="text-gray-900 font-semibold text-sm mb-3">{cur.title}</h3>
 <div className="flex flex-wrap gap-1.5 mb-4">
 <Badge s={cur.status}/>
-<span className={`px-2 py-0.5 rounded-full border text-xs font-bold ${PRI_CLS[cur.priority]}`}>{cur.priority.toUpperCase()}</span>
+<span className={`px-2 py-0.5 rounded-full border text-xs font-bold ${PRI_CLS[cur.priority||"media"]}`}>{String(cur.priority||"media").toUpperCase()}</span>
 </div>
 <div className="space-y-2 mb-4 text-xs">
 {[["Equipo",curEq?.name||"—"],["Código",curEq?.code||"—"],["Tipo",cur.type],["Fuente",cur.source==="plan"?"Plan Preventivo":cur.source==="inspeccion"?"Inspección":"Solicitud"],["Programado",fmt(cur.scheduledDate)],["Horas Est.",`${cur.estimatedHours}h`],["Asignado a",curAs?.name||"—"]].map(([k,v])=>(
@@ -885,7 +880,6 @@ setData(d=>({...d,requests:updR}));saveData("requests",updR);
 </div>
 </div>
 )}
-      {showRep&&(
       {showRep&&!showSig&&(
 <Modal title={`Reportar — ${cur?.code}`} onClose={()=>setShowRep(false)}>
 <div className="space-y-4">
@@ -1526,7 +1520,6 @@ w.print();
 function Requests({user,data,setData}){
 const {requests,equip,users,wos}=data;
 const [showForm,setShowForm]=useState(false);
-  const [form,setForm]=useState({equipId:"",title:"",description:"",priority:"media",subsistema:"",componente:""});
   const [form,setForm]=useState({equipId:"",title:"",description:"",priority:"media",subsistema:"",componente:"",photos:[]});
 const [showCLProc,setShowCLProc]=useState(false);
 const [clProc,setClProc]=useState({req:null,priority:"media",subsistema:"",componente:"",description:""});
@@ -1541,7 +1534,6 @@ if(flt.priority&&r.priority!==flt.priority)return false;
 return true;
 });
 const uniqueRequesters=[...new Map(visible.map(r=>r.requestedBy).filter(Boolean).map(id=>[id,users.find(u=>u.id===id)])).values()].filter(Boolean);
-  const createReq=()=>{if(!form.equipId||!form.title)return;const nr={id:uid(),...form,status:"pendiente",source:"solicitud",requestedBy:user.id,requestedAt:new Date().toISOString(),approvedBy:null,otId:null};const updated=[...requests,nr];setData(d=>({...d,requests:updated}));saveData("requests",updated);setShowForm(false);setForm({equipId:"",title:"",description:"",priority:"media",subsistema:"",componente:""});};
   const createReq=()=>{if(!form.equipId||!form.title)return;const nr={id:uid(),...form,status:"pendiente",source:"solicitud",requestedBy:user.id,requestedAt:new Date().toISOString(),approvedBy:null,otId:null};const updated=[...requests,nr];setData(d=>({...d,requests:updated}));saveData("requests",updated);setShowForm(false);setForm({equipId:"",title:"",description:"",priority:"media",subsistema:"",componente:"",photos:[]});};
 const approve=req=>{const eq=equip.find(e=>e.id===req.equipId);const priority=req.priority==="alta"||eq?.criticality==="A"?"alta":req.priority;const mec=users.find(u=>u.role==="mecanico");const isInsp=req.source==="inspeccion";const newOT={id:uid(),code:nextOTCode(wos),type:"correctivo",equipId:req.equipId,planId:null,title:`${isInsp?"Inspección":"Reparación"} ${eq?.name||""} - ${req.title}`,priority,status:"asignada",assignedTo:mec?.id||"",createdAt:new Date().toISOString(),scheduledDate:new Date().toISOString().slice(0,10),estimatedHours:priority==="alta"?4:2,actualHours:null,description:req.description,observations:"",parts:[],source:req.source||"solicitud",reqId:req.id};const updW=[...wos,newOT];const updR=requests.map(r=>r.id===req.id?{...r,status:"aprobada",approvedBy:user.id,otId:newOT.id}:r);setData(d=>({...d,wos:updW,requests:updR}));saveData("workOrders",updW);saveData("requests",updR);alert(`✅ OT ${newOT.code} generada — Prioridad ${priority.toUpperCase()}`);};
 const reject=req=>{const updated=requests.map(r=>r.id===req.id?{...r,status:"rechazada",approvedBy:user.id}:r);setData(d=>({...d,requests:updated}));saveData("requests",updated);};
@@ -1614,7 +1606,7 @@ return(
 <div className={`px-4 py-2.5 border-b flex items-center justify-between gap-2 flex-wrap ${r.status==="completada"?"bg-emerald-50/60 border-emerald-100":"bg-gray-50/60 border-gray-100"}`}>
 <div className="flex items-center gap-1.5 flex-wrap">
 <Badge s={r.status}/>
-<span className={`px-2 py-0.5 rounded-full border text-xs font-bold ${PRI_CLS[r.priority]}`}>{r.priority.toUpperCase()}</span>
+<span className={`px-2 py-0.5 rounded-full border text-xs font-bold ${PRI_CLS[r.priority||"media"]}`}>{String(r.priority||"media").toUpperCase()}</span>
 {r.source==="inspeccion"&&<span className="px-2 py-0.5 rounded-full border text-xs font-semibold text-amber-700 bg-amber-50 border-amber-200">Reporte Inspección</span>}
 {r.source==="checklist"&&<span className="px-2 py-0.5 rounded-full border text-xs font-semibold text-green-700 bg-green-50 border-green-200">Checklist Pre-op</span>}
 {r.type&&r.source==="inspeccion"&&<span className="px-2 py-0.5 rounded-full border text-xs font-medium text-gray-600 bg-white border-gray-200">{DEV_TYPE_MAP[r.type]||r.type}</span>}
@@ -1689,7 +1681,7 @@ return(
 {/* Badges */}
 <div className="flex flex-wrap gap-1.5">
 <Badge s={r.status}/>
-<span className={`px-2 py-0.5 rounded-full border text-xs font-bold ${PRI_CLS[r.priority]}`}>{r.priority.toUpperCase()}</span>
+<span className={`px-2 py-0.5 rounded-full border text-xs font-bold ${PRI_CLS[r.priority||"media"]}`}>{String(r.priority||"media").toUpperCase()}</span>
 {r.source==="inspeccion"&&<span className="px-2 py-0.5 rounded-full border text-xs font-semibold text-amber-700 bg-amber-50 border-amber-200">Reporte Inspección</span>}
 {r.source==="checklist"&&<span className="px-2 py-0.5 rounded-full border text-xs font-semibold text-green-700 bg-green-50 border-green-200">Checklist Pre-op</span>}
 {r.source==="solicitud"&&<span className="px-2 py-0.5 rounded-full border text-xs font-semibold text-blue-700 bg-blue-50 border-blue-200">Solicitud Manual</span>}
@@ -1894,8 +1886,7 @@ function printMonthlyReport(data, equipList, usersList, month) {
 }
 
 // ─── REPORTS ─────────────────────────────────────────────────────────────────
-function Reports({data}){
-  const {wos,equip}=data;
+function Reports({user,data}){
   const {wos,equip,users,requests,checklists}=data;
 const completed=wos.filter(w=>w.status==="completada");const prev=wos.filter(w=>w.type==="preventivo");const corr=wos.filter(w=>w.type==="correctivo");
 const totalHrs=completed.reduce((s,w)=>s+(w.actualHours||0),0);
@@ -2120,7 +2111,6 @@ const startForm=()=>{
 if(!setup.operatorName.trim()){alert("Ingresa el nombre del operador");return;}
 if(!setup.equipId||!setup.horometro)return;
 const tpl=CHECKLIST_TEMPLATES[setup.equipType];
-    const flat=tpl.sections.flatMap(s=>s.items.map(it=>({...it,sectionLabel:s.label,status:null,note:""})));
     const flat=tpl.sections.flatMap(s=>s.items.map(it=>({...it,sectionLabel:s.label,status:null,note:"",photos:[]})));
 setItems(flat);setStep(2);
 };
@@ -2132,16 +2122,12 @@ const setItemNote=(id,note)=>setItems(prev=>prev.map(it=>it.id===id?{...it,note}
 const issueItems=items.filter(it=>it.status==="malo"||it.status==="regular");
 const pendingCount=items.filter(it=>it.status===null).length;
 
-  const submit=()=>{
-    if(pendingCount>0){alert(`Faltan ${pendingCount} ítem${pendingCount!==1?"s":""} sin evaluar`);return;}
   const doSubmit=(signature)=>{
 const eq=equip.find(e=>e.id===setup.equipId);
 const newCL={
 id:uid(),type:setup.equipType,equipId:setup.equipId,operatorId:user.id,
 operatorName:setup.operatorName,
 horometro:parseFloat(setup.horometro)||0,fuel:setup.fuel,
-      items:items.map(it=>({id:it.id,name:it.name,sectionLabel:it.sectionLabel,status:it.status,note:it.note})),
-      createdAt:new Date().toISOString(),hasIssues:issueItems.length>0,issueCount:issueItems.length
       items:items.map(it=>({id:it.id,name:it.name,sectionLabel:it.sectionLabel,status:it.status,note:it.note,photos:it.photos||[]})),
       createdAt:new Date().toISOString(),hasIssues:issueItems.length>0,issueCount:issueItems.length,
       operatorSignature:signature||null
@@ -2164,14 +2150,12 @@ requestedBy:user.id,
 requestedAt:now,
 source:"checklist",
 checklistId:newCL.id,
-        checklistItemId:it.id
         checklistItemId:it.id,
         photos:it.photos||[]
 }));
 const updR=[...(requests||[]),...newSolicitudes];
 setData(d=>({...d,requests:updR}));saveData("requests",updR);
 }
-    setEditing(false);setStep(1);setItems([]);
     setEditing(false);setStep(1);setItems([]);setShowSig(false);
 setSetup({operatorName:"",equipType:"tracto",equipId:"",horometro:"",fuel:"1/2"});
 alert(`✅ Checklist guardado${issueItems.length>0?` · ${issueItems.length} solicitud(es) independientes enviadas a Operaciones.`:". Sin observaciones."}`);
@@ -2245,7 +2229,6 @@ return(
 <p className="text-gray-400 text-xs">{fmtDT(c.createdAt)}{op?` · ${op.name}`:""}{ c.operatorName&&c.operatorName!==op?.name?` · Op: ${c.operatorName}`:""}</p>
 {c.hasIssues&&<div className="mt-2 space-y-0.5">
 {c.items.filter(it=>it.status!=="bueno").map((it,i)=>(
-                      <p key={i} className={`text-xs ${it.status==="malo"?"text-red-600":"text-amber-600"}`}>• {it.sectionLabel}: {it.name}{it.note?` — ${it.note}`:""}</p>
                       <p key={i} className={`text-xs ${it.status==="malo"?"text-red-600":"text-amber-600"}`}>• {it.sectionLabel}: {it.name}{it.note?` — ${it.note}`:""}{it.photos?.length>0?` 📷${it.photos.length}`:""}</p>
 ))}
 </div>}
@@ -2321,10 +2304,8 @@ Iniciar Inspección →
 
 const tpl=CHECKLIST_TEMPLATES[setup.equipType];
 const eq=equip.find(e=>e.id===setup.equipId);
-  const completed=items.filter(it=>it.status!==null).length;
-  const pct=Math.round((completed/items.length)*100);
   const completedCount=items.filter(it=>it.status!==null).length;
-  const pct=Math.round((completedCount/items.length)*100);
+  const pct=items.length?Math.round((completedCount/items.length)*100):0;
 return(
 <div className="p-6 max-w-2xl pb-32">
 <div className="flex items-center gap-3 mb-3">
@@ -2333,7 +2314,6 @@ return(
 </button>
 <div className="flex-1">
 <h1 className="text-gray-900 font-bold text-lg">{tpl.label} — {eq?.code}</h1>
-          <p className="text-gray-500 text-xs">{completed}/{items.length} ítems · Horómetro: {setup.horometro}h</p>
           <p className="text-gray-500 text-xs">{completedCount}/{items.length} ítems · Horómetro: {setup.horometro}h</p>
 </div>
 <span className="text-sm font-bold" style={{color:pct===100?"#16a34a":NV.blue}}>{pct}%</span>
@@ -2370,7 +2350,6 @@ title={s.charAt(0).toUpperCase()+s.slice(1)}>{lbl}</button>
 </div>
 </div>
 {(it.status==="regular"||it.status==="malo")&&(
-                        <div className="mt-2">
                         <div className="mt-2 space-y-2">
 <input value={it.note} onChange={e=>setItemNote(it.id,e.target.value)} className={iCls+" text-xs py-1.5"} placeholder="Nota / descripción del problema (opcional)..."/>
                           <PhotoPicker photos={it.photos||[]} onChange={p=>setItemPhotos(it.id,p)} max={2}/>
@@ -2479,7 +2458,6 @@ indicadores:   <Indicadores   data={data}/>,
 requests:      <Requests      user={user} data={data} setData={setData}/>,
 notifications: <Notifications user={user} data={data}/>,
 checklist:     <Checklist     user={user} data={data} setData={setData}/>,
-    reports:       <Reports       data={data}/>,
     reports:       <Reports       user={user} data={data}/>,
 deviaciones:   <DeviationReports user={user} data={data} setData={setData}/>,
 users:         <UsersPage     data={data} setData={setData}/>,
