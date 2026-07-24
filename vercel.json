@@ -1,18 +1,5 @@
 {
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
-  "rewrites": [
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
-  ],
-  "functions": {
-    "api/**/*.js": {
-      "maxDuration": 60
-    }
-  },
-  "crons": [
-    {
-      "path": "/api/cron/reporte-semanal",
-      "schedule": "0 10 * * 1"
-    }
-  ]
+  "framework": "vite"
 }
