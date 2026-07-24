@@ -2657,155 +2657,201 @@ function DashboardMaritimo({user,data,onNav,activeBarco}){
   const diasSemana=["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"];
 
   return(
-    <div className="p-4 md:p-6 space-y-6 max-w-6xl mx-auto">
-      {/* Header */}
-      <div>
-        <h1 className="text-xl font-bold text-gray-900">
-          Dashboard — {activeBarco==="esperanza"?"Esperanza":"Dalka"}
-        </h1>
-        <p className="text-gray-400 text-sm mt-0.5">
-          {new Date().toLocaleDateString("es-CL",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}
-        </p>
-      </div>
+    <div className="flex-1 overflow-y-auto bg-gray-50/50">
 
-      {/* KPIs rápidos */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {[
-          {label:"OTs Abiertas",value:otAbiertas.length,color:"#1D4ED8",bg:"#EFF6FF"},
-          {label:"En Ejecución",value:otEnEjecucion.length,color:"#D97706",bg:"#FFFBEB"},
-          {label:"PM próximos 30d",value:proximasPM.filter(x=>{
-            const d=new Date(x.nextDate+"T12:00:00");
-            const lim=new Date();lim.setDate(lim.getDate()+30);
-            return d<=lim;
-          }).length,color:"#7C3AED",bg:"#F5F3FF"},
-          {label:"Sin asignar",value:otAbiertas.filter(w=>!w.assignedTo).length,color:"#DC2626",bg:"#FEF2F2"},
-        ].map(({label,value,color,bg})=>(
-          <div key={label} className="rounded-2xl p-4 border" style={{background:bg,borderColor:color+"33"}}>
-            <p className="text-xs font-semibold mb-1" style={{color,opacity:0.8}}>{label}</p>
-            <p className="text-3xl font-bold" style={{color}}>{value}</p>
-          </div>
-        ))}
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-
-        {/* Panel OTs Abiertas */}
-        <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm">
-          <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-            <p className="font-bold text-gray-800 text-sm flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-amber-400 inline-block"/>
-              OTs Abiertas ({otAbiertas.length})
+      {/* ── HEADER ──────────────────────────────────── */}
+      <div className="px-6 pt-5 pb-4 bg-white border-b border-gray-100">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-[11px] font-semibold tracking-widest text-red-600 uppercase mb-0.5">
+              NAVIMAG CARGA
             </p>
-            <button onClick={()=>onNav("workorders")} className="text-xs text-blue-600 font-semibold hover:underline">
-              Ver todas →
-            </button>
+            <h1 className="text-2xl font-bold text-gray-900">
+              {activeBarco==="esperanza"?"M/N Esperanza":"M/N Dalka"}
+            </h1>
+            <p className="text-gray-400 text-sm mt-0.5">
+              {new Date().toLocaleDateString("es-CL",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}
+            </p>
           </div>
-          <div className="divide-y divide-gray-50 max-h-80 overflow-y-auto">
-            {otAbiertas.length===0?(
-              <div className="p-6 text-center">
-                <p className="text-emerald-500 text-sm font-semibold">✅ Sin OTs abiertas</p>
-              </div>
-            ):(
-              otAbiertas.slice(0,10).map(w=>{
-                const eq=equip.find(e=>e.id===w.equipId);
-                const asn=users.find(u=>u.id===w.assignedTo);
-                const isOverdue=w.scheduledDate&&w.scheduledDate<today&&!["completada","cancelada"].includes(w.status);
-                return(
-                  <div key={w.id} className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 cursor-pointer transition"
-                    onClick={()=>onNav("workorders")}>
-                    <div className={`w-2 h-2 rounded-full flex-shrink-0 ${w.status==="en_proceso"?"bg-amber-400":isOverdue?"bg-red-500":"bg-blue-400"}`}/>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-xs font-bold text-red-600">{w.code}</span>
-                        <span className="text-gray-400 text-[10px] truncate">{eq?.code}</span>
-                      </div>
-                      <p className="text-gray-700 text-xs truncate">{w.title}</p>
-                    </div>
-                    <div className="text-right flex-shrink-0">
-                      <p className="text-[10px] text-gray-400">{asn?.name||"Sin asignar"}</p>
-                      {isOverdue&&(<p className="text-[10px] font-bold text-red-500">Vencida</p>)}
-                    </div>
-                  </div>
-                );
-              })
-            )}
+          <div className="text-right">
+            <p className="text-xs text-gray-400">{user?.name||user?.username}</p>
+            <p className="text-xs font-semibold text-gray-600 mt-0.5">
+              {user?.role==="supervisor"?"Primer Ingeniero":user?.role==="jefe_maquinas"?"Segundo Ingeniero":"Tripulación"}
+            </p>
           </div>
         </div>
+      </div>
 
-        {/* Calendario de próximas PM */}
-        <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm">
-          <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-            <p className="font-bold text-gray-800 text-sm flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-purple-400 inline-block"/>
-              Calendario PM — próximos 60 días
-            </p>
-            <button onClick={()=>onNav("plans")} className="text-xs text-blue-600 font-semibold hover:underline">
-              Ver planes →
-            </button>
-          </div>
+      <div className="p-5 space-y-5">
 
-          <div className="p-3">
-            <div className="grid grid-cols-7 mb-1">
-              {diasSemana.map(d=>(
-                <div key={d} className="text-center text-[10px] font-semibold text-gray-400 py-1">{d}</div>
-              ))}
+        {/* ── KPIs ─────────────────────────────────── */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {[
+            {label:"OTs Abiertas",value:otAbiertas.length,icon:"📋",color:"#1D4ED8",bg:"#EFF6FF",border:"#BFDBFE",onClick:()=>onNav("workorders")},
+            {label:"En Ejecución",value:otEnEjecucion.length,icon:"⚙️",color:"#D97706",bg:"#FFFBEB",border:"#FDE68A",onClick:()=>onNav("workorders")},
+            {label:"PM próximos 30d",value:proximasPM.filter(x=>{
+              const d=new Date(x.nextDate+"T12:00:00");
+              const lim=new Date();lim.setDate(lim.getDate()+30);
+              return d<=lim;
+            }).length,icon:"🛡",color:"#7C3AED",bg:"#F5F3FF",border:"#DDD6FE",onClick:()=>onNav("plans")},
+            {label:"Sin asignar",value:otAbiertas.filter(w=>!w.assignedTo).length,icon:"⚠️",color:"#DC2626",bg:"#FEF2F2",border:"#FECACA",onClick:()=>onNav("workorders")},
+          ].map(({label,value,icon,color,bg,border,onClick})=>(
+            <div key={label} onClick={onClick}
+              className="rounded-2xl p-4 border cursor-pointer hover:shadow-md transition-shadow"
+              style={{background:bg,borderColor:border}}>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-semibold" style={{color,opacity:0.8}}>{label}</p>
+                <span className="text-lg">{icon}</span>
+              </div>
+              <p className="text-4xl font-bold leading-none" style={{color}}>{value}</p>
             </div>
-            {semanas.map((semana,si)=>(
-              <div key={si} className="grid grid-cols-7 gap-0.5 mb-0.5">
-                {semana.map(({iso,d,otsDelDia,otsDiaAbiertas})=>{
-                  const isToday=iso===today;
-                  const hasPM=otsDelDia.length>0;
-                  const hasOTAbierta=otsDiaAbiertas.length>0;
-                  const isPast=iso<today;
+          ))}
+        </div>
+
+        {/* ── GRID PRINCIPAL ───────────────────────── */}
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
+
+          {/* OTs Abiertas — ocupa 1 columna */}
+          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+            <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+              <p className="font-bold text-gray-800 text-sm flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-amber-400 inline-block"/>
+                OTs Abiertas
+                <span className="text-xs font-normal text-gray-400">({otAbiertas.length})</span>
+              </p>
+              <button onClick={()=>onNav("workorders")} className="text-xs text-blue-600 font-semibold hover:underline">
+                Ver todas →
+              </button>
+            </div>
+            <div className="divide-y divide-gray-50 max-h-[420px] overflow-y-auto">
+              {otAbiertas.length===0?(
+                <div className="p-8 text-center">
+                  <p className="text-3xl mb-2">✅</p>
+                  <p className="text-emerald-600 text-sm font-semibold">Sin OTs abiertas</p>
+                </div>
+              ):(
+                otAbiertas.slice(0,12).map(w=>{
+                  const eq=equip.find(e=>e.id===w.equipId);
+                  const asn=users.find(u=>u.id===w.assignedTo);
+                  const isOverdue=w.scheduledDate&&w.scheduledDate<today&&!["completada","cancelada"].includes(w.status);
                   return(
-                    <div key={iso}
-                      className={`relative text-center rounded-lg py-1.5 min-h-[36px] flex flex-col items-center justify-start
-                        ${isToday?"bg-blue-600 text-white":isPast?"text-gray-300":"text-gray-700 hover:bg-gray-50"}`}>
-                      <span className={`text-[11px] font-semibold leading-none ${isToday?"text-white":""} ${isPast?"text-gray-300":""}`}>
-                        {d.getDate()}
-                      </span>
-                      <div className="flex gap-0.5 mt-0.5">
-                        {hasPM&&(<span className={`w-1.5 h-1.5 rounded-full ${isToday?"bg-white":"bg-purple-500"}`} title={`${otsDelDia.length} PM`}/>)}
-                        {hasOTAbierta&&(<span className={`w-1.5 h-1.5 rounded-full ${isToday?"bg-yellow-300":"bg-amber-400"}`} title={`${otsDiaAbiertas.length} OT`}/>)}
+                    <div key={w.id} className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 cursor-pointer transition"
+                      onClick={()=>onNav("workorders")}>
+                      <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${w.status==="en_proceso"?"bg-amber-400":isOverdue?"bg-red-500":"bg-blue-400"}`}/>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-mono text-xs font-bold text-blue-700">{w.code}</span>
+                          <span className="text-gray-400 text-[10px] truncate">{eq?.code}</span>
+                        </div>
+                        <p className="text-gray-700 text-xs truncate mt-0.5">{w.title}</p>
+                      </div>
+                      <div className="text-right flex-shrink-0">
+                        <p className="text-[10px] text-gray-400">{asn?.name||"Sin asignar"}</p>
+                        {isOverdue&&(<p className="text-[10px] font-bold text-red-500">Vencida</p>)}
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold ${w.status==="en_proceso"?"bg-amber-100 text-amber-700":"bg-blue-100 text-blue-700"}`}>
+                          {w.status==="en_proceso"?"En ejec.":"Abierta"}
+                        </span>
                       </div>
                     </div>
                   );
-                })}
-              </div>
-            ))}
-
-            <div className="flex items-center gap-4 mt-2 pt-2 border-t border-gray-100">
-              <div className="flex items-center gap-1.5 text-[10px] text-gray-500">
-                <span className="w-2 h-2 rounded-full bg-purple-500"/>PM programado
-              </div>
-              <div className="flex items-center gap-1.5 text-[10px] text-gray-500">
-                <span className="w-2 h-2 rounded-full bg-amber-400"/>OT abierta
-              </div>
-              <div className="flex items-center gap-1.5 text-[10px] text-gray-500">
-                <span className="w-2 h-2 rounded-full bg-blue-600"/>Hoy
-              </div>
+                })
+              )}
             </div>
           </div>
 
-          {proximasPM.length>0&&(
-            <div className="border-t border-gray-100 max-h-40 overflow-y-auto">
-              {proximasPM.slice(0,5).map(({a,tpl,eq,nextDate})=>{
-                const diasFaltan=Math.round((new Date(nextDate+"T12:00:00")-new Date())/(86400000));
-                return(
-                  <div key={a.id} className="flex items-center gap-3 px-4 py-2.5 border-b border-gray-50 last:border-0">
-                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold flex-shrink-0
-                      ${diasFaltan<=7?"bg-red-100 text-red-700":diasFaltan<=14?"bg-amber-100 text-amber-700":"bg-purple-100 text-purple-700"}`}>
-                      {diasFaltan}d
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-semibold text-gray-800 truncate">{tpl?.name||a.code}</p>
-                      <p className="text-[10px] text-gray-400">{eq?.code} · {nextDate}</p>
-                    </div>
-                  </div>
-                );
-              })}
+          {/* Calendario PM — ocupa 2 columnas */}
+          <div className="xl:col-span-2 bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+            <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+              <p className="font-bold text-gray-800 text-sm flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-purple-400 inline-block"/>
+                Calendario PM — próximos 60 días
+              </p>
+              <button onClick={()=>onNav("plans")} className="text-xs text-blue-600 font-semibold hover:underline">
+                Ver planes →
+              </button>
             </div>
-          )}
+
+            <div className="p-4">
+              {/* Días de la semana */}
+              <div className="grid grid-cols-7 mb-1.5">
+                {diasSemana.map(d=>(
+                  <div key={d} className="text-center text-[11px] font-semibold text-gray-400 py-1">{d}</div>
+                ))}
+              </div>
+              {/* Semanas */}
+              <div className="space-y-1">
+                {semanas.map((semana,si)=>(
+                  <div key={si} className="grid grid-cols-7 gap-1">
+                    {semana.map(({iso,d,otsDelDia,otsDiaAbiertas})=>{
+                      const isToday=iso===today;
+                      const hasPM=otsDelDia.length>0;
+                      const hasOTA=otsDiaAbiertas.length>0;
+                      const isPast=iso<today;
+                      return(
+                        <div key={iso}
+                          className={`relative text-center rounded-lg py-1.5 flex flex-col items-center justify-start min-h-[40px]
+                            ${isToday?"bg-blue-600 text-white shadow-md":isPast?"text-gray-300 bg-gray-50":"text-gray-700 hover:bg-gray-50 transition"}`}>
+                          <span className={`text-xs font-semibold leading-none ${isToday?"text-white":""} ${isPast&&!isToday?"text-gray-300":""}`}>
+                            {d.getDate()}
+                          </span>
+                          {(hasPM||hasOTA)&&(
+                            <div className="flex gap-0.5 mt-1">
+                              {hasPM&&(<span className={`w-1.5 h-1.5 rounded-full ${isToday?"bg-white":"bg-purple-500"}`} title={`${otsDelDia.length} PM`}/>)}
+                              {hasOTA&&(<span className={`w-1.5 h-1.5 rounded-full ${isToday?"bg-yellow-300":"bg-amber-400"}`} title={`${otsDiaAbiertas.length} OT`}/>)}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
+
+              {/* Leyenda */}
+              <div className="flex items-center gap-5 mt-3 pt-3 border-t border-gray-100">
+                {[
+                  {dot:"bg-purple-500",label:"PM programado"},
+                  {dot:"bg-amber-400",label:"OT abierta"},
+                  {dot:"bg-blue-600",label:"Hoy"},
+                ].map(({dot,label})=>(
+                  <div key={label} className="flex items-center gap-1.5 text-[11px] text-gray-500">
+                    <span className={`w-2 h-2 rounded-full ${dot}`}/>
+                    {label}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Lista próximas PM */}
+            {proximasPM.length>0&&(
+              <div className="border-t border-gray-100">
+                <p className="px-4 pt-3 pb-2 text-xs font-semibold text-gray-400 uppercase tracking-wide">
+                  Próximas intervenciones
+                </p>
+                <div className="max-h-48 overflow-y-auto divide-y divide-gray-50">
+                  {proximasPM.slice(0,6).map(({a,tpl,eq,nextDate})=>{
+                    const diasFaltan=Math.round((new Date(nextDate+"T12:00:00")-new Date())/(86400000));
+                    return(
+                      <div key={a.id} className="flex items-center gap-3 px-4 py-2.5">
+                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-xs font-bold flex-shrink-0
+                          ${diasFaltan<=7?"bg-red-100 text-red-700":diasFaltan<=14?"bg-amber-100 text-amber-700":"bg-purple-100 text-purple-700"}`}>
+                          {diasFaltan}d
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-semibold text-gray-800 truncate">{tpl?.name||a.code}</p>
+                          <p className="text-[10px] text-gray-400 mt-0.5">{eq?.code||"—"} · {nextDate}</p>
+                        </div>
+                        <button onClick={()=>onNav("plans")} className="text-[10px] text-blue-600 font-semibold hover:underline flex-shrink-0">
+                          Ver →
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
         </div>
       </div>
     </div>
