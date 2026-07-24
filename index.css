@@ -1,8 +1,5 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-* { box-sizing: border-box; }
-body { margin: 0; background: #f9fafb; }
-::-webkit-scrollbar { width: 4px; height: 4px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #003087; border-radius: 2px; }
+node_modules/
+dist/
+.env
+.env.local
+.env.*.local

@@ -1,7 +1,8 @@
-[build]
-  command = "npm run build"
-  publish = "dist"
-[[redirects]]
-  from = "/*"
-  to = "/index.html"
-  status = 200
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+* { box-sizing: border-box; }
+body { margin: 0; background: #f9fafb; }
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #8B0000; border-radius: 2px; }
