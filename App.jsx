@@ -2220,7 +2220,11 @@ const handle=async()=>{
     });
     const data=await res.json();
     if(!data.ok){setErr(data.error||'Credenciales incorrectas');setLoadingLogin(false);return;}
-    const meRes=await fetch(AUTH_URL+'/api/auth/me',{credentials:'include'});
+    const sessionToken=data.sessionToken||'';
+    const meRes=await fetch(AUTH_URL+'/api/auth/me',{
+      credentials:'include',
+      headers:sessionToken?{'Authorization':'Bearer '+sessionToken}:{},
+    });
     const meData=await meRes.json();
     if(!meData.ok){setErr('Error al obtener permisos');setLoadingLogin(false);return;}
     const au=meData.user;
