@@ -1874,11 +1874,11 @@ onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerLeave=
 // ─── CHANGE PASSWORD MODAL ───────────────────────────────────────────────────
 function ChangePasswordModal({user,onSave,onClose}){
 const [oldPwd,setOldPwd]=useState(""); const [newPwd,setNewPwd]=useState(""); const [conf,setConf]=useState(""); const [err,setErr]=useState("");
-const handle=()=>{
+const handle=async()=>{
 if(!oldPwd||!newPwd||!conf){setErr("Completa todos los campos");return;}
 if(newPwd!==conf){setErr("Las contraseñas nuevas no coinciden");return;}
 if(newPwd.length<6){setErr("La contraseña debe tener al menos 6 caracteres");return;}
-const e=onSave(oldPwd,newPwd); if(e)setErr(e);
+const e=await onSave(oldPwd,newPwd); if(e)setErr(e);
 };
 return(
 <Modal title="Cambiar Contraseña" onClose={onClose}>
