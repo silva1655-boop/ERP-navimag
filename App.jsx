@@ -1920,7 +1920,7 @@ function ModuleSelector({onSelect}){
   return(
     <div className="min-h-screen flex items-center justify-center p-4"
       style={{background:`linear-gradient(160deg, ${NV.navy} 0%, #1E293B 50%, #334155 100%)`}}>
-      <div className="w-full max-w-3xl">
+      <div className="w-full max-w-4xl mx-auto">
         {/* Header */}
         <div className="text-center mb-10">
           <div className="w-16 h-16 bg-white/15 backdrop-blur-sm rounded-2xl flex items-center justify-center border border-white/30 shadow-xl mx-auto mb-4">
@@ -1931,13 +1931,13 @@ function ModuleSelector({onSelect}){
         </div>
 
         {/* Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-3xl mx-auto">
 
           {/* Taller Terminal */}
           <button onClick={()=>onSelect("taller")}
             className="group text-left rounded-2xl overflow-hidden border border-red-500/30 bg-slate-800/70 backdrop-blur-sm hover:border-red-400/60 hover:scale-[1.02] transition-all duration-300 shadow-xl hover:shadow-red-900/30">
             {/* Image area */}
-            <div className="relative h-44 overflow-hidden">
+            <div className="relative h-56 overflow-hidden">
               <img
                 src="https://raw.githubusercontent.com/silva1655-boop/ERP-navimag/main/tractos_terminal.jpg"
                 alt="Taller Terminal"
@@ -1968,7 +1968,7 @@ function ModuleSelector({onSelect}){
           <button onClick={()=>onSelect("maritimo")}
             className="group text-left rounded-2xl overflow-hidden border border-blue-500/30 bg-slate-800/70 backdrop-blur-sm hover:border-blue-400/60 hover:scale-[1.02] transition-all duration-300 shadow-xl hover:shadow-blue-900/30">
             {/* Image area */}
-            <div className="relative h-44 overflow-hidden">
+            <div className="relative h-56 overflow-hidden">
               <img
                 src="https://raw.githubusercontent.com/silva1655-boop/ERP-navimag/main/esperanza.jpg"
                 alt="Marítimo"
