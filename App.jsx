@@ -2234,6 +2234,7 @@ const handle=async()=>{
       authRole:au.role,nav:au.nav,permisos:buildErpPerms(au.permissions),
       password:'',deleted:false,status:'activo',
       avatar:null,photo:null,
+      _sessionToken:sessionToken||'',
     };
     // Eliminar campos undefined para Firestore
     Object.keys(erpUser).forEach(k=>{if(erpUser[k]===undefined)delete erpUser[k];});
@@ -25444,11 +25445,28 @@ const devBadge=user?.role==="supervisor"
   :0;
 const totalNoLeidos=conversaciones.reduce((s,c)=>s+(c.noLeidoPor?.[user?.id]||0),0);
 
-const handleChangePwd=(oldPwd,newPwd)=>{
-if(user.password!==oldPwd)return "La contraseña actual es incorrecta";
-const updated=data.users.map(u=>u.id===user.id?{...u,password:newPwd}:u);
-setData(d=>({...d,users:updated}));saveData("users",updated);
-setUser(u=>({...u,password:newPwd}));setShowChangePwd(false);return null;
+const handleChangePwd=async(oldPwd,newPwd)=>{
+try{
+  const sessionToken=user._sessionToken||"";
+  const res=await fetch(AUTH_URL+"/api/auth/change-password",{
+    method:"POST",
+    headers:{"Content-Type":"application/json",
+      ...(sessionToken?{"Authorization":"Bearer "+sessionToken}:{})},
+    credentials:"include",
+    body:JSON.stringify({currentPassword:oldPwd,newPassword:newPwd}),
+  });
+  const data2=await res.json();
+  if(!data2.ok) return data2.error||"Error al cambiar contraseña";
+  setShowChangePwd(false);
+  alert("Contrasena actualizada. Vuelve a iniciar sesion.");
+  try{await fetch(AUTH_URL+"/api/auth/logout",{method:"POST",credentials:"include",
+    headers:sessionToken?{"Authorization":"Bearer "+sessionToken}:{}});}
+  catch(e){console.warn("logout:",e);}
+  setUser(null);setPage("dashboard");return null;
+}catch(e){
+  console.error("Change password error:",e);
+  return "Error de conexión. Verifica tu red.";
+}
 };
 
 if(!user) return <LoginPage users={data.users} activeModule={activeModule} activeBarco={activeBarco} onLogin={u=>{
