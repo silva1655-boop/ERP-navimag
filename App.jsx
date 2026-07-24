@@ -2228,12 +2228,16 @@ const handle=async()=>{
     const meData=await meRes.json();
     if(!meData.ok){setErr('Error al obtener permisos');setLoadingLogin(false);return;}
     const au=meData.user;
-    onLogin({
+    const erpUser={
       id:au.id,name:au.fullName,email:email.trim().toLowerCase(),
       username:au.username,role:mapAuthRoleToErp(au.role),
       authRole:au.role,nav:au.nav,permisos:buildErpPerms(au.permissions),
       password:'',deleted:false,status:'activo',
-    });
+      avatar:null,photo:null,
+    };
+    // Eliminar campos undefined para Firestore
+    Object.keys(erpUser).forEach(k=>{if(erpUser[k]===undefined)delete erpUser[k];});
+    onLogin(erpUser);
   }catch(e){
     console.error('Login error:',e);
     setErr('Error de conexión. Verifica tu red.');
