@@ -6111,16 +6111,19 @@ style={sel?.id===w.id?{borderColor:NV.blue,background:"#EBF4FF"}:sem?{borderColo
           const textoDestacado=clItem?.note||linkedReq?.description||cur.description||null;
           if(!textoDestacado) return null;
           return(
-            <div className="flex items-stretch gap-0 rounded-2xl overflow-hidden border border-amber-300" style={{background:"#FFFBEB"}}>
-              <div className="flex flex-col items-center justify-center px-4 py-4 flex-shrink-0" style={{background:"#F59E0B"}}>
-                <MessageSquare size={22} className="text-white mb-1"/>
-                <p className="text-white font-bold text-xs uppercase tracking-wide text-center leading-tight"
-                  style={{writingMode:"vertical-rl",transform:"rotate(180deg)"}}>
+            <div className="rounded-xl border border-gray-200 overflow-hidden">
+              {/* Label */}
+              <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex items-center gap-2">
+                <MessageSquare size={12} className="text-gray-400"/>
+                <p className="text-gray-500 text-xs font-semibold uppercase tracking-wide">
                   {clItem?.note?"Nota del operador":linkedReq?.description?"Motivo de solicitud":"Descripción"}
                 </p>
               </div>
-              <div className="flex-1 flex items-center px-5 py-4">
-                <p className="text-gray-900 font-bold text-lg leading-snug">{textoDestacado}</p>
+              {/* Contenido */}
+              <div className="px-4 py-3 bg-white">
+                <p className="text-gray-800 text-sm leading-relaxed font-medium">
+                  {textoDestacado}
+                </p>
               </div>
             </div>
           );
