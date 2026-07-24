@@ -2236,6 +2236,8 @@ const handle=async()=>{
       avatar:null,photo:null,
       _sessionToken:sessionToken||'',
     };
+    // Guardar token para uso en cambio de contraseña
+    if(sessionToken) sessionStorage.setItem('_mantek_token', sessionToken);
     // Eliminar campos undefined para Firestore
     Object.keys(erpUser).forEach(k=>{if(erpUser[k]===undefined)delete erpUser[k];});
     onLogin(erpUser);
@@ -25447,7 +25449,7 @@ const totalNoLeidos=conversaciones.reduce((s,c)=>s+(c.noLeidoPor?.[user?.id]||0)
 
 const handleChangePwd=async(oldPwd,newPwd)=>{
 try{
-  const sessionToken=user._sessionToken||"";
+  const sessionToken=user._sessionToken||sessionStorage.getItem('_mantek_token')||"";
   const res=await fetch(AUTH_URL+"/api/auth/change-password",{
     method:"POST",
     headers:{"Content-Type":"application/json",
@@ -25562,7 +25564,7 @@ if(isSgn){
           </ErrorBoundary>
         </main>
       </div>
-      {showChangePwd&&<ChangePasswordModal onSubmit={handleChangePwd} onClose={()=>setShowChangePwd(false)}/>}
+      {showChangePwd&&<ChangePasswordModal user={user} onSave={async(o,n)=>handleChangePwd(o,n)} onClose={()=>setShowChangePwd(false)}/>}
     </div>
   );
 }
@@ -25673,7 +25675,7 @@ return(
   </div>
 )}
 {showChatPanel&&<ChatPanel user={user} users={data.users||[]} conversaciones={conversaciones} activeCOLL={activeCOLL} onClose={()=>setShowChatPanel(false)}/>}
-{showChangePwd&&<ChangePasswordModal user={user} onSave={handleChangePwd} onClose={()=>setShowChangePwd(false)}/>}
+{showChangePwd&&<ChangePasswordModal user={user} onSave={async(o,n)=>handleChangePwd(o,n)} onClose={()=>setShowChangePwd(false)}/>}
 </div>
 );
 }
