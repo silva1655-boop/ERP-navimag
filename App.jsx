@@ -2325,12 +2325,12 @@ return(
           <div className="space-y-4">
             <div>
               <label className="text-gray-500 text-xs font-medium mb-1 block">USUARIO</label>
-              <input value={email} onChange={e=>setEmail(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handle()} className={iCls} placeholder="nombre.usuario" autoCapitalize="none" autoCorrect="off"/>
+              <input value={email} onChange={e=>setEmail(e.target.value)} onKeyDown={e=>e.key==="Enter"&&(e.preventDefault(),handle())} className={iCls} placeholder="nombre.usuario" autoCapitalize="none" autoCorrect="off"/>
             </div>
             <div>
               <label className="text-gray-500 text-xs font-medium mb-1 block">CONTRASEÑA</label>
               <div className="relative">
-                <input type={show?"text":"password"} value={pass} onChange={e=>setPass(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handle()} className={iCls+" pr-16"} placeholder="••••••••••"/>
+                <input type={show?"text":"password"} value={pass} onChange={e=>setPass(e.target.value)} onKeyDown={e=>e.key==="Enter"&&(e.preventDefault(),handle())} className={iCls+" pr-16"} placeholder="••••••••••"/>
                 <button type="button" onClick={()=>setShow(s=>!s)} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs font-medium">{show?"Ocultar":"Mostrar"}</button>
               </div>
             </div>
