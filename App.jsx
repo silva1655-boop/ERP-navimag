@@ -1995,36 +1995,7 @@ function ModuleSelector({onSelect}){
             </div>
           </button>
 
-          {/* SGN */}
-          <button onClick={()=>onSelect("sgn")}
-            className="group text-left rounded-2xl overflow-hidden border border-green-500/30 bg-slate-800/70 backdrop-blur-sm hover:border-green-400/60 hover:scale-[1.02] transition-all duration-300 shadow-xl hover:shadow-green-900/30">
-            <div className="relative h-44 overflow-hidden">
-              <img
-                src="https://raw.githubusercontent.com/silva1655-boop/ERP-navimag/main/SGN.png"
-                alt="SGN"
-                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"/>
-              <div className="absolute inset-0"
-                style={{background:"linear-gradient(180deg, rgba(0,0,0,0.1) 0%, rgba(15,23,42,0.85) 100%)"}}/>
-              <span className="absolute top-3 left-3 text-2xl">🛡️</span>
-            </div>
-            {/* Body */}
-            <div className="p-6">
-              <p className="text-white font-bold text-xl mb-1">SGN</p>
-              <div className="w-10 h-0.5 rounded-full mb-3" style={{background:"linear-gradient(90deg,#16a34a,#15803d)"}}/>
-              <p className="text-slate-300 text-sm leading-relaxed mb-4">
-                Sistema de Gestión Navimag — registro y seguimiento de hallazgos de seguridad y calidad.
-              </p>
-              <div className="flex flex-wrap gap-2 mb-5">
-                {["Hallazgos","Seguridad","Calidad","Auditoría","Reportes"].map(t=>(
-                  <span key={t} className="text-xs px-2 py-0.5 rounded-full bg-white/10 text-slate-300 border border-white/15">{t}</span>
-                ))}
-              </div>
-              <div className="w-full py-2.5 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-2"
-                style={{background:"linear-gradient(90deg, #16a34a, #15803d)"}}>
-                Ingresar al Módulo <ChevronRight size={16}/>
-              </div>
-            </div>
-          </button>
+{/* SGN oculto temporalmente */}
 
         </div>
         <p className="text-center text-blue-300/50 text-xs mt-8">
