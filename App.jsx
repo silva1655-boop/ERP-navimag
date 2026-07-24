@@ -2174,7 +2174,20 @@ const LOGIN_CONFIG={
 
 function LoginPage({users,onLogin,onBack,activeModule,activeBarco}){
 const [email,setEmail]=useState(""); const [pass,setPass]=useState(""); const [err,setErr]=useState(""); const [show,setShow]=useState(false);
-const [remember,setRemember]=useState(false);
+// Cargar usuario guardado de localStorage al montar
+const savedUser = localStorage.getItem("mantek_saved_user")||"";
+const [remember,setRemember]=useState(!!savedUser);
+
+// Pre-rellenar el campo usuario si hay uno guardado; foco pasa a contraseña
+useEffect(()=>{
+  const saved=localStorage.getItem("mantek_saved_user");
+  if(saved){
+    setEmail(saved);
+    setTimeout(()=>{
+      document.querySelector('input[type="password"]')?.focus();
+    },100);
+  }
+},[]);
 const cfgKey=activeModule==="maritimo"?(activeBarco==="dalka"?"maritimo_dalka":"maritimo_esperanza"):activeModule;
 const cfg=LOGIN_CONFIG[cfgKey]||LOGIN_CONFIG.taller;
 const {bgImage,accentColor,operacion,sideMenu:sideMenuItems,cards:moduleCards}=cfg;
@@ -2211,6 +2224,12 @@ const handle=async()=>{
     if(sessionToken) sessionStorage.setItem('_mantek_token', sessionToken);
     // Eliminar campos undefined para Firestore
     Object.keys(erpUser).forEach(k=>{if(erpUser[k]===undefined)delete erpUser[k];});
+    // Guardar o limpiar usuario recordado según checkbox (nunca la contraseña)
+    if(remember){
+      localStorage.setItem("mantek_saved_user", email.trim().toLowerCase());
+    }else{
+      localStorage.removeItem("mantek_saved_user");
+    }
     onLogin(erpUser);
   }catch(e){
     console.error('Login error:',e);
@@ -2308,7 +2327,7 @@ return(
             <div className="flex items-center justify-between text-xs">
               <label className="flex items-center gap-1.5 text-gray-500 cursor-pointer">
                 <input type="checkbox" checked={remember} onChange={e=>setRemember(e.target.checked)} className="rounded"/>
-                Recordar sesión
+                Recordar usuario
               </label>
               <button className="font-medium hover:underline" style={{color:accentColor}}>¿Olvidó su contraseña?</button>
             </div>
