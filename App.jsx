@@ -1535,6 +1535,75 @@ const ROLE_DEFAULT_PERMS={
 const getUserPerms=(u)=>{
   if(u?.permisos&&Object.keys(u.permisos).length>0){
     const defaults=ROLE_DEFAULT_PERMS[u?.role]||{};
+
+// ── SINCRONIZACIÓN USUARIOS DESDE MANTEK-AUTH ────────
+const syncUsersFromAuth=React.useCallback(async()=>{
+  if(!user) return;
+  const token=user._sessionToken||
+    sessionStorage.getItem('_mantek_token')||'';
+  if(!token) return;
+  try{
+    const res=await fetch(AUTH_URL+'/api/users/erp',{
+      credentials:'include',
+      headers:{'Authorization':'Bearer '+token},
+    });
+    if(!res.ok) return;
+    const d=await res.json();
+    if(!d.ok||!Array.isArray(d.data)) return;
+
+    // Reemplazar data.users completamente con los de mantek-auth
+    // Conservar solo campos operacionales de Firestore que no
+    // existen en mantek-auth (avgOperatingHours, etc.)
+    setData(prev=>{
+      const firestoreUsers=prev.users||[];
+      // Crear mapa de usuarios Firestore por email y username
+      // para recuperar datos operacionales
+      const firestoreByEmail=new Map(
+        firestoreUsers.map(u=>[
+          (u.email||'').toLowerCase(), u
+        ])
+      );
+      const firestoreByUsername=new Map(
+        firestoreUsers.map(u=>[
+          (u.username||u.name||'').toLowerCase(), u
+        ])
+      );
+
+      // Construir lista final desde mantek-auth
+      // Solo usuarios activos, sin duplicados
+      const authUsers=d.data.map(au=>{
+        // Buscar datos operacionales en Firestore
+        const fsUser=
+          firestoreByEmail.get((au.email||'').toLowerCase())||
+          firestoreByUsername.get((au.username||'').toLowerCase())||
+          {};
+        return{
+          // Datos operacionales de Firestore (si existen)
+          avgOperatingHours: fsUser.avgOperatingHours||null,
+          avgOperatingHoursLearned: fsUser.avgOperatingHoursLearned||null,
+          avgPreference: fsUser.avgPreference||'learned',
+          // Datos de mantek-auth tienen prioridad total
+          ...au,
+          // Asegurar que deleted=false para usuarios activos
+          deleted: false,
+        };
+      });
+
+      return{...prev, users: authUsers};
+    });
+  }catch(e){
+    console.warn('syncUsersFromAuth error:',e);
+  }
+},[user]);
+
+useEffect(()=>{
+  if(!user) return;
+  syncUsersFromAuth();
+  const iv=setInterval(syncUsersFromAuth, 5*60*1000);
+  return ()=>clearInterval(iv);
+},[user,syncUsersFromAuth]);
+// ─────────────────────────────────────────────────────
+
     return{...defaults,...u.permisos};
   }
   return ROLE_DEFAULT_PERMS[u?.role]||{};
