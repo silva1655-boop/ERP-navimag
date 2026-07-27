@@ -20,7 +20,7 @@ const AUTH_URL = import.meta.env.VITE_AUTH_URL || 'https://mantek-auth.vercel.ap
 
 const mapAuthRoleToErp = (authRole) => {
   const map = {
-    ADMIN:'admin', SUPERVISOR:'supervisor', MECANICO:'mecanico',
+    ADMIN:'supervisor', SUPERVISOR:'supervisor', MECANICO:'mecanico',
     OPERADOR:'operador', INVITADO:'operador', GERENTE:'operaciones',
     JEFE_OPERACIONES:'operaciones', SUP_OPERACIONES:'operaciones',
   };
