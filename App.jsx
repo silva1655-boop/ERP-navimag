@@ -3933,6 +3933,7 @@ const taxonomiaObj=useMemo(()=>getTaxonomiaComoObjeto(data.taxonomiaRepuestos||[
 // ── Wizard "Reportar Trabajo" (5 pasos) ──
 const [wizardOT,setWizardOT]=useState(null); // OT object when wizard is open, null = closed
 const [wizardStep,setWizardStep]=useState(1);
+const [isSavingWizard,setIsSavingWizard]=useState(false);
 const [wz,setWz]=useState({
   // Paso 1 — Inicio
   startDateTime:"",
@@ -4195,6 +4196,9 @@ const PRUEBAS_OPTIONS=[
 ];
 
 const finalizeWizard=async(closeOT)=>{
+  if(isSavingWizard) return; // evitar doble click / doble guardado
+  setIsSavingWizard(true);
+  try{
   // Upload all photos (antes/durante/despues) to ImgBB
   const uploadGroup=async(arr)=>{
     return Promise.all((arr||[]).map(async b64=>{
@@ -4506,6 +4510,9 @@ const finalizeWizard=async(closeOT)=>{
     setSaveMsg("✅ Guardado — puedes seguir editando o Cerrar OT");
     setTimeout(()=>setSaveMsg(""),4000);
   }
+  }finally{
+    setIsSavingWizard(false);
+  }
 };
 const role=user.role;
   // Roles que pueden tomar, iniciar y reportar OTs como técnico
@@ -4765,8 +4772,16 @@ if(wizardOT){
             <p className="text-white font-bold text-sm">{wizardOT.code} — {eqW?.code} {eqW?.name}</p>
           </div>
           <div className="flex gap-2">
-            <button onClick={()=>finalizeWizard(false)} className="text-xs font-bold px-3 py-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-white transition">💾 Guardar</button>
-            <button onClick={()=>{if(!wz.techSignature){alert("Se requiere firma del técnico para cerrar la OT");return;}finalizeWizard(true);}} className="text-xs font-bold px-3 py-2 rounded-lg text-white transition" style={{background:"#16a34a"}}>✅ Cerrar OT</button>
+            <button onClick={()=>finalizeWizard(false)} disabled={isSavingWizard}
+              className={`text-xs font-bold px-3 py-2 rounded-lg text-white transition ${isSavingWizard?"bg-gray-400 cursor-not-allowed opacity-60":"bg-amber-500 hover:bg-amber-600"}`}>
+              {isSavingWizard?"Guardando...":"💾 Guardar"}
+            </button>
+            <button onClick={()=>{if(isSavingWizard)return;if(!wz.techSignature){alert("Se requiere firma del técnico para cerrar la OT");return;}finalizeWizard(true);}}
+              disabled={isSavingWizard}
+              className={`text-xs font-bold px-3 py-2 rounded-lg text-white transition ${isSavingWizard?"opacity-60 cursor-not-allowed":""}`}
+              style={{background:isSavingWizard?"#6b7280":"#16a34a"}}>
+              {isSavingWizard?"Guardando...":"✅ Cerrar OT"}
+            </button>
           </div>
         </div>
         {saveMsg&&(
@@ -4968,8 +4983,16 @@ if(wizardOT){
             )}
           </div>
           <div className="flex gap-2">
-            <button onClick={()=>finalizeWizard(false)} className="text-xs font-bold px-3 py-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-white transition">💾 Guardar</button>
-            <button onClick={()=>{if(!wz.techSignature){alert("Se requiere firma del técnico para cerrar la OT");return;}finalizeWizard(true);}} className="text-xs font-bold px-3 py-2 rounded-lg text-white transition" style={{background:"#16a34a"}}>✅ Cerrar OT</button>
+            <button onClick={()=>finalizeWizard(false)} disabled={isSavingWizard}
+              className={`text-xs font-bold px-3 py-2 rounded-lg text-white transition ${isSavingWizard?"bg-gray-400 cursor-not-allowed opacity-60":"bg-amber-500 hover:bg-amber-600"}`}>
+              {isSavingWizard?"Guardando...":"💾 Guardar"}
+            </button>
+            <button onClick={()=>{if(isSavingWizard)return;if(!wz.techSignature){alert("Se requiere firma del técnico para cerrar la OT");return;}finalizeWizard(true);}}
+              disabled={isSavingWizard}
+              className={`text-xs font-bold px-3 py-2 rounded-lg text-white transition ${isSavingWizard?"opacity-60 cursor-not-allowed":""}`}
+              style={{background:isSavingWizard?"#6b7280":"#16a34a"}}>
+              {isSavingWizard?"Guardando...":"✅ Cerrar OT"}
+            </button>
           </div>
         </div>
         {saveMsg&&(
