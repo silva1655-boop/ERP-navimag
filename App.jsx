@@ -4649,7 +4649,7 @@ if(rep.status==="completada"&&sel.planId){
 if(rep.status==="completada"){
   const closingH_l=parseFloat(rep.horometro)||equip.find(e=>e.id===sel.equipId)?.hours||0;
   const wosForCalc=wos.map(w=>w.id===sel.id?{...w,horometroCierre:closingH_l,closedAt:new Date().toISOString(),status:"completada"}:w);
-  const learned=calcAvgLearned(sel.equipId,wosForCalc);
+  const learned=calcAvgLearned(sel.equipId,wosForCalc,data.hourmeterReadings||[]);
   if(learned!==null){
     const samples=wosForCalc.filter(w=>w.equipId===sel.equipId&&w.planId&&w.status==="completada"&&w.horometroCierre!=null).length;
     const updEqL=equip.map(e=>e.id===sel.equipId?{...e,avgOperatingHoursLearned:learned,avgLearnedSamples:samples,avgLearnedAt:new Date().toISOString()}:e);
@@ -6917,6 +6917,7 @@ const [expandedGroups,setExpandedGroups]=useState(()=>new Set(EQ_GROUPS));
 const [allExpanded,setAllExpanded]=useState(true);
 // Maritime-only states
 const [showHourmeterModal,setShowHourmeterModal]=useState(false);
+const [hourmeterReadingDate,setHourmeterReadingDate]=useState("");
 const [hourmeterTarget,setHourmeterTarget]=useState(null);
 const [hourmeterVal,setHourmeterVal]=useState("");
 const [hourmeterObs,setHourmeterObs]=useState("");
@@ -7061,20 +7062,21 @@ const deleteBulkEquip=()=>{
 const saveHours=()=>{if(!editingHours)return;const val=parseInt(editingHours.val)||0;const updated=equip.map(e=>e.id===editingHours.id?{...e,hours:val}:e);setData(d=>({...d,equip:updated}));saveData("equipment",updated);setEditingHours(null);};
 
 // Maritime: individual hourmeter
-const openHourmeterModal=e=>{setHourmeterTarget(e);setHourmeterVal(String(e.hours||"0"));setHourmeterObs("");setShowHourmeterModal(true);};
+const openHourmeterModal=e=>{setHourmeterTarget(e);setHourmeterVal(String(e.hours||"0"));setHourmeterObs("");setHourmeterReadingDate(new Date().toISOString().slice(0,10));setShowHourmeterModal(true);};
 const saveHourmeterIndividual=async()=>{
   if(!hourmeterTarget)return;
   const newH=parseFloat(hourmeterVal)||0;
   if(newH<(hourmeterTarget.hours||0)&&!window.confirm(`El valor (${newH}h) es menor al actual (${hourmeterTarget.hours||0}h). ¿Confirmar?`)) return;
   const now=new Date().toISOString();
+  const readingDate=hourmeterReadingDate||new Date().toISOString().slice(0,10);
   const updated=equip.map(e=>e.id===hourmeterTarget.id?{...e,hours:newH,lastHourmeterUpdate:now}:e);
   setData(d=>({...d,equip:updated}));
   await saveData("equipment",updated);
-  const reading={id:uid(),equipId:hourmeterTarget.id,equipCode:hourmeterTarget.code,hours:newH,prevHours:hourmeterTarget.hours||0,observation:hourmeterObs||"",updatedBy:user.name||user.email||"",timestamp:now};
+  const reading={id:uid(),equipId:hourmeterTarget.id,equipCode:hourmeterTarget.code,hours:newH,prevHours:hourmeterTarget.hours||0,observation:hourmeterObs||"",updatedBy:user.name||user.email||"",timestamp:now,readingDate:readingDate};
   const updatedReadings=[...(hourmeterReadings||[]),reading];
   setData(d=>({...d,hourmeterReadings:updatedReadings}));
   await saveData("hourmeterReadings",updatedReadings);
-  setShowHourmeterModal(false);setHourmeterTarget(null);setHourmeterVal("");setHourmeterObs("");
+  setShowHourmeterModal(false);setHourmeterTarget(null);setHourmeterVal("");setHourmeterObs("");setHourmeterReadingDate("");
 };
 
 // Maritime: bulk hourmeter with history
@@ -8161,7 +8163,7 @@ className="w-24 border border-blue-400 rounded-lg px-2 py-1 text-gray-900 text-x
 
 {/* Maritime: Individual hourmeter modal */}
 {isMar&&showHourmeterModal&&hourmeterTarget&&(
-  <Modal title="Actualizar Horómetro" onClose={()=>{setShowHourmeterModal(false);setHourmeterTarget(null);setHourmeterVal("");setHourmeterObs("");}}>
+  <Modal title="Actualizar Horómetro" onClose={()=>{setShowHourmeterModal(false);setHourmeterTarget(null);setHourmeterVal("");setHourmeterObs("");setHourmeterReadingDate("");}}>
     <div className="space-y-4">
       <div className="p-3 rounded-xl" style={{background:NV.light,border:`1px solid #BFD9F2`}}>
         <p className="font-bold text-sm" style={{color:NV.navy}}>{hourmeterTarget.code} — {hourmeterTarget.name}</p>
@@ -8175,11 +8177,16 @@ className="w-24 border border-blue-400 rounded-lg px-2 py-1 text-gray-900 text-x
         )}
       </div>
       <div>
+        <label className="text-gray-500 text-xs font-medium mb-1 block">FECHA DE LA LECTURA <span className="text-red-500">*</span></label>
+        <input type="date" value={hourmeterReadingDate} onChange={e=>setHourmeterReadingDate(e.target.value)} max={new Date().toISOString().slice(0,10)} className={iCls}/>
+        <p className="text-gray-400 text-xs mt-1">Fecha en que se tomó la lectura (puede ser anterior a hoy)</p>
+      </div>
+      <div>
         <label className="text-gray-500 text-xs font-medium mb-1 block">OBSERVACIÓN</label>
         <input value={hourmeterObs} onChange={e=>setHourmeterObs(e.target.value)} className={iCls} placeholder="Ej: Lectura semanal de horómetro"/>
       </div>
     </div>
-    <ModalActions onSave={saveHourmeterIndividual} onCancel={()=>{setShowHourmeterModal(false);setHourmeterTarget(null);setHourmeterVal("");setHourmeterObs("");}} label="Guardar Lectura"/>
+    <ModalActions onSave={saveHourmeterIndividual} onCancel={()=>{setShowHourmeterModal(false);setHourmeterTarget(null);setHourmeterVal("");setHourmeterObs("");setHourmeterReadingDate("");}} label="Guardar Lectura"/>
   </Modal>
 )}
 
@@ -8211,7 +8218,7 @@ className="w-24 border border-blue-400 rounded-lg px-2 py-1 text-gray-900 text-x
               </span>
             </div>
             {r.observation&&<p className="text-gray-600 text-sm mt-0.5">{r.observation}</p>}
-            <p className="text-gray-400 text-xs mt-0.5">{r.timestamp?.slice(0,16).replace("T"," ")||"—"} · por {r.updatedBy||"—"}</p>
+            <p className="text-gray-400 text-xs mt-0.5">{r.readingDate?fmt(r.readingDate):(r.timestamp?.slice(0,16).replace("T"," ")||"—")} · por {r.updatedBy||"—"}</p>
           </div>
         </div>
       ))}
@@ -8479,7 +8486,7 @@ const addPlan=()=>{
 if(!planForm.equipId||!planForm.name||!planForm.frequency)return;
 const lastHoro=planForm.lastHorometro!==""
   ?parseFloat(planForm.lastHorometro)||0
-  :basePMHorometro(planForm.equipId);
+  :0; // Si no se ingresa, queda en 0. NUNCA auto-calcular.
 const freq=parseInt(planForm.frequency)||0;
 const planCode=isMaritimo?nextPlanCode(planForm.equipId):null;
 const tipoPlanNorm=(planForm.tipoPlan||"horometro").toLowerCase();
@@ -8729,6 +8736,7 @@ const openEditPlanAssign=(assign)=>{
     frequency:String(assign._isLegacy?(assign.frequency||""):(assign.frequency||tplA?.frequency||"")),
     criticidad:(assign.criticidad||"media"),
     area:assign.area||"",
+    responsable:assign.responsable||"",
     estimatedHours:String(assign._isLegacy?(assign._estimatedHours||""):(assign.estimatedHoursOverride??tplA?.estimatedHours??"")),
   });
   setShowEditPlanAssign(true);
@@ -8750,6 +8758,7 @@ const saveEditPlanAssign=()=>{
     pushCambio("Frecuencia",`${pl.frequency||0}${tipoAntes==="calendario"?"d":"h"}`,`${freq}${tipoPlanNorm==="calendario"?"d":"h"}`);
     pushCambio("Criticidad",pl.criticidad,f.criticidad);
     pushCambio("Área",pl.area,f.area);
+    pushCambio("Responsable",pl.responsable,f.responsable);
     const nextDueDateCalc=tipoPlanNorm==="calendario"?(()=>{const base=pl.fechaUltima||new Date().toISOString().slice(0,10);const d=new Date(base);d.setDate(d.getDate()+freq);return d.toISOString().slice(0,10);})():null;
     const updatedPlan={
       ...pl,
@@ -8760,6 +8769,9 @@ const saveEditPlanAssign=()=>{
       criticidad:f.criticidad,
       criticidadPlan:f.criticidad,
       area:f.area,
+      responsable:f.responsable,
+      responsablePlan:f.responsable,
+      technician:f.responsable,
       estimatedHours:parseFloat(f.estimatedHours)||0,
       ...(tipoPlanNorm==="horometro"
         ?{horometroTarget:(parseFloat(pl.lastHorometro)||0)+freq,nextDueDate:null,proximaFecha:""}
@@ -8781,6 +8793,7 @@ const saveEditPlanAssign=()=>{
     pushCambio("Frecuencia",`${a0.frequency||tplA?.frequency||0}${tipoAntes==="calendario"?"d":"h"}`,`${freq}${tipoPlanNorm==="calendario"?"d":"h"}`);
     pushCambio("Criticidad",a0.criticidad,f.criticidad);
     pushCambio("Área",a0.area,f.area);
+    pushCambio("Responsable",a0.responsable,f.responsable);
     const nextDueDateCalc=tipoPlanNorm==="calendario"?(()=>{const base=a0.lastExecutionDate||new Date().toISOString().slice(0,10);const d=new Date(base);d.setDate(d.getDate()+freq);return d.toISOString().slice(0,10);})():null;
     const upd=planAssignments.map(a=>a.id===a0.id?{
       ...a,
@@ -8789,6 +8802,7 @@ const saveEditPlanAssign=()=>{
       tipoPlan:tipoPlanNorm,
       criticidad:f.criticidad,
       area:f.area,
+      responsable:f.responsable,
       estimatedHoursOverride:parseFloat(f.estimatedHours)||0,
       ...(tipoPlanNorm==="horometro"
         ?{nextDueHours:(parseFloat(a.lastBaseHours)||0)+freq,nextDueDate:null}
@@ -8966,6 +8980,11 @@ if(isMaritimo){
                     <div className="flex items-center gap-2 mb-1 flex-wrap">
                       <span className="font-mono text-xs font-bold" style={{color:NV.blue}}>{assign.code}</span>
                       <span className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold ${stCfg.cls}`}>{stCfg.label}</span>
+                      {(assign.criticidad||assign.criticidadPlan)&&(
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold border ${(assign.criticidad||assign.criticidadPlan||"").toLowerCase()==="alta"?"bg-red-50 text-red-700 border-red-200":(assign.criticidad||assign.criticidadPlan||"").toLowerCase()==="media"?"bg-amber-50 text-amber-700 border-amber-200":"bg-gray-50 text-gray-600 border-gray-200"}`}>
+                          {assign.criticidad||assign.criticidadPlan}
+                        </span>
+                      )}
                       {!assign.activo&&<span className="text-[10px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 font-semibold border border-gray-200">Inactivo</span>}
                       {openOT&&<span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-semibold border border-blue-200 font-mono">{openOT.code}</span>}
                     </div>
@@ -9056,7 +9075,7 @@ if(isMaritimo){
           <div><label className={lbl}>{editPlanAssignForm.tipoPlan==="Calendario"?"FRECUENCIA (días)":"FRECUENCIA (horas)"}</label>
             <input type="number" value={editPlanAssignForm.frequency} onChange={e=>setEditPlanAssignForm(f=>({...f,frequency:e.target.value}))} className={iCls} placeholder={editPlanAssignForm.tipoPlan==="Calendario"?"7":"250"}/>
           </div>
-          <div><label className={lbl}>HRS ESTIMADAS</label>
+          <div><label className={lbl}>HORAS ESTIMADAS DE EJECUCIÓN</label>
             <input type="number" value={editPlanAssignForm.estimatedHours} onChange={e=>setEditPlanAssignForm(f=>({...f,estimatedHours:e.target.value}))} className={iCls} placeholder="4"/>
           </div>
         </div>
@@ -9069,6 +9088,15 @@ if(isMaritimo){
           <div><label className={lbl}>ÁREA</label>
             <input value={editPlanAssignForm.area} onChange={e=>setEditPlanAssignForm(f=>({...f,area:e.target.value}))} className={iCls} placeholder="Sala de Máquinas"/>
           </div>
+        </div>
+        <div>
+          <label className={lbl}>RESPONSABLE</label>
+          <select value={editPlanAssignForm.responsable||""} onChange={e=>setEditPlanAssignForm(f=>({...f,responsable:e.target.value}))} className={sCls}>
+            <option value="">Sin responsable</option>
+            {(users||[]).filter(u=>["mecanico","supervisor"].includes(u.role)).map(u=>(
+              <option key={u.id} value={u.id}>{u.name} ({u.role})</option>
+            ))}
+          </select>
         </div>
       </div>
       <ModalActions onSave={saveEditPlanAssign} onCancel={()=>{setShowEditPlanAssign(false);setEditPlanAssign(null);setEditPlanAssignForm(null);}} label="Guardar cambios"/>
@@ -9288,16 +9316,18 @@ if(isMaritimo){
             <p className="text-gray-700 text-sm capitalize">{(selectedAssignDetail.area||"").replace("_"," ")||"—"}</p>
           </div>
           <div className="bg-gray-50 rounded-xl p-3 border border-gray-100">
-            <p className="text-gray-400 text-xs mb-1">Responsable</p>
-            <select
-              value={selectedAssignDetail.responsable||""}
-              onChange={e=>updateAssignmentResponsable(selectedAssignDetail,e.target.value)}
-              className="w-full text-xs text-gray-700 bg-white border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-400">
-              <option value="">Sin responsable</option>
-              {(users||[]).filter(u=>["mecanico","supervisor"].includes(u.role)).map(u=>(
-                <option key={u.id} value={u.id}>{u.name} ({u.role})</option>
-              ))}
-            </select>
+            <p className="text-gray-400 text-xs mb-0.5">Responsable</p>
+            <p className="text-gray-700 text-sm font-semibold">
+              {(()=>{
+                const resp=(users||[]).find(u=>u.id===selectedAssignDetail.responsable||u.name===selectedAssignDetail.responsable);
+                return resp?.name||selectedAssignDetail.responsable||"Sin asignar";
+              })()}
+            </p>
+            {isSup&&(
+              <button onClick={()=>openEditPlanAssign(selectedAssignDetail)} className="text-xs text-blue-500 hover:underline mt-1">
+                Cambiar (editar plan)
+              </button>
+            )}
           </div>
           <div className="bg-gray-50 rounded-xl p-3 border border-gray-100">
             <p className="text-gray-400 text-xs mb-0.5">Frecuencia</p>
@@ -9306,6 +9336,12 @@ if(isMaritimo){
           <div className="bg-gray-50 rounded-xl p-3 border border-gray-100">
             <p className="text-gray-400 text-xs mb-0.5">Base inicial</p>
             <p className="text-gray-700 text-sm font-mono">{selectedAssignDetail.lastBaseHours?.toLocaleString()||"—"} h</p>
+          </div>
+          <div className="bg-gray-50 rounded-xl p-3 border border-gray-100">
+            <p className="text-gray-400 text-xs mb-0.5">Criticidad</p>
+            <span className={`text-sm font-semibold ${(selectedAssignDetail.criticidad||"").toLowerCase()==="alta"?"text-red-600":(selectedAssignDetail.criticidad||"").toLowerCase()==="media"?"text-amber-600":"text-gray-600"}`}>
+              {selectedAssignDetail.criticidad||"—"}
+            </span>
           </div>
         </div>
         {/* PROCEDIMIENTO DEL PLAN */}
@@ -9472,12 +9508,12 @@ if(isMaritimo){
         <button onClick={()=>{toggleAssignmentActive(selectedAssignDetail);setSelectedAssignDetail(a=>a?{...a,activo:!a.activo}:null);}}
           className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-semibold text-sm transition hover:opacity-90 ${selectedAssignDetail.activo?"bg-amber-500 text-white":"bg-emerald-600 text-white"}`}>
           {selectedAssignDetail.activo?<EyeOff size={16}/>:<Eye size={16}/>}
-          {selectedAssignDetail.activo?"Desactivar asignación":"Activar asignación"}
+          {selectedAssignDetail.activo?"Desactivar plan":"Activar plan"}
         </button>
         {user.role==="supervisor"&&(
         <button onClick={()=>{deleteAssignment(selectedAssignDetail.id,selectedAssignDetail._isLegacy);setSelectedAssignDetail(null);}}
           className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-red-500 text-white font-semibold text-sm transition hover:opacity-90">
-          <Trash2 size={16}/>Eliminar asignación
+          <Trash2 size={16}/>Eliminar plan
         </button>
         )}
       </div>
@@ -9661,6 +9697,10 @@ if(isMaritimo){
           <div><label className="text-gray-500 text-xs font-medium mb-1.5 block">UNIDAD</label>
             <input value={planForm.unidad} disabled className={iCls+" bg-gray-50 text-gray-500"}/>
           </div>
+        </div>
+        <div>
+          <label className="text-gray-500 text-xs font-medium mb-1 block">HORAS ESTIMADAS DE EJECUCIÓN</label>
+          <input type="number" value={planForm.estimatedHours} onChange={e=>setPlanForm(f=>({...f,estimatedHours:e.target.value}))} className={iCls} placeholder="Ej: 4" min="0" step="0.5"/>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <label className="flex items-center justify-between p-2.5 rounded-lg border border-gray-200 cursor-pointer">
@@ -17819,29 +17859,33 @@ function resolveResponsable(nombrePlan, users) {
 }
 
 // ─── APRENDIZAJE DE HORÓMETRO PROMEDIO ───────────────────────────────────────
-function calcAvgLearned(equipId, wos) {
-  const VENTANA_MS=30*24*60*60*1000;
-  const ahora=Date.now();
-  const cerradas=(wos||[])
-    .filter(w=>
-      w.equipId===equipId&&
-      w.status==="completada"&&
-      w.closedAt&&
-      w.horometroCierre!=null&&
-      !isNaN(parseFloat(w.horometroCierre))&&
-      (ahora-new Date(w.closedAt).getTime())<=VENTANA_MS
+function calcAvgLearned(equipId, wos, hourmeterReadings) {
+  // Usa lecturas de horómetro (readingDate = fecha real, no timestamp de imputación)
+  // en vez de OTs cerradas. Fórmula: (horo2-horo1)/(fecha2-fecha1 en días).
+  const readings=(hourmeterReadings||[])
+    .filter(r=>
+      r.equipId===equipId&&
+      r.readingDate&&
+      r.hours!=null&&
+      !isNaN(parseFloat(r.hours))
     )
-    .map(w=>({h:parseFloat(w.horometroCierre),ts:new Date(w.closedAt).getTime()}))
-    .sort((a,b)=>a.ts-b.ts);
-  if(cerradas.length<2) return null;
-  let sumPeso=0,sumRatio=0;
-  for(let i=1;i<cerradas.length;i++){
-    const deltaH=cerradas[i].h-cerradas[i-1].h;
-    const deltaD=(cerradas[i].ts-cerradas[i-1].ts)/(1000*60*60*24);
+    .map(r=>({
+      h:parseFloat(r.hours),
+      fecha:new Date(r.readingDate+"T12:00:00"),
+    }))
+    .filter(r=>!isNaN(r.fecha.getTime()))
+    .sort((a,b)=>a.fecha-b.fecha);
+
+  if(readings.length<2) return null;
+
+  let sumPeso=0, sumRatio=0;
+  for(let i=1;i<readings.length;i++){
+    const deltaH=readings[i].h-readings[i-1].h;
+    const deltaD=(readings[i].fecha-readings[i-1].fecha)/(1000*60*60*24);
     if(deltaH<=0||deltaD<=0) continue;
     const ratio=deltaH/deltaD;
     if(ratio<0.1||ratio>24){
-      console.warn(`⚠️ calcAvgLearned ratio incoherente equipo ${equipId}: ${ratio.toFixed(2)}h/día`);
+      console.warn(`⚠️ calcAvgLearned ratio incoherente: ${ratio.toFixed(2)}h/día`);
       continue;
     }
     sumPeso+=deltaD;
