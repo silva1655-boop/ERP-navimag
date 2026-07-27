@@ -11,7 +11,8 @@ Printer, Filter, Eye, EyeOff, Copy, Link, ChevronDown, Camera, Download, FileDow
 ClipboardCheck, ZoomIn, ChevronLeft, Save, Play, HelpCircle, ChevronUp, MessageCircle, Truck, Upload, Send, RotateCcw,
 Hash, Tag, UserCheck, User as UserIcon, MessageSquare, ExternalLink, PieChart, TrendingDown, MapPin
 } from "lucide-react";
-import { db } from "./firebase.js";
+import { db, storage } from "./firebase.js";
+import { ref, uploadString, getDownloadURL } from "firebase/storage";
 import { doc, setDoc, onSnapshot, getDoc, runTransaction, deleteDoc } from "firebase/firestore";
 import LogoNavimag from "./logo_navimag.png";
 
@@ -4199,18 +4200,13 @@ const finalizeWizard=async(closeOT)=>{
   if(isSavingWizard) return; // evitar doble click / doble guardado
   setIsSavingWizard(true);
   try{
-  // Upload all photos (antes/durante/despues) to ImgBB
+  // Upload all photos (antes/durante/despues) to Firebase Storage
   const uploadGroup=async(arr)=>{
     return Promise.all((arr||[]).map(async b64=>{
       if(!b64?.startsWith?.("data:")) return b64;
       try{
-        const fd=new FormData();
-        fd.append("key",IMGBB_API_KEY);
-        fd.append("image",b64.split(",")[1]);
-        fd.append("expiration","0");
-        const res=await fetch("https://api.imgbb.com/1/upload",{method:"POST",body:fd});
-        const json=await res.json();
-        return json.success?json.data.url:b64;
+        const url=await uploadToFirebaseStorage(b64);
+        return url||b64;
       }catch(e){return b64;}
     }));
   };
@@ -4597,19 +4593,14 @@ if(!rep.actualHours){
       const diff=(fin-ini)/(1000*60*60);
       if(diff>0) horasCalc=Math.round(diff*100)/100;
     }
-    // Upload report photos to ImgBB
+    // Upload report photos to Firebase Storage
     let uploadedRepPhotos=[];
     if((rep.photos||[]).length>0){
       try{
         uploadedRepPhotos=await Promise.all((rep.photos||[]).map(async b64=>{
           if(!b64.startsWith("data:")) return b64;
-          const fd=new FormData();
-          fd.append("key",IMGBB_API_KEY);
-          fd.append("image",b64.split(",")[1]);
-          fd.append("expiration","0");
-          const res=await fetch("https://api.imgbb.com/1/upload",{method:"POST",body:fd});
-          const json=await res.json();
-          return json.success?json.data.url:b64;
+          const url=await uploadToFirebaseStorage(b64);
+          return url||b64;
         }));
       }catch(e){uploadedRepPhotos=rep.photos||[];}
     }
@@ -14302,13 +14293,8 @@ const uploadFotosDev=async(fotos)=>{
   try{
     return await Promise.all(fotos.map(async b64=>{
       if(!b64.startsWith("data:")) return b64;
-      const fd=new FormData();
-      fd.append("key",IMGBB_API_KEY);
-      fd.append("image",b64.split(",")[1]);
-      fd.append("expiration","0");
-      const res=await fetch("https://api.imgbb.com/1/upload",{method:"POST",body:fd});
-      const json=await res.json();
-      return json.success?json.data.url:b64;
+      const url=await uploadToFirebaseStorage(b64);
+      return url||b64;
     }));
   }catch(e){return fotos;}
 };
@@ -15450,54 +15436,53 @@ function exportRankingPDF(ranking, allChecklists, dateFrom, dateTo) {
 
 // ─── CHECKLIST ───────────────────────────────────────────────────────────────
 const CL_STATUS={bueno:{bg:"#16a34a",lbl:"✓",cls:"text-emerald-700 bg-emerald-50 border-emerald-200"},regular:{bg:"#f59e0b",lbl:"~",cls:"text-amber-700 bg-amber-50 border-amber-200"},malo:{bg:"#ef4444",lbl:"✗",cls:"text-red-700 bg-red-50 border-red-200"}};
-async function uploadToImgBB(base64DataUrl){
-  if(!base64DataUrl||!base64DataUrl.startsWith("data:")) return base64DataUrl;
+// Comprime una imagen base64 si supera 150KB (mismo comportamiento que la
+// migración desde ImgBB): redimensiona a maxW=800 vía canvas, JPEG calidad 0.5.
+async function compressImageIfNeeded(base64DataUrl){
+  const sizeKB=Math.round(base64DataUrl.length*0.75/1024);
+  if(sizeKB<=150) return base64DataUrl;
+  return Promise.race([
+    new Promise((resolve,reject)=>{
+      const img=new Image();
+      img.onload=()=>{
+        try{
+          const maxW=800;let w=img.width,h=img.height;
+          if(w>maxW){h=Math.round(h*maxW/w);w=maxW;}
+          const canvas=document.createElement("canvas");
+          canvas.width=w;canvas.height=h;
+          const ctx=canvas.getContext("2d");
+          ctx.fillStyle="#fff";ctx.fillRect(0,0,w,h);
+          ctx.drawImage(img,0,0,w,h);
+          resolve(canvas.toDataURL("image/jpeg",0.5));
+        }catch(err){reject(err);}
+      };
+      img.onerror=()=>reject(new Error("Error cargando imagen"));
+      img.src=base64DataUrl;
+    }),
+    new Promise((_,reject)=>setTimeout(()=>reject(new Error("Timeout compresión")),8000)),
+  ]).catch(()=>base64DataUrl);
+}
+
+async function uploadToFirebaseStorage(base64DataUrl, folder="fotos"){
+  if(!base64DataUrl||!base64DataUrl.startsWith("data:")) return null;
   try{
-    const sizeKB=Math.round(base64DataUrl.length*0.75/1024);
-    let finalB64=base64DataUrl;
-    if(sizeKB>150){
-      finalB64=await Promise.race([
-        new Promise((resolve,reject)=>{
-          const img=new Image();
-          img.onload=()=>{
-            try{
-              const maxW=800;let w=img.width,h=img.height;
-              if(w>maxW){h=Math.round(h*maxW/w);w=maxW;}
-              const canvas=document.createElement("canvas");
-              canvas.width=w;canvas.height=h;
-              const ctx=canvas.getContext("2d");
-              ctx.fillStyle="#fff";ctx.fillRect(0,0,w,h);
-              ctx.drawImage(img,0,0,w,h);
-              resolve(canvas.toDataURL("image/jpeg",0.5));
-            }catch(err){reject(err);}
-          };
-          img.onerror=()=>reject(new Error("Error cargando imagen"));
-          img.src=base64DataUrl;
-        }),
-        new Promise((_,reject)=>setTimeout(()=>reject(new Error("Timeout compresión")),8000)),
-      ]).catch(()=>base64DataUrl);
-    }
-    const base64=finalB64.split(",")[1];
-    if(!base64) return base64DataUrl;
-    const formData=new FormData();
-    formData.append("key",IMGBB_API_KEY);
-    formData.append("image",base64);
-    formData.append("expiration","0");
-    const controller=new AbortController();
-    const timeoutId=setTimeout(()=>controller.abort(),15000);
-    const res=await fetch("https://api.imgbb.com/1/upload",{method:"POST",body:formData,signal:controller.signal});
-    clearTimeout(timeoutId);
-    const json=await res.json();
-    if(json.success){console.log("✅ ImgBB:",json.data.url);return json.data.url;}
-    throw new Error(json.error?.message||"Error ImgBB");
+    const finalB64=await compressImageIfNeeded(base64DataUrl);
+    const ext=finalB64.split(";")[0].split("/")[1]||"jpg";
+    const fileName=`${folder}/${Date.now()}_${Math.random().toString(36).slice(2,8)}.${ext}`;
+    const storageRef=ref(storage,`mantek/${fileName}`);
+    await uploadString(storageRef,finalB64,"data_url");
+    const url=await getDownloadURL(storageRef);
+    console.log("✅ Firebase Storage:",url);
+    return url;
   }catch(e){
-    if(e.name==="AbortError"){
-      console.warn("⏱️ ImgBB timeout — guardando base64 local");
-    }else{
-      console.error("❌ ImgBB error:",e.message);
-    }
-    return base64DataUrl;
+    console.error("❌ uploadToFirebaseStorage error:",e.message);
+    return null;
   }
+}
+
+// Alias por compatibilidad con el código existente — ahora sube a Firebase Storage
+async function uploadToImgBB(base64DataUrl){
+  return uploadToFirebaseStorage(base64DataUrl,"imgbb-migration");
 }
 function ChecklistDetailModal({checklist,equip,onClose}){
   if(!checklist) return null;
@@ -15922,10 +15907,10 @@ const naCount=items.filter(it=>it.status==="na").length;
       console.warn(`⚠️ Checklist ${clSizeKB}KB — aplicando compresión agresiva`);
       newCL.items=newCL.items.map(it=>({
         ...it,
-        photos:(it.photos||[]).map(p=>p?.startsWith("data:")?"[foto-pendiente-imgbb]":p)
+        photos:(it.photos||[]).map(p=>p?.startsWith("data:")?"[foto-pendiente-storage]":p)
       }));
       newCL.vehiclePhotos=Object.fromEntries(
-        Object.entries(newCL.vehiclePhotos||{}).map(([k,v])=>[k,v?.startsWith("data:")?"[foto-pendiente-imgbb]":v])
+        Object.entries(newCL.vehiclePhotos||{}).map(([k,v])=>[k,v?.startsWith("data:")?"[foto-pendiente-storage]":v])
       );
       if(newCL.operatorSignature?.startsWith("data:")) newCL.operatorSignature="[firma-pendiente-imgbb]";
       const newSizeKB=Math.round(JSON.stringify({data:newCL}).length/1024);
@@ -17063,13 +17048,13 @@ if(step==="post"){
         console.warn(`⚠️ Post-op ${sizeKB}KB — eliminando base64 residual`);
         const limpiar=obj=>Object.fromEntries(
           Object.entries(obj).map(([k,v])=>[
-            k,v?.startsWith?.("data:")?"[foto-local]":v
+            k,v?.startsWith?.("data:")?"[foto-pendiente-storage]":v
           ])
         );
         newPostCLSafe.vehiclePhotos=limpiar(newPostCLSafe.vehiclePhotos||{});
         newPostCLSafe.cortaCorrientePhotos=limpiar(newPostCLSafe.cortaCorrientePhotos||{});
         newPostCLSafe.damagePhotos=(newPostCLSafe.damagePhotos||[])
-          .map(p=>p?.startsWith?.("data:")?"[foto-local]":p);
+          .map(p=>p?.startsWith?.("data:")?"[foto-pendiente-storage]":p);
       }
 
       // ── GUARDAR DOC + ÍNDICE EN TRANSACCIÓN ATÓMICA ───────
