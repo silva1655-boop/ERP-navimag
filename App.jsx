@@ -25485,6 +25485,47 @@ useEffect(()=>{
   return()=>presenceUnsub.current?.();
 },[user, activeModule, data.users]);
 
+// ── Sincronizar lista de usuarios desde mantek-auth ──────────────────────────
+// Los usuarios reales viven en mantek-auth (PostgreSQL); Firestore data.users
+// queda como fallback si mantek-auth no responde. Sincronización en segundo
+// plano, nunca bloquea la carga inicial del ERP.
+const syncUsersFromAuth=useCallback(async()=>{
+  if(!user?._sessionToken) return;
+  try{
+    const res=await fetch(AUTH_URL+"/api/users/erp",{
+      credentials:"include",
+      headers:{
+        "Authorization":"Bearer "+(user._sessionToken||sessionStorage.getItem("_mantek_token")||""),
+      },
+    });
+    if(!res.ok) return;
+    const d=await res.json();
+    if(!d.ok||!d.data) return;
+    // Mezclar con usuarios existentes en Firestore — los de mantek-auth
+    // tienen prioridad para name/email/role, pero se conservan campos
+    // operacionales de Firestore (avgOperatingHours, etc.) si existen.
+    setData(prev=>{
+      const firestoreUsers=prev.users||[];
+      const authUsers=d.data;
+      const merged=new Map();
+      firestoreUsers.forEach(u=>{ if(u.id) merged.set(u.id,u); });
+      authUsers.forEach(u=>{
+        merged.set(u.id,{ ...(merged.get(u.id)||{}), ...u });
+      });
+      return{...prev,users:Array.from(merged.values())};
+    });
+  }catch(e){
+    console.warn("syncUsersFromAuth error:",e);
+  }
+},[user]);
+
+useEffect(()=>{
+  if(!user) return;
+  syncUsersFromAuth();
+  const interval=setInterval(syncUsersFromAuth,5*60*1000);
+  return()=>clearInterval(interval);
+},[user,syncUsersFromAuth]);
+
 // SW deshabilitado — causaba interferencia con Firestore en tablets
 useEffect(()=>{
   if("serviceWorker" in navigator){
