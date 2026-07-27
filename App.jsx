@@ -20,7 +20,7 @@ const AUTH_URL = import.meta.env.VITE_AUTH_URL || 'https://mantek-auth.vercel.ap
 
 const mapAuthRoleToErp = (authRole) => {
   const map = {
-    ADMIN:'supervisor', SUPERVISOR:'supervisor', MECANICO:'mecanico',
+    ADMIN:'admin', SUPERVISOR:'supervisor', MECANICO:'mecanico',
     OPERADOR:'operador', INVITADO:'operador', GERENTE:'operaciones',
     JEFE_OPERACIONES:'operaciones', SUP_OPERACIONES:'operaciones',
   };
@@ -1472,6 +1472,7 @@ const MAR_ST={
 };
 
 const ROLE_CFG={
+admin: {label:"Administrador", color:"text-red-300", bg:"bg-red-900/30", icon:Shield, nav:["dashboard","workorders","equipment","plans","indicadores","requests","checklist","deviaciones","reports","users","vessels","voyages","accesos","repuestos","config_reportes","notifications"]},
 supervisor: {label:"Supervisor", color:"text-cyan-300",  bg:"bg-cyan-900/40",   icon:Shield,       nav:["dashboard","workorders","equipment","plans","indicadores","requests","checklist","deviaciones","reports","users","vessels","voyages","accesos","repuestos","config_reportes"]},
 mecanico:   {label:"Mecánico",   color:"text-amber-300", bg:"bg-amber-900/30",  icon:Wrench,       nav:["dashboard","workorders","checklist","deviaciones","reports"]},
 operaciones:{label:"Operaciones",color:"text-sky-300",   bg:"bg-sky-900/30",    icon:Activity,     nav:["dashboard","requests","checklist","plans","notifications","vessels","voyages"]},
@@ -1480,6 +1481,14 @@ bodega:     {label:"Bodega",     color:"text-orange-300",bg:"bg-orange-900/30", 
 };
 
 const ROLE_DEFAULT_PERMS={
+  admin:{
+    dashboard:true, workorders:true, equipment:true,
+    plans:true, indicadores:true, requests:true,
+    checklist:true, historial_postop:true, deviaciones:true, reports:true,
+    users:true, accesos:true, notifications:true,
+    vessels:true, voyages:true, repuestos:true,
+    dashboard_checklist:true, operadores:true, config_reportes:true
+  },
   supervisor:{
     dashboard:true, workorders:true, equipment:true,
     plans:true, indicadores:true, requests:true,
@@ -6895,7 +6904,7 @@ function parseEquipMaritimoXLSXRows(rows, existingEquip){
 
 function Equipment({user,data,setData,saveData,appendToArray,updateInArray,activeModule}){
 const {equip,plans,requests=[],wos=[],hourmeterReadings=[]}=data;
-const isSup=user.role==="supervisor";
+const isSup=user.role==="supervisor"||user.role==="admin"||user.authRole==="ADMIN";
 const isMar=activeModule==="maritimo";
 
 // States
