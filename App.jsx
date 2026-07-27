@@ -1535,75 +1535,6 @@ const ROLE_DEFAULT_PERMS={
 const getUserPerms=(u)=>{
   if(u?.permisos&&Object.keys(u.permisos).length>0){
     const defaults=ROLE_DEFAULT_PERMS[u?.role]||{};
-
-// ── SINCRONIZACIÓN USUARIOS DESDE MANTEK-AUTH ────────
-const syncUsersFromAuth=React.useCallback(async()=>{
-  if(!user) return;
-  const token=user._sessionToken||
-    sessionStorage.getItem('_mantek_token')||'';
-  if(!token) return;
-  try{
-    const res=await fetch(AUTH_URL+'/api/users/erp',{
-      credentials:'include',
-      headers:{'Authorization':'Bearer '+token},
-    });
-    if(!res.ok) return;
-    const d=await res.json();
-    if(!d.ok||!Array.isArray(d.data)) return;
-
-    // Reemplazar data.users completamente con los de mantek-auth
-    // Conservar solo campos operacionales de Firestore que no
-    // existen en mantek-auth (avgOperatingHours, etc.)
-    setData(prev=>{
-      const firestoreUsers=prev.users||[];
-      // Crear mapa de usuarios Firestore por email y username
-      // para recuperar datos operacionales
-      const firestoreByEmail=new Map(
-        firestoreUsers.map(u=>[
-          (u.email||'').toLowerCase(), u
-        ])
-      );
-      const firestoreByUsername=new Map(
-        firestoreUsers.map(u=>[
-          (u.username||u.name||'').toLowerCase(), u
-        ])
-      );
-
-      // Construir lista final desde mantek-auth
-      // Solo usuarios activos, sin duplicados
-      const authUsers=d.data.map(au=>{
-        // Buscar datos operacionales en Firestore
-        const fsUser=
-          firestoreByEmail.get((au.email||'').toLowerCase())||
-          firestoreByUsername.get((au.username||'').toLowerCase())||
-          {};
-        return{
-          // Datos operacionales de Firestore (si existen)
-          avgOperatingHours: fsUser.avgOperatingHours||null,
-          avgOperatingHoursLearned: fsUser.avgOperatingHoursLearned||null,
-          avgPreference: fsUser.avgPreference||'learned',
-          // Datos de mantek-auth tienen prioridad total
-          ...au,
-          // Asegurar que deleted=false para usuarios activos
-          deleted: false,
-        };
-      });
-
-      return{...prev, users: authUsers};
-    });
-  }catch(e){
-    console.warn('syncUsersFromAuth error:',e);
-  }
-},[user]);
-
-useEffect(()=>{
-  if(!user) return;
-  syncUsersFromAuth();
-  const iv=setInterval(syncUsersFromAuth, 5*60*1000);
-  return ()=>clearInterval(iv);
-},[user,syncUsersFromAuth]);
-// ─────────────────────────────────────────────────────
-
     return{...defaults,...u.permisos};
   }
   return ROLE_DEFAULT_PERMS[u?.role]||{};
@@ -24761,6 +24692,56 @@ return(
 
 export default function App(){
 const [user,setUser]=useState(null);
+  // ── SYNC USUARIOS DESDE MANTEK-AUTH ─────────────────
+  const syncUsersFromAuth=useCallback(async()=>{
+    if(!user) return;
+    const token=user._sessionToken||
+      sessionStorage.getItem('_mantek_token')||'';
+    if(!token) return;
+    try{
+      const res=await fetch(AUTH_URL+'/api/users/erp',{
+        credentials:'include',
+        headers:{'Authorization':'Bearer '+token},
+      });
+      if(!res.ok) return;
+      const d=await res.json();
+      if(!d.ok||!Array.isArray(d.data)) return;
+      setData(prev=>{
+        const firestoreUsers=prev.users||[];
+        const byEmail=new Map(
+          firestoreUsers.map(u=>[(u.email||'').toLowerCase(),u])
+        );
+        const byUsername=new Map(
+          firestoreUsers.map(u=>
+            [(u.username||u.name||'').toLowerCase(),u])
+        );
+        const merged=d.data.map(au=>{
+          const fs2=
+            byEmail.get((au.email||'').toLowerCase())||
+            byUsername.get((au.username||'').toLowerCase())||{};
+          return{
+            avgOperatingHours:fs2.avgOperatingHours||null,
+            avgOperatingHoursLearned:fs2.avgOperatingHoursLearned||null,
+            avgPreference:fs2.avgPreference||'learned',
+            ...au,
+            deleted:false,
+          };
+        });
+        return{...prev,users:merged};
+      });
+    }catch(e){
+      console.warn('syncUsersFromAuth:',e);
+    }
+  },[user]);
+
+  useEffect(()=>{
+    if(!user) return;
+    syncUsersFromAuth();
+    const iv=setInterval(syncUsersFromAuth,5*60*1000);
+    return()=>clearInterval(iv);
+  },[user,syncUsersFromAuth]);
+  // ─────────────────────────────────────────────────────
+
 const [installPrompt,setInstallPrompt]=useState(null);
 const [showInstallBtn,setShowInstallBtn]=useState(false);
 const [fontSize,setFontSize]=useState(()=>{
@@ -25553,47 +25534,6 @@ useEffect(()=>{
   presenceUnsub.current=()=>subs.forEach(u=>u());
   return()=>presenceUnsub.current?.();
 },[user, activeModule, data.users]);
-
-// ── Sincronizar lista de usuarios desde mantek-auth ──────────────────────────
-// Los usuarios reales viven en mantek-auth (PostgreSQL); Firestore data.users
-// queda como fallback si mantek-auth no responde. Sincronización en segundo
-// plano, nunca bloquea la carga inicial del ERP.
-const syncUsersFromAuth=useCallback(async()=>{
-  if(!user?._sessionToken) return;
-  try{
-    const res=await fetch(AUTH_URL+"/api/users/erp",{
-      credentials:"include",
-      headers:{
-        "Authorization":"Bearer "+(user._sessionToken||sessionStorage.getItem("_mantek_token")||""),
-      },
-    });
-    if(!res.ok) return;
-    const d=await res.json();
-    if(!d.ok||!d.data) return;
-    // Mezclar con usuarios existentes en Firestore — los de mantek-auth
-    // tienen prioridad para name/email/role, pero se conservan campos
-    // operacionales de Firestore (avgOperatingHours, etc.) si existen.
-    setData(prev=>{
-      const firestoreUsers=prev.users||[];
-      const authUsers=d.data;
-      const merged=new Map();
-      firestoreUsers.forEach(u=>{ if(u.id) merged.set(u.id,u); });
-      authUsers.forEach(u=>{
-        merged.set(u.id,{ ...(merged.get(u.id)||{}), ...u });
-      });
-      return{...prev,users:Array.from(merged.values())};
-    });
-  }catch(e){
-    console.warn("syncUsersFromAuth error:",e);
-  }
-},[user]);
-
-useEffect(()=>{
-  if(!user) return;
-  syncUsersFromAuth();
-  const interval=setInterval(syncUsersFromAuth,5*60*1000);
-  return()=>clearInterval(interval);
-},[user,syncUsersFromAuth]);
 
 // SW deshabilitado — causaba interferencia con Firestore en tablets
 useEffect(()=>{
