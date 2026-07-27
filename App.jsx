@@ -15468,7 +15468,8 @@ async function uploadToFirebaseStorage(base64DataUrl, folder="fotos"){
   try{
     const finalB64=await compressImageIfNeeded(base64DataUrl);
     const ext=finalB64.split(";")[0].split("/")[1]||"jpg";
-    const fileName=`${folder}/${Date.now()}_${Math.random().toString(36).slice(2,8)}.${ext}`;
+    const now=new Date();const yr=now.getFullYear();const mo=String(now.getMonth()+1).padStart(2,'0');
+    const fileName=`${folder}/${yr}/${mo}/${Date.now()}_${Math.random().toString(36).slice(2,8)}.${ext}`;
     const storageRef=ref(storage,`mantek/${fileName}`);
     await uploadString(storageRef,finalB64,"data_url");
     const url=await getDownloadURL(storageRef);
