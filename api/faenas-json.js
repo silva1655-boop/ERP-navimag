@@ -1,0 +1,56 @@
+// Devuelve las faenas del período como JSON (para el calendario en la UI, sin PDF)
+import { COLL_TALLER } from "./_lib/firebase.js";
+import { loadChecklistsForPeriod, loadEquipMap } from "./_lib/checklists.js";
+import { buildFaenasConDatos } from "./_lib/faenas.js";
+
+function isValidDate(s) {
+  return typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(Date.parse(s));
+}
+
+export default async function handler(req, res) {
+  if (req.method !== "GET") {
+    return res.status(405).json({ error: "Method not allowed" });
+  }
+
+  const { desde, hasta } = req.query;
+  if (!isValidDate(desde) || !isValidDate(hasta) || desde > hasta) {
+    return res.status(400).json({ error: "Parámetros desde/hasta inválidos (YYYY-MM-DD)" });
+  }
+
+  try {
+    const [checklists, equipMap] = await Promise.all([
+      loadChecklistsForPeriod(COLL_TALLER, desde, hasta),
+      loadEquipMap(COLL_TALLER),
+    ]);
+
+    const faenas = checklists.length === 0
+      ? []
+      : buildFaenasConDatos(checklists, equipMap, desde, hasta);
+
+    // Serializar: descartar los checklists pesados y normalizar los Date de turnos
+    const out = faenas.map(f => ({
+      nave: f.nave,
+      puerto: f.puerto,
+      fechaInicio: f.fechaInicio,
+      fechaFin: f.fechaFin,
+      diasFaena: f.diasFaena,
+      target: f.target,
+      targetTotal: f.targetTotal,
+      realizados: f.realizados,
+      pct: f.pct,
+      operadores: f.operadores || [],
+      equipos: f.equipos || [],
+      turnos: (f.turnos || []).map(t => ({
+        inicio: t.inicio instanceof Date ? t.inicio.toISOString() : t.inicio,
+        fin: t.fin instanceof Date ? t.fin.toISOString() : t.fin,
+        equiposUnicos: t.equiposUnicos,
+        fecha: t.fechaRepresentativa,
+      })),
+    }));
+
+    return res.status(200).json({ ok: true, periodo: { desde, hasta }, faenas: out });
+  } catch (err) {
+    console.error("Error faenas-json:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
