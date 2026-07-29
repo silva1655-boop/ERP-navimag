@@ -120,9 +120,20 @@ const SEED_EQUIPMENT = [
 { id:"gru41",  code:"GRU-41",  name:"Grúa 41",     type:"Grúa Portuaria",   location:"Muelle",         criticality:"A", status:"operativo", lastMaint:"", nextMaint:"", hours:0 },
 ];
 
-// IDs de grúas arrendadas — mantenimiento a cargo de Tattersall
-const GRUAS_ARRENDADAS = ["gru39","gru40","gru41"];
-const isGruaArrendada = (equipId) => GRUAS_ARRENDADAS.includes(equipId);
+// Grúas PROPIAS de Navimag — mantenidas por Taller con flujo normal (sin cambios)
+const GRUAS_NAVIMAG_IDS = ["gru39","gru40","gru41"];
+const GRUAS_NAVIMAG_CODES = ["GRU-39","GRU-40","GRU-41"];
+// Detecta si un equipo es una grúa arrendada: cualquier grúa (por tipo o code "GRU-")
+// que NO sea GRU-39/40/41. Recibe el objeto equipo completo.
+const isGruaArrendada = (equip) => {
+  if(!equip) return false;
+  const esGrua=(equip.type||"").toLowerCase().includes("grúa")||(equip.type||"").toLowerCase().includes("grua")||(equip.code||"").startsWith("GRU-");
+  if(!esGrua) return false;
+  const esNavimag=GRUAS_NAVIMAG_IDS.includes(equip.id)||GRUAS_NAVIMAG_CODES.includes(equip.code);
+  return !esNavimag;
+};
+// Variante para cuando solo se tiene el equipId (busca en la lista de equipos)
+const isGruaArrendadaById = (equipId, equipList) => isGruaArrendada((equipList||[]).find(e=>e.id===equipId));
 const RESPONSABLE_ARRIENDO = "Tattersall";
 
 const SEED_EQUIPMENT_MARITIMO = [
@@ -1419,6 +1430,7 @@ en_proceso:    {label:"En Ejecución",  cls:"text-amber-700   bg-amber-50    bor
 completada:    {label:"Completada",    cls:"text-emerald-700 bg-emerald-50  border-emerald-200"},
 cancelada:     {label:"Cancelada",     cls:"text-red-700     bg-red-50      border-red-200"    },
 aprobada:      {label:"Aprobada",      cls:"text-emerald-700 bg-emerald-50  border-emerald-200"},
+coordinada_externo: {label:"Coordinado c/ Tattersall", cls:"text-orange-700 bg-orange-50 border-orange-200"},
 rechazada:     {label:"Rechazada",     cls:"text-red-700     bg-red-50      border-red-200"    },
 revisado:      {label:"Revisado",      cls:"text-blue-700    bg-blue-50     border-blue-200"   },
 planificada:          {label:"Planificada",        cls:"text-purple-700  bg-purple-50   border-purple-200" },
@@ -4561,7 +4573,6 @@ if(activeModule!=="maritimo"&&esEjecutor&&w.status==="cancelada") return false;
     if(flt.equipId&&equipVista==="completada"&&w.status!=="completada") return false;
     if(flt.assignedTo&&w.assignedTo!==flt.assignedTo) return false;
     if(esEjecutor){
-      if(w.esArriendoExterno) return false;
       if(activeModule==="maritimo"){
         if(vistaMecanico==="abiertas_asig"){
           if(["completada","cancelada"].includes(w.status)) return false;
@@ -6047,15 +6058,6 @@ style={sel?.id===w.id?{borderColor:NV.blue,background:"#EBF4FF"}:sem?{borderColo
 
       {/* ── CUERPO SCROLLEABLE ─────────────────────────────── */}
       <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
-
-        {cur.esArriendoExterno&&(
-          <div className="bg-orange-50 border border-orange-200 rounded-xl px-3 py-2 flex items-center gap-2 text-sm">
-            <span>🏗️</span>
-            <span className="text-orange-700 font-semibold">
-              Mantenimiento externo — {cur.responsableExterno}
-            </span>
-          </div>
-        )}
 
         {/* SECCIÓN ORIGEN */}
         {(()=>{
@@ -12197,9 +12199,9 @@ const [rejectComment,setRejectComment]=useState("");
 const [activeTab,setActiveTab]=useState("todas");
 const canCreate=user.role==="operaciones"||user.role==="supervisor";
 const visible=(()=>{
-  if(user.role==="supervisor") return requests;
+  if(user.role==="supervisor") return requests.filter(r=>!r.esGruaArrendada);
   if(user.role==="operaciones") return requests.filter(r=>r.source!=="inspeccion");
-  return requests.filter(r=>r.requestedBy===user.id&&!isGruaArrendada(r.equipId));
+  return requests.filter(r=>r.requestedBy===user.id&&!r.esGruaArrendada);
 })();
 const filtered=visible.filter(r=>{
 if(flt.userId&&r.requestedBy!==flt.userId)return false;
@@ -12213,46 +12215,23 @@ const uniqueRequesters=[...new Map(visible.map(r=>r.requestedBy).filter(Boolean)
   const createReq=async()=>{
   if(!form.equipId||!form.title)return;
   const statusInicial=user.role==="operaciones"?"pendiente":"ops_pendiente";
-  const nr={id:uid(),...form,status:statusInicial,source:"solicitud",requestedBy:user.id,requestedAt:new Date().toISOString(),approvedBy:user.role==="operaciones"?user.id:null,approvedAt:user.role==="operaciones"?new Date().toISOString():null,otId:null};
+  const eqReq=equip.find(e=>e.id===form.equipId);
+  const esGruaArr=isGruaArrendada(eqReq);
+  const nr={id:uid(),...form,status:statusInicial,source:"solicitud",requestedBy:user.id,requestedAt:new Date().toISOString(),approvedBy:user.role==="operaciones"?user.id:null,approvedAt:user.role==="operaciones"?new Date().toISOString():null,otId:null,esGruaArrendada:esGruaArr,responsableExterno:esGruaArr?RESPONSABLE_ARRIENDO:null,destino:esGruaArr?"operaciones":"taller"};
   const updated=[...requests,nr];
   setData(d=>({...d,requests:updated}));
   await saveRequestIndividual(nr,{},activeCOLL);
   setShowForm(false);
   setForm({equipId:"",title:"",description:"",priority:"media",subsistema:"",componente:"",photos:[]});
 };;
-const approveArriendo=async(req)=>{
-  const eq=equip.find(e=>e.id===req.equipId);
-  const priority=req.priority==="alta"||eq?.criticality==="A"?"alta":req.priority;
-  const isInsp=req.source==="inspeccion";
-  const newOT={
-    id:uid(),code:nextOTCode(wos),type:"correctivo",
-    log:[{ts:new Date().toISOString(),action:"creada",user:user.name,detail:`OT generada desde solicitud · Mantenimiento externo: ${RESPONSABLE_ARRIENDO}`}],
-    equipId:req.equipId,planId:null,
-    title:`${isInsp?"Inspección":"Reparación"} ${eq?.name||""} - ${req.title}`,
-    priority,status:"en_proceso",
-    assignedTo:null,
-    assignedToName:RESPONSABLE_ARRIENDO,
-    responsableExterno:RESPONSABLE_ARRIENDO,
-    esArriendoExterno:true,
-    createdAt:new Date().toISOString(),
-    scheduledDate:new Date().toISOString().slice(0,10),
-    estimatedHours:priority==="alta"?4:2,
-    actualHours:null,
-    description:req.description,
-    observations:"",parts:[],
-    source:req.source||"solicitud",
-    reqId:req.id,
-    urgenciaBacklog:"programable"
-  };
-  const updW=[...wos,newOT];
-  const updR=requests.map(r=>r.id===req.id?{...r,status:"aprobada",approvedBy:user.id,otId:newOT.id}:r);
-  setData(d=>({...d,wos:updW,requests:updR}));
-  saveData("workOrders",updW);
-  await saveRequestIndividual(req,{status:"aprobada",approvedBy:user.id,otId:newOT.id},activeCOLL);
-  alert(`✅ OT ${newOT.code} generada — Mantenimiento externo: ${RESPONSABLE_ARRIENDO}`);
+const marcarCoordinado=async(req)=>{
+  const patch={status:"coordinada_externo",approvedBy:user.id,approvedAt:new Date().toISOString()};
+  const updR=requests.map(r=>r.id===req.id?{...r,...patch}:r);
+  setData(d=>({...d,requests:updR}));
+  await saveRequestIndividual(req,patch,activeCOLL);
+  alert(`✅ Solicitud marcada como coordinada con ${RESPONSABLE_ARRIENDO}`);
 };
 const approve=req=>{
-  if(isGruaArrendada(req.equipId)){approveArriendo(req);return;}
   setPendingApproval(req);
   setSelectedMechanic(users.find(u=>u.role==="mecanico")?.id||"");
   setScheduledDate(new Date().toISOString().slice(0,10));
@@ -12483,9 +12462,9 @@ return(
     Reporte Inspección
   </span>
 )}
-{isGruaArrendada(r.equipId)&&(
-  <span className="text-xs px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 border border-orange-200 font-semibold flex items-center gap-1">
-    🏗️ Arriendo Tattersall
+{r.esGruaArrendada&&(
+  <span className="text-xs px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 border border-orange-200 font-semibold">
+    🏗️ Tattersall
   </span>
 )}
 {r.source==="inspeccion"&&(r.status==="pendiente"||r.status==="ops_aprobada")&&user.role==="supervisor"&&(
@@ -12497,18 +12476,24 @@ return(
 <div className="flex items-center gap-1.5 flex-shrink-0">
 <button onClick={()=>setSelReqId(r.id)} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-gray-600 transition"><Eye size={11}/>Ver Detalle</button>
 {user.role==="operaciones"&&r.status==="ops_pendiente"&&(r.source==="checklist"||r.source==="solicitud")&&(
-  <button onClick={()=>{setOpsPendingReq(r);setOpsEquipoFuera(false);setShowOpsModal(true);}}
-    className="flex items-center gap-1.5 text-white text-xs px-3 py-1.5 rounded-lg hover:opacity-90 transition font-medium"
-    style={{background:"#16a34a"}}>
-    <ClipboardList size={12}/>Procesar
-  </button>
+  r.esGruaArrendada?(
+    <button onClick={()=>marcarCoordinado(r)}
+      className="flex items-center gap-1.5 text-white text-xs px-3 py-1.5 rounded-lg hover:opacity-90 transition font-medium"
+      style={{background:"#EA580C"}}>
+      <MessageCircle size={12}/>Marcar coordinado
+    </button>
+  ):(
+    <button onClick={()=>{setOpsPendingReq(r);setOpsEquipoFuera(false);setShowOpsModal(true);}}
+      className="flex items-center gap-1.5 text-white text-xs px-3 py-1.5 rounded-lg hover:opacity-90 transition font-medium"
+      style={{background:"#16a34a"}}>
+      <ClipboardList size={12}/>Procesar
+    </button>
+  )
 )}
 {user.role==="supervisor"&&(r.status==="pendiente"||r.status==="ops_aprobada")&&(
   <>
     <button onClick={()=>{
-      if(isGruaArrendada(r.equipId)){
-        approve(r);
-      } else if(r.source==="inspeccion"){
+      if(r.source==="inspeccion"){
         setSupervisorApproveModal(r);
       } else {
         approve(r);
@@ -12535,6 +12520,12 @@ return(
 </div>
 {/* Title */}
 <p className="text-gray-900 font-bold text-sm leading-tight">{r.title}</p>
+{r.esGruaArrendada&&(
+  <div className="flex items-center gap-1.5 text-xs font-semibold text-orange-700 bg-orange-50 border border-orange-200 rounded-lg px-2 py-1">
+    <span>🏗️</span>
+    <span>Grúa arrendada — coordinar con {r.responsableExterno||RESPONSABLE_ARRIENDO}</span>
+  </div>
+)}
 {/* Subsistema + Componente compact grid */}
 {(r.subsistema||r.componente)&&(
 <div className="grid grid-cols-2 gap-2 text-xs">
@@ -12647,17 +12638,29 @@ return(
   <div className="border-t border-gray-100 pt-4 space-y-2">
     <p className="text-gray-500 text-xs font-semibold uppercase tracking-wide mb-2">Acciones</p>
     <div className="grid grid-cols-2 gap-2">
-      <button
-        onClick={()=>{
-          setSelReqId(null);
-          setOpsPendingReq(r);
-          setOpsEquipoFuera(false);
-          setShowOpsModal(true);
-        }}
-        className="flex items-center justify-center gap-2 py-2.5 rounded-xl text-white text-sm font-semibold transition hover:opacity-90"
-        style={{background:"#16a34a"}}>
-        <Check size={15}/>Procesar
-      </button>
+      {r.esGruaArrendada?(
+        <button
+          onClick={()=>{
+            setSelReqId(null);
+            marcarCoordinado(r);
+          }}
+          className="flex items-center justify-center gap-2 py-2.5 rounded-xl text-white text-sm font-semibold transition hover:opacity-90"
+          style={{background:"#EA580C"}}>
+          <MessageCircle size={15}/>Marcar coordinado
+        </button>
+      ):(
+        <button
+          onClick={()=>{
+            setSelReqId(null);
+            setOpsPendingReq(r);
+            setOpsEquipoFuera(false);
+            setShowOpsModal(true);
+          }}
+          className="flex items-center justify-center gap-2 py-2.5 rounded-xl text-white text-sm font-semibold transition hover:opacity-90"
+          style={{background:"#16a34a"}}>
+          <Check size={15}/>Procesar
+        </button>
+      )}
       <button
         onClick={()=>{
           setSelReqId(null);
@@ -16058,6 +16061,7 @@ const naCount=items.filter(it=>it.status==="na").length;
         }
         return true;
       });
+      const esGruaArrChecklist=isGruaArrendada(eq);
       const newSolicitudes=issueItemsFiltered.map(it=>({
         id:uid(),
         title:`[${it.status==="malo"?"MALO":"REGULAR"}] ${it.name} — ${eq?.code}`,
@@ -16073,7 +16077,10 @@ const naCount=items.filter(it=>it.status==="na").length;
         source:"checklist",
         checklistId:newCL.id,
         checklistItemId:it.id,
-        photos:it.photos||[]
+        photos:it.photos||[],
+        esGruaArrendada:esGruaArrChecklist,
+        responsableExterno:esGruaArrChecklist?RESPONSABLE_ARRIENDO:null,
+        destino:esGruaArrChecklist?"operaciones":"taller"
       }));
       // Solicitudes son secundarias — su falla no cancela el checklist ya guardado
       Promise.all(newSolicitudes.map(sol=>
@@ -17183,6 +17190,7 @@ if(step==="post"){
           !["completada","rechazada","cancelada","ops_rechazada"].includes(r.status)
         );
         if(!existingPostReq){
+          const esGruaArrPost=isGruaArrendada(eqPost);
           const newReq={
             id:uid(),
             title:`[POST-OP] Daño detectado — ${eqPost?.code}`,
@@ -17197,6 +17205,9 @@ if(step==="post"){
             source:"checklist",
             checklistId:newPostCL.id,
             photos:uploadedDamage,
+            esGruaArrendada:esGruaArrPost,
+            responsableExterno:esGruaArrPost?RESPONSABLE_ARRIENDO:null,
+            destino:esGruaArrPost?"operaciones":"taller",
           };
           saveRequestIndividual(newReq,{},COLL2)
             .then(()=>setData(d=>({...d,requests:[...(d.requests||[]),newReq]})))
