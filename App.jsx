@@ -16,6 +16,20 @@ import { ref, uploadString, getDownloadURL } from "firebase/storage";
 import { doc, setDoc, onSnapshot, getDoc, runTransaction, deleteDoc } from "firebase/firestore";
 import LogoNavimag from "./logo_navimag.png";
 
+
+// Filtrar usuarios por módulo activo
+const getUsersByModule = (users, modulo) => {
+  if(!modulo || modulo === 'sgn') return users;
+  return (users||[]).filter(u => {
+    // Admin siempre aparece en todos los módulos
+    if(u.role === 'supervisor' && u.authRole === 'ADMIN') return true;
+    // Sin modulos definidos → aparece en todos (legacy)
+    if(!u.modulos || u.modulos.length === 0) return true;
+    // Filtrar por módulo
+    return u.modulos.includes(modulo);
+  });
+};
+
 // ── MANTEK AUTH INTEGRATION ──────────────────────────
 const AUTH_URL = import.meta.env.VITE_AUTH_URL || 'https://mantek-auth.vercel.app';
 
