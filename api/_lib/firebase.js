@@ -12,29 +12,29 @@ let _db = null;
 
 function getDb() {
   if (_db) return _db;
-
-  const projectId   = process.env.FIREBASE_PROJECT_ID;
-  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-
-  // Vercel puede almacenar la clave con \n literales, saltos reales o comillas externas
-  let privateKey = process.env.FIREBASE_PRIVATE_KEY || "";
-  if (privateKey.startsWith('"')) privateKey = privateKey.slice(1);
-  if (privateKey.endsWith('"'))   privateKey = privateKey.slice(0, -1);
-  privateKey = privateKey.replace(/\\n/g, "\n");
-
-  if (!projectId || !clientEmail || !privateKey) {
-    throw new Error(
-      `Variables de entorno incompletas: ` +
-      `FIREBASE_PROJECT_ID=${!!projectId}, ` +
-      `FIREBASE_CLIENT_EMAIL=${!!clientEmail}, ` +
-      `FIREBASE_PRIVATE_KEY=${!!privateKey}`
-    );
+  let credential;
+  if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+    try {
+      const sa = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+      credential = cert(sa);
+    } catch(e) {
+      throw new Error("FIREBASE_SERVICE_ACCOUNT JSON invalido: " + e.message);
+    }
+  } else {
+    const projectId   = process.env.FIREBASE_PROJECT_ID;
+    const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+    let privateKey    = process.env.FIREBASE_PRIVATE_KEY || "";
+    if (privateKey.startsWith('"')) privateKey = privateKey.slice(1);
+    if (privateKey.endsWith('"'))   privateKey = privateKey.slice(0, -1);
+    privateKey = privateKey.replace(/\n/g, "\n");
+    if (!projectId || !clientEmail || !privateKey) {
+      throw new Error("Variables Firebase Admin incompletas");
+    }
+    credential = cert({ projectId, clientEmail, privateKey });
   }
-
   if (!getApps().length) {
-    initializeApp({ credential: cert({ projectId, clientEmail, privateKey }) });
+    initializeApp({ credential });
   }
-
   _db = getFirestore();
   return _db;
 }
