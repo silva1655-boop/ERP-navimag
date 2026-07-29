@@ -120,6 +120,11 @@ const SEED_EQUIPMENT = [
 { id:"gru41",  code:"GRU-41",  name:"Grúa 41",     type:"Grúa Portuaria",   location:"Muelle",         criticality:"A", status:"operativo", lastMaint:"", nextMaint:"", hours:0 },
 ];
 
+// IDs de grúas arrendadas — mantenimiento a cargo de Tattersall
+const GRUAS_ARRENDADAS = ["gru39","gru40","gru41"];
+const isGruaArrendada = (equipId) => GRUAS_ARRENDADAS.includes(equipId);
+const RESPONSABLE_ARRIENDO = "Tattersall";
+
 const SEED_EQUIPMENT_MARITIMO = [
   { id:"mpbb",  code:"EQM-0001", name:"Motor Principal BB",        type:"Motor Principal",    location:"Sala de Máquinas", criticality:"alto", status:"operativo", lastMaint:"", nextMaint:"", hours:32049 },
   { id:"mpeb",  code:"EQM-0002", name:"Motor Principal EB",        type:"Motor Principal",    location:"Sala de Máquinas", criticality:"alto", status:"operativo", lastMaint:"", nextMaint:"", hours:31970 },
@@ -4556,6 +4561,7 @@ if(activeModule!=="maritimo"&&esEjecutor&&w.status==="cancelada") return false;
     if(flt.equipId&&equipVista==="completada"&&w.status!=="completada") return false;
     if(flt.assignedTo&&w.assignedTo!==flt.assignedTo) return false;
     if(esEjecutor){
+      if(w.esArriendoExterno) return false;
       if(activeModule==="maritimo"){
         if(vistaMecanico==="abiertas_asig"){
           if(["completada","cancelada"].includes(w.status)) return false;
@@ -6041,6 +6047,15 @@ style={sel?.id===w.id?{borderColor:NV.blue,background:"#EBF4FF"}:sem?{borderColo
 
       {/* ── CUERPO SCROLLEABLE ─────────────────────────────── */}
       <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+
+        {cur.esArriendoExterno&&(
+          <div className="bg-orange-50 border border-orange-200 rounded-xl px-3 py-2 flex items-center gap-2 text-sm">
+            <span>🏗️</span>
+            <span className="text-orange-700 font-semibold">
+              Mantenimiento externo — {cur.responsableExterno}
+            </span>
+          </div>
+        )}
 
         {/* SECCIÓN ORIGEN */}
         {(()=>{
@@ -12184,7 +12199,7 @@ const canCreate=user.role==="operaciones"||user.role==="supervisor";
 const visible=(()=>{
   if(user.role==="supervisor") return requests;
   if(user.role==="operaciones") return requests.filter(r=>r.source!=="inspeccion");
-  return requests.filter(r=>r.requestedBy===user.id);
+  return requests.filter(r=>r.requestedBy===user.id&&!isGruaArrendada(r.equipId));
 })();
 const filtered=visible.filter(r=>{
 if(flt.userId&&r.requestedBy!==flt.userId)return false;
@@ -12205,7 +12220,39 @@ const uniqueRequesters=[...new Map(visible.map(r=>r.requestedBy).filter(Boolean)
   setShowForm(false);
   setForm({equipId:"",title:"",description:"",priority:"media",subsistema:"",componente:"",photos:[]});
 };;
+const approveArriendo=async(req)=>{
+  const eq=equip.find(e=>e.id===req.equipId);
+  const priority=req.priority==="alta"||eq?.criticality==="A"?"alta":req.priority;
+  const isInsp=req.source==="inspeccion";
+  const newOT={
+    id:uid(),code:nextOTCode(wos),type:"correctivo",
+    log:[{ts:new Date().toISOString(),action:"creada",user:user.name,detail:`OT generada desde solicitud · Mantenimiento externo: ${RESPONSABLE_ARRIENDO}`}],
+    equipId:req.equipId,planId:null,
+    title:`${isInsp?"Inspección":"Reparación"} ${eq?.name||""} - ${req.title}`,
+    priority,status:"en_proceso",
+    assignedTo:null,
+    assignedToName:RESPONSABLE_ARRIENDO,
+    responsableExterno:RESPONSABLE_ARRIENDO,
+    esArriendoExterno:true,
+    createdAt:new Date().toISOString(),
+    scheduledDate:new Date().toISOString().slice(0,10),
+    estimatedHours:priority==="alta"?4:2,
+    actualHours:null,
+    description:req.description,
+    observations:"",parts:[],
+    source:req.source||"solicitud",
+    reqId:req.id,
+    urgenciaBacklog:"programable"
+  };
+  const updW=[...wos,newOT];
+  const updR=requests.map(r=>r.id===req.id?{...r,status:"aprobada",approvedBy:user.id,otId:newOT.id}:r);
+  setData(d=>({...d,wos:updW,requests:updR}));
+  saveData("workOrders",updW);
+  await saveRequestIndividual(req,{status:"aprobada",approvedBy:user.id,otId:newOT.id},activeCOLL);
+  alert(`✅ OT ${newOT.code} generada — Mantenimiento externo: ${RESPONSABLE_ARRIENDO}`);
+};
 const approve=req=>{
+  if(isGruaArrendada(req.equipId)){approveArriendo(req);return;}
   setPendingApproval(req);
   setSelectedMechanic(users.find(u=>u.role==="mecanico")?.id||"");
   setScheduledDate(new Date().toISOString().slice(0,10));
@@ -12436,6 +12483,11 @@ return(
     Reporte Inspección
   </span>
 )}
+{isGruaArrendada(r.equipId)&&(
+  <span className="text-xs px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 border border-orange-200 font-semibold flex items-center gap-1">
+    🏗️ Arriendo Tattersall
+  </span>
+)}
 {r.source==="inspeccion"&&(r.status==="pendiente"||r.status==="ops_aprobada")&&user.role==="supervisor"&&(
   <span className="px-2 py-0.5 rounded-full border text-xs font-bold text-red-700 bg-red-50 border-red-200 animate-pulse">
     ⚠️ Requiere acción
@@ -12454,7 +12506,9 @@ return(
 {user.role==="supervisor"&&(r.status==="pendiente"||r.status==="ops_aprobada")&&(
   <>
     <button onClick={()=>{
-      if(r.source==="inspeccion"){
+      if(isGruaArrendada(r.equipId)){
+        approve(r);
+      } else if(r.source==="inspeccion"){
         setSupervisorApproveModal(r);
       } else {
         approve(r);
