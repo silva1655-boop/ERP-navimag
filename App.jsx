@@ -4530,7 +4530,7 @@ const role=user.role;
   const esEjecutor=activeModule==="maritimo"?true:["mecanico","jefe_maquinas","operaciones"].includes(role);
   // Helper: en Marítimo el Badge muestra Abierta/En Ejecución/Completada
   const marBadge=s=>activeModule==="maritimo"&&MAR_ST[s]?{label:MAR_ST[s].label,cls:MAR_ST[s].cls}:{};
-  const mechanics=users.filter(u=>u.role==="mecanico"&&!u.deleted);
+  const mechanics=getUsersByModule(users,activeModule).filter(u=>u.role==="mecanico"&&!u.deleted);
   const thisMonth=new Date().toISOString().slice(0,7);
 const getSemaforo=(w)=>{
   if(["completada","cancelada"].includes(w.status)) return null;
@@ -5655,7 +5655,7 @@ return(
                 }}
                 className="text-xs border border-gray-300 rounded-lg px-2 py-1 bg-white text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-400 min-w-[140px]">
                 <option value="">Asignar responsable...</option>
-                {(users||[]).filter(u=>["mecanico","supervisor"].includes(u.role)).map(u=>(
+                {getUsersByModule(users||[],activeModule).filter(u=>["mecanico","supervisor"].includes(u.role)).map(u=>(
                   <option key={u.id} value={u.id}>{u.name}</option>
                 ))}
               </select>
@@ -5695,7 +5695,7 @@ return(
           }}
           className="text-xs border border-gray-300 rounded-lg px-2 py-1 bg-white text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-400 min-w-[120px]">
           <option value="">Asignar...</option>
-          {(users||[]).filter(u=>["mecanico","supervisor"].includes(u.role)).map(u=>(
+          {getUsersByModule(users||[],activeModule).filter(u=>["mecanico","supervisor"].includes(u.role)).map(u=>(
             <option key={u.id} value={u.id}>{u.name}</option>
           ))}
         </select>
@@ -6761,7 +6761,7 @@ style={sel?.id===w.id?{borderColor:NV.blue,background:"#EBF4FF"}:sem?{borderColo
           <label className="text-gray-500 text-xs font-medium mb-1.5 block">RESPONSABLE</label>
           <select value={newOTForm.assignedTo} onChange={e=>setNewOTForm(f=>({...f,assignedTo:e.target.value}))} className={sCls}>
             <option value="">Sin asignar</option>
-            {users.filter(u=>(u.role==="mecanico"||u.role==="supervisor")&&!u.deleted).map(u=><option key={u.id} value={u.id}>{u.name} ({ROLE_CFG[u.role]?.label||u.role})</option>)}
+            {getUsersByModule(users,activeModule).filter(u=>(u.role==="mecanico"||u.role==="supervisor")&&!u.deleted).map(u=><option key={u.id} value={u.id}>{u.name} ({ROLE_CFG[u.role]?.label||u.role})</option>)}
           </select>
         </div>
         <div>
@@ -9130,7 +9130,7 @@ if(isMaritimo){
           <label className={lbl}>RESPONSABLE</label>
           <select value={editPlanAssignForm.responsable||""} onChange={e=>setEditPlanAssignForm(f=>({...f,responsable:e.target.value}))} className={sCls}>
             <option value="">Sin responsable</option>
-            {(users||[]).filter(u=>["mecanico","supervisor"].includes(u.role)).map(u=>(
+            {getUsersByModule(users||[],activeModule).filter(u=>["mecanico","supervisor"].includes(u.role)).map(u=>(
               <option key={u.id} value={u.id}>{u.name} ({u.role})</option>
             ))}
           </select>
@@ -9165,7 +9165,7 @@ if(isMaritimo){
         <div><label className={lbl}>RESPONSABLE</label>
           <select value={assignForm.responsable} onChange={e=>setAssignForm(f=>({...f,responsable:e.target.value}))} className={sCls}>
             <option value="">Selecciona responsable...</option>
-            {(users||[]).filter(u=>["mecanico","supervisor"].includes(u.role)).map(u=>(<option key={u.id} value={u.id}>{u.name} ({u.role})</option>))}
+            {getUsersByModule(users||[],activeModule).filter(u=>["mecanico","supervisor"].includes(u.role)).map(u=>(<option key={u.id} value={u.id}>{u.name} ({u.role})</option>))}
           </select>
         </div>
       </div>
@@ -9189,7 +9189,7 @@ if(isMaritimo){
           <div><label className={lbl}>MECÁNICO ASIGNADO *</label>
             <select value={assignOTMechanic} onChange={e=>setAssignOTMechanic(e.target.value)} className={sCls}>
               <option value="">Selecciona mecánico...</option>
-              {(users||[]).filter(u=>["mecanico","supervisor"].includes(u.role)).map(u=>(<option key={u.id} value={u.id}>{u.name} ({u.role})</option>))}
+              {getUsersByModule(users||[],activeModule).filter(u=>["mecanico","supervisor"].includes(u.role)).map(u=>(<option key={u.id} value={u.id}>{u.name} ({u.role})</option>))}
             </select>
           </div>
           <div><label className={lbl}>FECHA PROGRAMADA</label><input type="date" value={assignOTDate} onChange={e=>setAssignOTDate(e.target.value)} className={iCls}/></div>
@@ -11055,10 +11055,10 @@ return(
       </div>
       <div>
         <label className="text-gray-500 text-xs font-medium mb-2 block">ASIGNAR MECÁNICO *</label>
-        {users.filter(u=>u.role==="mecanico"&&!u.deleted).length===0
+        {getUsersByModule(users,activeModule).filter(u=>u.role==="mecanico"&&!u.deleted).length===0
           ?<p className="text-red-500 text-xs p-3 bg-red-50 rounded-lg border border-red-200">No hay mecánicos registrados. Crea un usuario con rol Mecánico primero.</p>
           :<div className="space-y-2">
-            {users.filter(u=>u.role==="mecanico"&&!u.deleted).map(mec=>{
+            {getUsersByModule(users,activeModule).filter(u=>u.role==="mecanico"&&!u.deleted).map(mec=>{
               const openOTs=wos.filter(w=>w.assignedTo===mec.id&&["asignada","en_proceso"].includes(w.status));
               const isSelected=planOTMechanic===mec.id;
               return(
@@ -12159,7 +12159,7 @@ async function saveRequestIndividual(req,patch,coll){
     return updated;
   }
 }
-function Requests({user,data,setData,saveData,appendToArray,updateInArray,activeCOLL}){
+function Requests({user,data,setData,saveData,appendToArray,updateInArray,activeCOLL,activeModule}){
 const {requests=[],equip=[],users=[],wos=[]}=data;
 const [showForm,setShowForm]=useState(false);
   const [form,setForm]=useState({equipId:"",title:"",description:"",priority:"media",subsistema:"",componente:"",photos:[]});
@@ -12656,10 +12656,10 @@ return(
       </div>
       <div>
         <label className="text-gray-500 text-xs font-medium mb-2 block">ASIGNAR MECÁNICO *</label>
-        {users.filter(u=>u.role==="mecanico"&&!u.deleted).length===0
+        {getUsersByModule(users,activeModule).filter(u=>u.role==="mecanico"&&!u.deleted).length===0
           ?<p className="text-red-500 text-xs">No hay mecánicos registrados. Agrega usuarios con rol Mecánico primero.</p>
           :<div className="space-y-2">
-            {users.filter(u=>u.role==="mecanico"&&!u.deleted).map(mec=>{
+            {getUsersByModule(users,activeModule).filter(u=>u.role==="mecanico"&&!u.deleted).map(mec=>{
               const openOTs=wos.filter(w=>w.assignedTo===mec.id&&["asignada","en_proceso"].includes(w.status));
               const isSelected=selectedMechanic===mec.id;
               return(
@@ -12962,7 +12962,7 @@ return(
         <label className="text-gray-500 text-xs font-medium mb-1 block">MECÁNICO ASIGNADO *</label>
         <select value={supForm.mechanic} onChange={e=>setSupForm(f=>({...f,mechanic:e.target.value}))} className={sCls}>
           <option value="">Seleccionar...</option>
-          {users.filter(u=>u.role==="mecanico"&&!u.deleted).map(u=>(
+          {getUsersByModule(users,activeModule).filter(u=>u.role==="mecanico"&&!u.deleted).map(u=>(
             <option key={u.id} value={u.id}>{u.name}</option>
           ))}
         </select>
@@ -13811,8 +13811,10 @@ function OperadoresPage({user,data,setData,saveData}){
 }
 
 // ─── USERS ───────────────────────────────────────────────────────────────────
-function UsersPage({data,setData,currentUser,saveData,appendToArray,updateInArray}){
+function UsersPage({data,setData,currentUser,saveData,appendToArray,updateInArray,activeModule}){
 const {users}=data;
+// Supervisor ve todos los usuarios sin importar el módulo; el resto solo los de su módulo activo
+const visibleUsers=currentUser?.role==="supervisor"?users:getUsersByModule(users,activeModule);
 const [showForm,setShowForm]=useState(false);
 const [editTarget,setEditTarget]=useState(null);
 const [confirmDel,setConfirmDel]=useState(null);
@@ -13900,7 +13902,7 @@ return(
   <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
     {["supervisor","operaciones","mecanico","operador"].map(role=>{
       const cfg=ROLE_CFG[role];
-      const count=users.filter(u=>u.role===role&&!u.deleted).length;
+      const count=visibleUsers.filter(u=>u.role===role&&!u.deleted).length;
       const Icon=cfg.icon;
       return(
         <div key={role} className={`${card} p-4 flex items-center gap-3`}>
@@ -13919,7 +13921,7 @@ return(
 
   {/* Users list by role */}
   {["supervisor","operaciones","mecanico","operador"].map(role=>{
-    const roleUsers=users.filter(u=>u.role===role);
+    const roleUsers=visibleUsers.filter(u=>u.role===role);
     if(roleUsers.length===0) return null;
     const cfg=ROLE_CFG[role];
     const Icon=cfg.icon;
@@ -25743,14 +25745,14 @@ workorders:    <WorkOrders    user={user} data={data} setData={setData} saveData
 equipment:     <Equipment     user={user} data={data} setData={setData} saveData={saveData} appendToArray={appendToArray} updateInArray={updateInArray} activeModule={activeModule}/>,
 plans:         <Plans         user={user} data={data} setData={setData} saveData={saveData} appendToArray={appendToArray} updateInArray={updateInArray} activeModule={activeModule} activeBarco={activeBarco}/>,
 indicadores:   <Indicadores   data={data}/>,
-requests:      <Requests      user={user} data={data} setData={setData} saveData={saveData} appendToArray={appendToArray} updateInArray={updateInArray} activeCOLL={activeCOLL}/>,
+requests:      <Requests      user={user} data={data} setData={setData} saveData={saveData} appendToArray={appendToArray} updateInArray={updateInArray} activeCOLL={activeCOLL} activeModule={activeModule}/>,
 notifications: <Notifications user={user} data={data} onSeen={()=>setSeenNotifs(true)}/>,
 checklist:     <Checklist     user={user} data={data} setData={setData} activeModule={activeModule} activeBarco={activeBarco} saveData={saveData} appendToArray={appendToArray} updateInArray={updateInArray}/>,
 historial_postop: <HistorialPostOperacional data={data}/>,
 dashboard_checklist: <DashboardChecklist data={data} activeModule={activeModule}/>,
 reports:       <Reports       user={user} data={data}/>,
 deviaciones:   <DeviationReports user={user} data={data} setData={setData} saveData={saveData} appendToArray={appendToArray} updateInArray={updateInArray} activeCOLL={activeCOLL}/>,
-users:         <UsersPage     data={data} setData={setData} currentUser={user} saveData={saveData} appendToArray={appendToArray} updateInArray={updateInArray}/>,
+users:         <UsersPage     data={data} setData={setData} currentUser={user} saveData={saveData} appendToArray={appendToArray} updateInArray={updateInArray} activeModule={activeModule}/>,
 operadores:    <OperadoresPage user={user} data={data} setData={setData} saveData={saveData}/>,
 vessels:       <VesselsPage   user={user} data={data} setData={setData}/>,
 voyages:       <VoyagesPage   user={user} data={data} setData={setData}/>,
