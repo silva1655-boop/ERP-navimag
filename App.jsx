@@ -2966,6 +2966,190 @@ const proximosMantDB=equip
 
 const actividadReciente=getActividadReciente(data);
 
+const rankingOperadores=useMemo(()=>{
+  const conteo={};
+  (data.checklists||[]).forEach(cl=>{
+    const op=cl.operatorName||cl.operador||"Desconocido";
+    if(!conteo[op]) conteo[op]={nombre:op,total:0,pre:0,post:0};
+    conteo[op].total++;
+    if(cl.type==="pre_operacional"||cl.inspectionType==="pre") conteo[op].pre++;
+    if(cl.type==="post_operacional"||cl.inspectionType==="post") conteo[op].post++;
+  });
+  return Object.values(conteo).sort((a,b)=>b.total-a.total).slice(0,10);
+},[data.checklists]);
+
+const equiposConHoro=useMemo(()=>{
+  return (data.equip||[])
+    .filter(e=>!e.deleted&&e.type!=="Grúa Portuaria")
+    .map(e=>({
+      id:e.id,code:e.code,name:e.name,type:e.type,horas:e.hours||0,
+      ultimaLectura:(data.hourmeterReadings||[])
+        .filter(r=>r.equipId===e.id)
+        .sort((a,b)=>new Date(b.readingDate||b.timestamp)-new Date(a.readingDate||a.timestamp))[0]||null,
+    }))
+    .sort((a,b)=>(b.horas||0)-(a.horas||0));
+},[data.equip,data.hourmeterReadings]);
+
+const solicitudesPendientesOps=useMemo(()=>{
+  return (data.requests||[])
+    .filter(r=>r.status==="ops_pendiente"||r.status==="pendiente"||r.status==="nueva")
+    .sort((a,b)=>new Date(b.requestedAt||b.createdAt||0)-new Date(a.requestedAt||a.createdAt||0))
+    .slice(0,10);
+},[data.requests]);
+
+const otsCerradasOps=useMemo(()=>{
+  return (data.wos||[])
+    .filter(w=>w.status==="completada")
+    .sort((a,b)=>new Date(b.horaTerminoReal||b.closedAt||b.updatedAt||0)-new Date(a.horaTerminoReal||a.closedAt||a.updatedAt||0))
+    .slice(0,10);
+},[data.wos]);
+
+if(role==="operaciones"){
+  return(
+  <div className="flex-1 overflow-y-auto bg-gray-50/50">
+    <div className="px-6 pt-5 pb-4 bg-white border-b border-gray-100">
+      <h1 className="text-xl font-bold text-gray-900">Dashboard Operaciones</h1>
+      <p className="text-gray-400 text-sm mt-0.5">{new Date().toLocaleDateString("es-CL",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}</p>
+    </div>
+    <div className="p-5 space-y-5">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {[
+          {label:"Solicitudes pendientes",value:solicitudesPendientesOps.length,color:"#DC2626",bg:"#FEF2F2",border:"#FECACA"},
+          {label:"OTs cerradas hoy",value:otsCerradasOps.filter(w=>{const f=w.horaTerminoReal||w.closedAt;return f&&f.slice(0,10)===new Date().toISOString().slice(0,10);}).length,color:"#16a34a",bg:"#F0FDF4",border:"#BBF7D0"},
+          {label:"Equipos con horómetro",value:equiposConHoro.filter(e=>e.ultimaLectura).length,color:"#2563eb",bg:"#EFF6FF",border:"#BFDBFE"},
+          {label:"Operadores activos",value:rankingOperadores.length,color:"#7C3AED",bg:"#F5F3FF",border:"#DDD6FE"},
+        ].map(({label,value,color,bg,border})=>(
+          <div key={label} className="rounded-2xl p-4 border" style={{background:bg,borderColor:border}}>
+            <p className="text-xs font-semibold mb-2" style={{color,opacity:0.8}}>{label}</p>
+            <p className="text-4xl font-bold leading-none" style={{color}}>{value}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        {/* Widget Ranking Operadores */}
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+            <p className="font-bold text-gray-800 text-sm flex items-center gap-2"><span>🏆</span> Ranking Operadores</p>
+            <span className="text-gray-400 text-xs">Por checklists realizados</span>
+          </div>
+          <div className="divide-y divide-gray-50 max-h-64 overflow-y-auto">
+            {rankingOperadores.length===0?(
+              <p className="text-center text-gray-400 text-sm py-6">Sin datos</p>
+            ):(
+              rankingOperadores.map((op,i)=>(
+                <div key={op.nombre} className="flex items-center gap-3 px-4 py-2.5">
+                  <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${i===0?"bg-yellow-100 text-yellow-700":i===1?"bg-gray-100 text-gray-600":i===2?"bg-orange-100 text-orange-700":"bg-blue-50 text-blue-600"}`}>{i+1}</div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-gray-800 truncate">{op.nombre}</p>
+                    <p className="text-xs text-gray-400">{op.pre} pre · {op.post} post</p>
+                  </div>
+                  <span className="text-lg font-bold text-gray-700 flex-shrink-0">{op.total}</span>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* Widget Horómetros */}
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+            <p className="font-bold text-gray-800 text-sm flex items-center gap-2"><span>⏱️</span> Horómetros de Equipos</p>
+            <span className="text-gray-400 text-xs">Última lectura registrada</span>
+          </div>
+          <div className="divide-y divide-gray-50 max-h-64 overflow-y-auto">
+            {equiposConHoro.map(e=>(
+              <div key={e.id} className="flex items-center gap-3 px-4 py-2.5">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-xs font-bold text-blue-700">{e.code}</span>
+                    <span className="text-gray-400 text-xs truncate">{e.name}</span>
+                  </div>
+                  {e.ultimaLectura&&(
+                    <p className="text-xs text-gray-400 mt-0.5">Lectura: {e.ultimaLectura.readingDate||new Date(e.ultimaLectura.timestamp).toLocaleDateString("es-CL")}</p>
+                  )}
+                </div>
+                <div className="text-right flex-shrink-0">
+                  <p className="font-bold text-gray-800 text-sm font-mono">{(e.horas||0).toLocaleString()}h</p>
+                  {!e.ultimaLectura&&<p className="text-[10px] text-gray-300">Sin lectura</p>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Widget Solicitudes Pendientes */}
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+            <p className="font-bold text-gray-800 text-sm flex items-center gap-2">
+              <span>📋</span> Solicitudes Pendientes
+              {solicitudesPendientesOps.length>0&&(
+                <span className="bg-red-100 text-red-700 text-xs px-1.5 py-0.5 rounded-full font-bold">{solicitudesPendientesOps.length}</span>
+              )}
+            </p>
+            <button onClick={()=>onNav("requests")} className="text-xs text-blue-600 hover:underline">Ver todas →</button>
+          </div>
+          <div className="divide-y divide-gray-50 max-h-64 overflow-y-auto">
+            {solicitudesPendientesOps.length===0?(
+              <div className="p-6 text-center"><p className="text-emerald-500 text-sm font-semibold">✅ Sin solicitudes pendientes</p></div>
+            ):(
+              solicitudesPendientesOps.map(r=>{
+                const eq=(data.equip||[]).find(e=>e.id===r.equipId);
+                return(
+                  <div key={r.id} className="flex items-center gap-3 px-4 py-2.5">
+                    <div className="w-2 h-2 rounded-full bg-amber-400 flex-shrink-0"/>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold text-gray-800 truncate">{r.description||r.title||"Sin descripción"}</p>
+                      <p className="text-[10px] text-gray-400">{eq?.code||"—"} · {r.requestedAt?new Date(r.requestedAt).toLocaleDateString("es-CL"):"—"}</p>
+                    </div>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-semibold flex-shrink-0">Pendiente</span>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+
+        {/* Widget OTs Cerradas Recientes */}
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+            <p className="font-bold text-gray-800 text-sm flex items-center gap-2"><span>✅</span> OTs Cerradas Recientes</p>
+            <button onClick={()=>onNav("workorders")} className="text-xs text-blue-600 hover:underline">Ver todas →</button>
+          </div>
+          <div className="divide-y divide-gray-50 max-h-64 overflow-y-auto">
+            {otsCerradasOps.length===0?(
+              <p className="text-center text-gray-400 text-sm py-6">Sin OTs cerradas</p>
+            ):(
+              otsCerradasOps.map(w=>{
+                const eq=(data.equip||[]).find(e=>e.id===w.equipId);
+                const fechaTerm=w.horaTerminoReal||w.closedAt;
+                return(
+                  <div key={w.id} className="flex items-center gap-3 px-4 py-2.5">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs font-bold text-emerald-700">{w.code}</span>
+                        <span className="text-gray-400 text-xs truncate">{eq?.code}</span>
+                      </div>
+                      <p className="text-xs text-gray-600 truncate mt-0.5">{w.title}</p>
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <p className="text-xs text-gray-500 font-mono">
+                        {fechaTerm?(fechaTerm.length===10?new Date(fechaTerm+"T12:00:00").toLocaleDateString("es-CL"):new Date(fechaTerm).toLocaleDateString("es-CL")):"—"}
+                      </p>
+                      <p className="text-[10px] text-gray-400">{w.assignedToName||"—"}</p>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  );
+}
+
 return(
 <div className="p-4 lg:p-6 space-y-5">
 
@@ -3473,33 +3657,6 @@ return(
 );})}
 </div>
 </>}
-{role==="operaciones"&&<>
-<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-<StatCard icon={AlertTriangle} label="Equipos en Falla" value={fallas.length} color="red"/>
-<StatCard icon={Bell}          label="Mis Solicitudes"  value={requests.filter(r=>r.requestedBy===user.id).length} color="cyan"/>
-</div>
-{fallas.length>0&&(
-<div className="bg-red-50 border border-red-200 rounded-xl p-5">
-<h2 className="text-red-700 font-semibold text-sm mb-3 flex items-center gap-2"><AlertCircle size={15}/>Equipos con Falla Activa</h2>
-{fallas.map(e=>(
-<div key={e.id} className="bg-white rounded-lg p-3 mb-2 last:mb-0 border border-red-100">
-<p className="text-gray-800 text-sm font-semibold">{e.name}</p>
-<p className="text-gray-500 text-xs">{e.location} · Criticidad {e.criticality}</p>
-</div>
-))}
-</div>
-)}
-<div className={`${card} p-5`}>
-<h2 className="font-semibold text-sm mb-4" style={{color:NV.navy}}>Mis Solicitudes Recientes</h2>
-{requests.filter(r=>r.requestedBy===user.id).slice(0,5).map(r=>{
-const eq=equip.find(e=>e.id===r.equipId);
-return<div key={r.id} className="flex items-center gap-2 py-2 border-b border-gray-100 last:border-0">
-<Badge s={r.status}/><span className="text-gray-700 text-xs flex-1 truncate">{r.title}</span><span className="text-gray-400 text-xs">{eq?.code}</span>
-</div>;
-})}
-{requests.filter(r=>r.requestedBy===user.id).length===0&&<p className="text-gray-400 text-sm text-center py-6">Sin solicitudes registradas</p>}
-</div>
-</>}
 {role==="operador"&&<>
 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 <StatCard icon={CheckCircle}   label="Mis Checklists"    value={allCL.filter(c=>c.operatorId===user.id&&c.createdAt?.startsWith(thisMonth)).length} sub="este mes" color="emerald"/>
@@ -3603,7 +3760,7 @@ return<div key={c.id} className="flex items-center gap-2 py-2 border-b border-gr
 )}
 
 {/* Fleet Location Widget — visible to supervisor and operaciones */}
-{(role==="supervisor"||role==="operaciones")&&(()=>{
+{role==="supervisor"&&(()=>{
   const portGroups=Object.entries(PUERTOS).map(([key,p])=>{
     const equipInPort=equip.filter(e=>e.lastSeenPort===key);
     return{key,p,equipList:equipInPort};
