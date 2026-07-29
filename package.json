@@ -13,6 +13,7 @@
     "firebase": "^10.7.1",
     "firebase-admin": "^14.2.0",
     "lucide-react": "^0.383.0",
+    "nodemailer": "^9.0.3",
     "pdfkit": "^0.19.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
