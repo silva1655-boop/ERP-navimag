@@ -1620,8 +1620,6 @@ const NAV_CATEGORIAS={
       {key:"users",       label:"Usuarios"},
       {key:"operadores",  label:"Operadores"},
       {key:"accesos",     label:"Registro Accesos"},
-      {key:"vessels",     label:"Buques y Certificados"},
-      {key:"voyages",     label:"Registro de Travesías"},
     ],
   },
   reportes:{
@@ -1635,17 +1633,46 @@ const NAV_CATEGORIAS={
   },
 };
 
-const NAV_CATEGORIAS_MARITIMO=(()=>{
-  const c={...NAV_CATEGORIAS};
-  delete c.operacion;
-  c.mantenimiento={
-    ...NAV_CATEGORIAS.mantenimiento,
-    paginas:NAV_CATEGORIAS.mantenimiento.paginas.filter(p=>
-      !["deviaciones","requests"].includes(p.key)
-    ),
-  };
-  return c;
-})();
+const NAV_CATEGORIAS_MARITIMO={
+  inicio:{
+    label:"Inicio", icon:Gauge,
+    paginas:[
+      {key:"dashboard", label:"Dashboard"},
+    ],
+  },
+  operacion:{
+    label:"Operación", icon:Activity,
+    paginas:[
+      {key:"checklist",        label:"Checklist Pre-op"},
+      {key:"historial_postop", label:"Historial Post-Op"},
+    ],
+  },
+  mantenimiento:{
+    label:"Mantenimiento", icon:Wrench,
+    paginas:[
+      {key:"workorders",  label:"Órdenes de Trabajo"},
+      {key:"plans",       label:"Plan Preventivo"},
+      {key:"equipment",   label:"Equipos"},
+      {key:"requests",    label:"Solicitudes"},
+    ],
+  },
+  gestion:{
+    label:"Gestión", icon:Users,
+    paginas:[
+      {key:"users",       label:"Usuarios"},
+      {key:"vessels",     label:"Buques y Certificados"},
+      {key:"voyages",     label:"Registro de Travesías"},
+    ],
+  },
+  reportes:{
+    label:"Reportes", icon:BarChart2,
+    paginas:[
+      {key:"reports",            label:"Informes"},
+      {key:"indicadores",        label:"Indicadores KPI"},
+      {key:"dashboard_checklist",label:"Dashboard Checklist"},
+    ],
+  },
+};
 
 const SGN_NAV_CATEGORIAS={
   inicio:{
