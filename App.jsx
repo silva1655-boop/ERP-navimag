@@ -13730,11 +13730,13 @@ function parseGastosXLSXRows(rows){
 function GastosPresupuesto({user,activeModule,activeBarco}){
   const [configCentros,setConfigCentros]=useState([]);
   const [mesesIndex,setMesesIndex]=useState([]);
-  const [resumenPorMes,setResumenPorMes]=useState({});
+  const [txnsPorMes,setTxnsPorMes]=useState({});
+  const [reglas,setReglas]=useState([]);
   const [loading,setLoading]=useState(true);
   const [importing,setImporting]=useState(false);
   const [importResult,setImportResult]=useState(null);
   const [nuevoCentro,setNuevoCentro]=useState({centroCoste:"",modulo:"taller",vesselId:""});
+  const [nuevaRegla,setNuevaRegla]=useState({nombre:"",modulo:"ambos",campo:"claseCoste",operador:"contiene",valores:"",accion:"excluir",activo:true});
   const fileInputRef=useRef(null);
 
   useEffect(()=>{
@@ -13745,17 +13747,98 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
       setMesesIndex(snap.exists()?(snap.data().meses||[]):[]);
       setLoading(false);
     });
-    return()=>{unsub1();unsub2();};
+    const unsub3=onSnapshot(doc(db,COLL_GASTOS_REGLAS,"reglas"),snap=>{
+      setReglas(snap.exists()?(snap.data().data||[]):[]);
+    });
+    return()=>{unsub1();unsub2();unsub3();};
   },[]);
 
   useEffect(()=>{
     if(mesesIndex.length===0) return;
     const unsubs=mesesIndex.map(mes=>onSnapshot(doc(db,COLL_GASTOS_TXN,mes),snap=>{
       const rows=snap.exists()?(snap.data().data||[]):[];
-      setResumenPorMes(r=>({...r,[mes]:{count:rows.length,total:rows.reduce((s,t)=>s+(t.valor||0),0)}}));
+      setTxnsPorMes(r=>({...r,[mes]:rows}));
     }));
     return()=>unsubs.forEach(u=>u());
   },[mesesIndex.join(",")]);
+
+  const resumenPorMes=useMemo(()=>{
+    const r={};
+    Object.entries(txnsPorMes).forEach(([mes,rows])=>{
+      r[mes]={count:rows.length,total:rows.reduce((s,t)=>s+(t.valor||0),0)};
+    });
+    return r;
+  },[txnsPorMes]);
+
+  const todasTxns=useMemo(()=>Object.values(txnsPorMes).flat(),[txnsPorMes]);
+
+  // Motor de reglas: excluir saca la fila del real filtrado y del pronóstico;
+  // marcar_puntual la deja en el real filtrado pero afuera del pronóstico.
+  const aplicaRegla=(txn,regla)=>{
+    const valorCampo=String(txn[regla.campo]??"");
+    const valores=regla.valores||[];
+    if(regla.operador==="igual") return valores.some(v=>valorCampo===v);
+    if(regla.operador==="contiene") return valores.some(v=>v&&valorCampo.toLowerCase().includes(v.toLowerCase()));
+    if(regla.operador==="en_lista") return valores.includes(valorCampo);
+    return false;
+  };
+
+  const reglasAplicables=useMemo(()=>{
+    return reglas.filter(r=>r.activo&&(r.modulo==="ambos"||r.modulo===activeModule));
+  },[reglas,activeModule]);
+
+  const gastoAgregado=useMemo(()=>{
+    const real=todasTxns.filter(t=>activeModule==="maritimo"?(t.modulo==="maritimo"&&(!activeBarco||t.vesselId===activeBarco)):t.modulo==="taller");
+    const excluidas=new Set();
+    const puntuales=new Set();
+    real.forEach(t=>{
+      for(const regla of reglasAplicables){
+        if(aplicaRegla(t,regla)){
+          if(regla.accion==="excluir") excluidas.add(t.hashDedupe);
+          else if(regla.accion==="marcar_puntual") puntuales.add(t.hashDedupe);
+        }
+      }
+    });
+    const filtrado=real.filter(t=>!excluidas.has(t.hashDedupe));
+    const filtradoSinPuntuales=filtrado.filter(t=>!puntuales.has(t.hashDedupe));
+    const sum=arr=>arr.reduce((s,t)=>s+(t.valor||0),0);
+    return{
+      real,filtrado,filtradoSinPuntuales,
+      totalReal:sum(real),totalFiltrado:sum(filtrado),totalFiltradoSinPuntuales:sum(filtradoSinPuntuales),
+      countExcluidas:excluidas.size,countPuntuales:puntuales.size,
+    };
+  },[todasTxns,reglasAplicables,activeModule,activeBarco]);
+
+  const saveReglas=async(updated)=>{
+    setReglas(updated);
+    await setDoc(doc(db,COLL_GASTOS_REGLAS,"reglas"),{data:updated});
+  };
+
+  const agregarRegla=()=>{
+    if(!nuevaRegla.nombre.trim()||!nuevaRegla.valores.trim()) return;
+    const regla={
+      id:uid(),
+      nombre:nuevaRegla.nombre.trim(),
+      modulo:nuevaRegla.modulo,
+      campo:nuevaRegla.campo,
+      operador:nuevaRegla.operador,
+      valores:nuevaRegla.valores.split(",").map(v=>v.trim()).filter(Boolean),
+      accion:nuevaRegla.accion,
+      activo:true,
+      creadoPor:user.name||user.username||"",
+      creadoEn:new Date().toISOString(),
+    };
+    saveReglas([...reglas,regla]);
+    setNuevaRegla({nombre:"",modulo:"ambos",campo:"claseCoste",operador:"contiene",valores:"",accion:"excluir",activo:true});
+  };
+
+  const toggleRegla=(id)=>{
+    saveReglas(reglas.map(r=>r.id===id?{...r,activo:!r.activo}:r));
+  };
+
+  const eliminarRegla=(id)=>{
+    saveReglas(reglas.filter(r=>r.id!==id));
+  };
 
   const saveConfigCentros=async(updated)=>{
     setConfigCentros(updated);
@@ -13861,7 +13944,82 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
       </div>
 
       <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-700">
-        Bloque 1 de 8 (colecciones + import con dedupe). Pendiente: reglas de filtro, presupuesto manual, motor de pronóstico y gráficos del dashboard.
+        Bloques 1-2 de 8 (colecciones + import con dedupe, motor de reglas de filtro). Pendiente: presupuesto manual, motor de pronóstico y gráficos del dashboard.
+      </div>
+
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+        <h2 className="font-bold text-gray-800 text-sm mb-3">Gasto agregado — {activeModule==="maritimo"?"Marítimo":"Taller"} (todos los meses cargados)</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="rounded-xl p-3 bg-gray-50 border border-gray-200">
+            <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Gasto real (sin filtrar)</p>
+            <p className="text-lg font-bold text-gray-800">{fmtCLP(gastoAgregado.totalReal)}</p>
+            <p className="text-[10px] text-gray-400">{gastoAgregado.real.length} filas</p>
+          </div>
+          <div className="rounded-xl p-3 bg-blue-50 border border-blue-200">
+            <p className="text-[10px] text-blue-500 font-semibold uppercase tracking-wide">Real filtrado</p>
+            <p className="text-lg font-bold text-blue-700">{fmtCLP(gastoAgregado.totalFiltrado)}</p>
+            <p className="text-[10px] text-blue-400">{gastoAgregado.countExcluidas} filas excluidas por regla</p>
+          </div>
+          <div className="rounded-xl p-3 bg-emerald-50 border border-emerald-200">
+            <p className="text-[10px] text-emerald-600 font-semibold uppercase tracking-wide">Base de pronóstico (sin puntuales)</p>
+            <p className="text-lg font-bold text-emerald-700">{fmtCLP(gastoAgregado.totalFiltradoSinPuntuales)}</p>
+            <p className="text-[10px] text-emerald-500">{gastoAgregado.countPuntuales} filas marcadas puntuales</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+        <h2 className="font-bold text-gray-800 text-sm mb-3">Reglas de filtro</h2>
+        <div className="grid grid-cols-2 sm:grid-cols-6 gap-2 mb-3">
+          <input value={nuevaRegla.nombre} onChange={e=>setNuevaRegla(f=>({...f,nombre:e.target.value}))}
+            placeholder="Nombre" className="px-2.5 py-2 rounded-lg border border-gray-200 text-xs col-span-2"/>
+          <select value={nuevaRegla.modulo} onChange={e=>setNuevaRegla(f=>({...f,modulo:e.target.value}))} className="px-2.5 py-2 rounded-lg border border-gray-200 text-xs">
+            <option value="ambos">Ambos</option>
+            <option value="taller">Taller</option>
+            <option value="maritimo">Marítimo</option>
+          </select>
+          <select value={nuevaRegla.campo} onChange={e=>setNuevaRegla(f=>({...f,campo:e.target.value}))} className="px-2.5 py-2 rounded-lg border border-gray-200 text-xs">
+            <option value="claseCoste">Clase de coste</option>
+            <option value="descripClaseCoste">Descrip. clase coste</option>
+            <option value="centroCoste">Centro de coste</option>
+            <option value="denominacionObjeto">Denominación objeto</option>
+            <option value="material">Material</option>
+          </select>
+          <select value={nuevaRegla.operador} onChange={e=>setNuevaRegla(f=>({...f,operador:e.target.value}))} className="px-2.5 py-2 rounded-lg border border-gray-200 text-xs">
+            <option value="contiene">Contiene</option>
+            <option value="igual">Igual</option>
+            <option value="en_lista">En lista</option>
+          </select>
+          <select value={nuevaRegla.accion} onChange={e=>setNuevaRegla(f=>({...f,accion:e.target.value}))} className="px-2.5 py-2 rounded-lg border border-gray-200 text-xs">
+            <option value="excluir">Excluir</option>
+            <option value="marcar_puntual">Marcar puntual</option>
+          </select>
+          <input value={nuevaRegla.valores} onChange={e=>setNuevaRegla(f=>({...f,valores:e.target.value}))}
+            placeholder="Valores separados por coma" className="px-2.5 py-2 rounded-lg border border-gray-200 text-xs col-span-2 sm:col-span-5"/>
+          <button onClick={agregarRegla} className="px-2.5 py-2 rounded-lg text-white text-xs font-semibold" style={{background:NV.blue}}>
+            + Agregar
+          </button>
+        </div>
+        {reglas.length===0?(
+          <p className="text-gray-400 text-xs italic">Sin reglas de filtro todavía — el gasto real y el filtrado son iguales.</p>
+        ):(
+          <div className="space-y-1.5">
+            {reglas.map(r=>(
+              <div key={r.id} className={`flex items-center gap-2 text-xs rounded-lg px-3 py-2 ${r.activo?"bg-gray-50":"bg-gray-50 opacity-50"}`}>
+                <button onClick={()=>toggleRegla(r.id)} className={`w-8 h-4 rounded-full flex-shrink-0 transition relative ${r.activo?"bg-emerald-500":"bg-gray-300"}`}>
+                  <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${r.activo?"left-4":"left-0.5"}`}/>
+                </button>
+                <span className="font-semibold text-gray-700">{r.nombre}</span>
+                <span className="text-gray-400 capitalize">{r.modulo}</span>
+                <span className={`px-1.5 py-0.5 rounded-full font-semibold ${r.accion==="excluir"?"bg-red-100 text-red-700":"bg-amber-100 text-amber-700"}`}>
+                  {r.accion==="excluir"?"Excluir":"Marcar puntual"}
+                </span>
+                <span className="text-gray-500 truncate">{r.campo} {r.operador} [{r.valores.join(", ")}]</span>
+                <button onClick={()=>eliminarRegla(r.id)} className="ml-auto text-gray-300 hover:text-red-500 flex-shrink-0"><X size={13}/></button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
