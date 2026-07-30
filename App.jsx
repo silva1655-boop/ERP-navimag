@@ -404,6 +404,19 @@ const COLL_MARITIMO = "mantek_maritimo_v1";
 const COLL_DALKA    = "mantek_dalka_v1";
 const COLL_SGN      = "mantek_sgn_v1";
 
+// ─── GASTOS Y PRESUPUESTO ─────────────────────────────────────────────────────
+// Colecciones de nombre fijo (no dependen del módulo activo) — un solo panel
+// analiza Taller y Marítimo a la vez, filtrando por el campo `modulo` de cada fila.
+const COLL_GASTOS_TXN="mantek_gastos_transacciones";
+const COLL_GASTOS_CONFIG_CENTROS="mantek_config_centros_coste";
+const COLL_GASTOS_REGLAS="mantek_gastos_reglas_filtro";
+const COLL_GASTOS_PRESUPUESTO="mantek_gastos_presupuesto";
+// Acceso exclusivo por usuario (no existe rol "admin" en Taller/Marítimo hoy;
+// decisión explícita: allowlist fija en vez de crear un rol nuevo o gatear por
+// "supervisor", que ya lo tiene cualquier supervisor operativo)
+const GASTOS_PRESUPUESTO_ALLOWLIST=["csilva","jimunoz"];
+const canAccessGastos=(user)=>GASTOS_PRESUPUESTO_ALLOWLIST.includes((user?.username||"").toLowerCase().trim());
+
 /*
  * ── CONFIGURACIÓN EMAILJS SGN ──────────────────────────────
  * 1. Ve a https://emailjs.com → Login
@@ -1565,11 +1578,13 @@ const ROLE_DEFAULT_PERMS={
 };
 
 const getUserPerms=(u)=>{
-  if(u?.permisos&&Object.keys(u.permisos).length>0){
-    const defaults=ROLE_DEFAULT_PERMS[u?.role]||{};
-    return{...defaults,...u.permisos};
-  }
-  return ROLE_DEFAULT_PERMS[u?.role]||{};
+  const base=(u?.permisos&&Object.keys(u.permisos).length>0)
+    ?{...(ROLE_DEFAULT_PERMS[u?.role]||{}),...u.permisos}
+    :(ROLE_DEFAULT_PERMS[u?.role]||{});
+  // gastos no es un permiso por rol — es una allowlist fija de usuarios,
+  // así que siempre se resuelve desde canAccessGastos, nunca desde
+  // ROLE_DEFAULT_PERMS ni desde los permisos editables por usuario.
+  return {...base, gastos:canAccessGastos(u)};
 };
 
 const SGN_ROLE_PERMS={
@@ -1629,6 +1644,7 @@ const NAV_CATEGORIAS={
       {key:"indicadores",        label:"Indicadores KPI"},
       {key:"dashboard_checklist",label:"Dashboard Checklist"},
       {key:"config_reportes",    label:"Config. Reportes"},
+      {key:"gastos",             label:"Gastos y Presupuesto"},
     ],
   },
 };
@@ -1663,6 +1679,7 @@ const NAV_CATEGORIAS_MARITIMO={
       {key:"reports",            label:"Informes"},
       {key:"indicadores",        label:"Indicadores KPI"},
       {key:"dashboard_checklist",label:"Dashboard Checklist"},
+      {key:"gastos",             label:"Gastos y Presupuesto"},
     ],
   },
 };
@@ -13609,6 +13626,330 @@ return(
 </div>
 </div>
 );
+}
+
+// ─── GASTOS Y PRESUPUESTO (Bloque 1: colecciones + import con dedupe) ────────
+// Bloques pendientes (no implementados todavía): motor de reglas de filtro,
+// motor de pronóstico, formulario de presupuesto, gráficos del dashboard.
+const normHeaderGasto=(s)=>String(s||"").toLowerCase()
+  .replace(/[áàäâã]/g,"a").replace(/[éèëê]/g,"e").replace(/[íìïî]/g,"i").replace(/[óòöôõ]/g,"o").replace(/[úùüû]/g,"u").replace(/ñ/g,"n")
+  .replace(/[^a-z0-9]/g,"");
+const GASTO_COL_MAP={
+  periodo:["periodo"],
+  claseCoste:["clasedecoste","clasecoste"],
+  descripClaseCoste:["descripclasescoste","descripclasecoste","descripciondeclasedecoste","descripcionclasecoste"],
+  denominacionObjeto:["denominaciondelobjeto","denominacionobjeto"],
+  valor:["valormonedaobjeto","valormoneda"],
+  fechaContabilizacion:["fecontabilizacion","fechacontabilizacion","fechadecontabilizacion"],
+  centroCoste:["centrodecoste","centrocoste"],
+  centro:["centro"],
+  sociedad:["sociedad"],
+  orden:["orden"],
+  material:["material"],
+  descripcionMaterial:["descripciondelmaterial","descripcionmaterial"],
+  usuario:["usuario"],
+  documentoCabecera:["documentocomprascabecera","documentodecompras","documentocompras","doccabecera","documentocabecera"],
+};
+function hashGasto(str){
+  let h=0;
+  for(let i=0;i<str.length;i++){h=((h<<5)-h+str.charCodeAt(i))|0;}
+  return "h"+Math.abs(h).toString(36);
+}
+function parseFechaGasto(v){
+  if(v==null||v==="") return null;
+  if(v instanceof Date) return isNaN(v.getTime())?null:v;
+  if(typeof v==="number"&&v>25000) return new Date((v-25569)*86400*1000);
+  const s=String(v).trim();
+  const m=s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/);
+  if(m) return new Date(`${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}T12:00:00`);
+  const d=new Date(s);
+  return isNaN(d.getTime())?null:d;
+}
+function parseValorGasto(v){
+  if(v==null||v==="") return 0;
+  if(typeof v==="number") return v;
+  // Chileno: punto = miles, coma = decimal
+  const s=String(v).trim().replace(/\./g,"").replace(",",".");
+  return parseFloat(s)||0;
+}
+function parseGastosXLSXRows(rows){
+  if(!rows||rows.length<2) return{porMes:{},missingCols:[],sinCentro:0,errores:["Archivo vacío o sin filas de datos"]};
+  const headerRow=rows[0]||[];
+  const idx={};
+  headerRow.forEach((h,i)=>{ idx[normHeaderGasto(h)]=i; });
+  const colIdx={};
+  const missingCols=[];
+  Object.entries(GASTO_COL_MAP).forEach(([field,candidatos])=>{
+    const found=candidatos.find(c=>idx[c]!==undefined);
+    if(found!==undefined) colIdx[field]=idx[found];
+    else missingCols.push(field);
+  });
+  if(missingCols.length>0){
+    return{porMes:{},missingCols,sinCentro:0,errores:[`Columnas no encontradas: ${missingCols.join(", ")}. Encabezados leídos: ${headerRow.join(" | ")}`]};
+  }
+  const porMes={};
+  const errores=[];
+  let sinCentro=0;
+  rows.slice(1).forEach((row,i)=>{
+    if(!row||row.every(c=>c==null||c==="")) return;
+    const fecha=parseFechaGasto(row[colIdx.fechaContabilizacion]);
+    if(!fecha){errores.push(`Fila ${i+2}: fecha de contabilización inválida`);return;}
+    const mes=`${fecha.getFullYear()}-${String(fecha.getMonth()+1).padStart(2,"0")}`;
+    const centroCoste=String(row[colIdx.centroCoste]??"").trim();
+    if(!centroCoste) sinCentro++;
+    const claseCoste=String(row[colIdx.claseCoste]??"").trim();
+    const usuario=String(row[colIdx.usuario]??"").trim();
+    const documentoCabecera=String(row[colIdx.documentoCabecera]??"").trim();
+    const valor=parseValorGasto(row[colIdx.valor]);
+    const hashDedupe=hashGasto(`${documentoCabecera}|${valor}|${usuario}|${mes}|${claseCoste}`);
+    const txn={
+      periodo:String(row[colIdx.periodo]??"").trim(),
+      claseCoste,
+      descripClaseCoste:String(row[colIdx.descripClaseCoste]??"").trim(),
+      denominacionObjeto:String(row[colIdx.denominacionObjeto]??"").trim(),
+      valor,
+      moneda:"CLP",
+      documentoCabecera,
+      material:String(row[colIdx.material]??"").trim(),
+      descripcionMaterial:String(row[colIdx.descripcionMaterial]??"").trim(),
+      usuario,
+      fechaContabilizacion:fecha.toISOString(),
+      centroCoste,
+      centro:String(row[colIdx.centro]??"").trim(),
+      sociedad:String(row[colIdx.sociedad]??"").trim(),
+      orden:String(row[colIdx.orden]??"").trim(),
+      mes,
+      hashDedupe,
+    };
+    if(!porMes[mes]) porMes[mes]=[];
+    porMes[mes].push(txn);
+  });
+  return{porMes,missingCols:[],sinCentro,errores};
+}
+
+function GastosPresupuesto({user,activeModule,activeBarco}){
+  const [configCentros,setConfigCentros]=useState([]);
+  const [mesesIndex,setMesesIndex]=useState([]);
+  const [resumenPorMes,setResumenPorMes]=useState({});
+  const [loading,setLoading]=useState(true);
+  const [importing,setImporting]=useState(false);
+  const [importResult,setImportResult]=useState(null);
+  const [nuevoCentro,setNuevoCentro]=useState({centroCoste:"",modulo:"taller",vesselId:""});
+  const fileInputRef=useRef(null);
+
+  useEffect(()=>{
+    const unsub1=onSnapshot(doc(db,COLL_GASTOS_CONFIG_CENTROS,"config"),snap=>{
+      setConfigCentros(snap.exists()?(snap.data().data||[]):[]);
+    });
+    const unsub2=onSnapshot(doc(db,COLL_GASTOS_TXN,"meses_index"),snap=>{
+      setMesesIndex(snap.exists()?(snap.data().meses||[]):[]);
+      setLoading(false);
+    });
+    return()=>{unsub1();unsub2();};
+  },[]);
+
+  useEffect(()=>{
+    if(mesesIndex.length===0) return;
+    const unsubs=mesesIndex.map(mes=>onSnapshot(doc(db,COLL_GASTOS_TXN,mes),snap=>{
+      const rows=snap.exists()?(snap.data().data||[]):[];
+      setResumenPorMes(r=>({...r,[mes]:{count:rows.length,total:rows.reduce((s,t)=>s+(t.valor||0),0)}}));
+    }));
+    return()=>unsubs.forEach(u=>u());
+  },[mesesIndex.join(",")]);
+
+  const saveConfigCentros=async(updated)=>{
+    setConfigCentros(updated);
+    await setDoc(doc(db,COLL_GASTOS_CONFIG_CENTROS,"config"),{data:updated});
+  };
+
+  const agregarCentro=()=>{
+    if(!nuevoCentro.centroCoste.trim()) return;
+    const updated=[...configCentros,{
+      centroCoste:nuevoCentro.centroCoste.trim().toUpperCase(),
+      modulo:nuevoCentro.modulo,
+      vesselId:nuevoCentro.modulo==="maritimo"?(nuevoCentro.vesselId||null):null,
+    }];
+    saveConfigCentros(updated);
+    setNuevoCentro({centroCoste:"",modulo:"taller",vesselId:""});
+  };
+
+  const eliminarCentro=(centroCoste)=>{
+    saveConfigCentros(configCentros.filter(c=>c.centroCoste!==centroCoste));
+  };
+
+  const handleImport=async(e)=>{
+    const file=e.target.files?.[0];
+    if(!file) return;
+    setImporting(true);
+    setImportResult(null);
+    try{
+      const buf=await file.arrayBuffer();
+      const wb=XLSX.read(buf,{type:"array",cellDates:true});
+      const ws=wb.Sheets[wb.SheetNames[0]];
+      const rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:true,defval:""});
+      const {porMes,missingCols,sinCentro,errores}=parseGastosXLSXRows(rows);
+      if(missingCols.length>0){
+        setImportResult({error:errores[0]});
+        setImporting(false);
+        if(fileInputRef.current) fileInputRef.current.value="";
+        return;
+      }
+      const importId=uid();
+      const centrosNoMapeados=new Set();
+      let totalInsertadas=0,totalDuplicadas=0;
+      for(const [mes,txns] of Object.entries(porMes)){
+        const ref=doc(db,COLL_GASTOS_TXN,mes);
+        const snap=await getDoc(ref);
+        const existentes=snap.exists()?(snap.data().data||[]):[];
+        const hashesExistentes=new Set(existentes.map(t=>t.hashDedupe));
+        const nuevas=[];
+        txns.forEach(t=>{
+          if(hashesExistentes.has(t.hashDedupe)){totalDuplicadas++;return;}
+          const cfg=configCentros.find(c=>c.centroCoste===t.centroCoste);
+          if(!cfg) centrosNoMapeados.add(t.centroCoste||"(vacío)");
+          nuevas.push({
+            ...t,
+            modulo:cfg?.modulo||null,
+            vesselId:cfg?.vesselId||null,
+            importId,
+            importedAt:new Date().toISOString(),
+            importedBy:user.name||user.username||"",
+          });
+          hashesExistentes.add(t.hashDedupe);
+        });
+        if(nuevas.length>0){
+          const mergedArr=[...existentes,...nuevas];
+          const sizeKB=Math.round(JSON.stringify({data:mergedArr}).length/1024);
+          if(sizeKB>1000){
+            errores.push(`Mes ${mes}: ${sizeKB}KB supera el límite de Firestore (1MB) — no se guardó. Hay que particionar este mes (ej. por centro de costo) antes de reintentar.`);
+            continue;
+          }
+          if(sizeKB>800) errores.push(`Mes ${mes}: ${sizeKB}KB — acercándose al límite de Firestore (1MB por documento).`);
+          await setDoc(ref,{data:mergedArr});
+          totalInsertadas+=nuevas.length;
+        }
+      }
+      const nuevosMeses=Object.keys(porMes).filter(m=>!mesesIndex.includes(m));
+      if(nuevosMeses.length>0){
+        await setDoc(doc(db,COLL_GASTOS_TXN,"meses_index"),{meses:[...mesesIndex,...nuevosMeses].sort()});
+      }
+      setImportResult({
+        insertadas:totalInsertadas,
+        duplicadas:totalDuplicadas,
+        centrosNoMapeados:[...centrosNoMapeados],
+        errores,
+      });
+    }catch(err){
+      console.error("Import gastos:",err);
+      setImportResult({error:"Error al procesar el archivo: "+err.message});
+    }
+    setImporting(false);
+    if(fileInputRef.current) fileInputRef.current.value="";
+  };
+
+  const fmtCLP=(n)=>"$"+Math.round(n||0).toLocaleString("es-CL");
+
+  if(!canAccessGastos(user)) return null;
+
+  return(
+    <div className="p-4 lg:p-6 space-y-5">
+      <div>
+        <h1 className="text-xl font-bold text-gray-900">Gastos y Presupuesto</h1>
+        <p className="text-gray-400 text-sm mt-0.5">
+          {activeModule==="maritimo"?`Marítimo${activeBarco?" — "+activeBarco:""}`:"Taller"} · Acceso restringido
+        </p>
+      </div>
+
+      <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-700">
+        Bloque 1 de 8 (colecciones + import con dedupe). Pendiente: reglas de filtro, presupuesto manual, motor de pronóstico y gráficos del dashboard.
+      </div>
+
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+        <h2 className="font-bold text-gray-800 text-sm mb-3">Configuración de Centros de Costo</h2>
+        <div className="flex flex-wrap gap-2 mb-3">
+          <input value={nuevoCentro.centroCoste} onChange={e=>setNuevoCentro(f=>({...f,centroCoste:e.target.value}))}
+            placeholder="Centro de coste (ej: NI15328)" className="px-3 py-2 rounded-lg border border-gray-200 text-sm flex-1 min-w-[160px]"/>
+          <select value={nuevoCentro.modulo} onChange={e=>setNuevoCentro(f=>({...f,modulo:e.target.value}))}
+            className="px-3 py-2 rounded-lg border border-gray-200 text-sm">
+            <option value="taller">Taller</option>
+            <option value="maritimo">Marítimo</option>
+          </select>
+          {nuevoCentro.modulo==="maritimo"&&(
+            <select value={nuevoCentro.vesselId} onChange={e=>setNuevoCentro(f=>({...f,vesselId:e.target.value}))}
+              className="px-3 py-2 rounded-lg border border-gray-200 text-sm">
+              <option value="">Sin buque</option>
+              <option value="esperanza">Esperanza</option>
+              <option value="dalka">Dalka</option>
+            </select>
+          )}
+          <button onClick={agregarCentro} className="px-3 py-2 rounded-lg text-white text-sm font-semibold" style={{background:NV.blue}}>
+            + Agregar
+          </button>
+        </div>
+        {configCentros.length===0?(
+          <p className="text-gray-400 text-xs italic">Sin centros de costo mapeados — las transacciones importadas quedarán sin módulo asignado hasta que se agreguen aquí.</p>
+        ):(
+          <div className="space-y-1.5">
+            {configCentros.map(c=>(
+              <div key={c.centroCoste} className="flex items-center gap-3 text-sm bg-gray-50 rounded-lg px-3 py-2">
+                <span className="font-mono font-bold text-gray-700">{c.centroCoste}</span>
+                <span className="text-gray-500 capitalize">{c.modulo}{c.vesselId?` · ${c.vesselId}`:""}</span>
+                <button onClick={()=>eliminarCentro(c.centroCoste)} className="ml-auto text-gray-300 hover:text-red-500"><X size={14}/></button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+        <h2 className="font-bold text-gray-800 text-sm mb-3">Importar gasto SAP (.xlsx)</h2>
+        <input ref={fileInputRef} type="file" accept=".xlsx,.xls" onChange={handleImport} disabled={importing}
+          className="text-sm"/>
+        {importing&&<p className="text-gray-400 text-xs mt-2">Procesando...</p>}
+        {importResult&&(
+          importResult.error?(
+            <div className="mt-3 bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-700">{importResult.error}</div>
+          ):(
+            <div className="mt-3 bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-700 space-y-1">
+              <p>✅ {importResult.insertadas} filas insertadas · {importResult.duplicadas} duplicadas (saltadas)</p>
+              {importResult.centrosNoMapeados.length>0&&(
+                <p className="text-amber-700">⚠️ Centros de costo sin mapear: {importResult.centrosNoMapeados.join(", ")} — agrégalos arriba y vuelve a importar el mismo archivo (las filas ya insertadas no se duplican).</p>
+              )}
+              {importResult.errores.length>0&&(
+                <p className="text-amber-700">{importResult.errores.length} fila(s) con error — revisa la consola.</p>
+              )}
+            </div>
+          )
+        )}
+      </div>
+
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+        <h2 className="font-bold text-gray-800 text-sm mb-3">Resumen por mes (sin filtrar)</h2>
+        {loading?(
+          <p className="text-gray-400 text-xs">Cargando...</p>
+        ):mesesIndex.length===0?(
+          <p className="text-gray-400 text-xs italic">Sin datos importados todavía.</p>
+        ):(
+          <table className="w-full text-sm">
+            <thead><tr className="text-gray-400 text-xs border-b border-gray-100">
+              <th className="text-left py-1.5 font-medium">Mes</th>
+              <th className="text-right py-1.5 font-medium">Filas</th>
+              <th className="text-right py-1.5 font-medium">Total</th>
+            </tr></thead>
+            <tbody>
+              {mesesIndex.map(mes=>(
+                <tr key={mes} className="border-b border-gray-50 last:border-0">
+                  <td className="py-1.5 font-mono">{mes}</td>
+                  <td className="py-1.5 text-right">{resumenPorMes[mes]?.count??"—"}</td>
+                  <td className="py-1.5 text-right font-semibold">{resumenPorMes[mes]?fmtCLP(resumenPorMes[mes].total):"—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // ─── CONFIG REPORTES ─────────────────────────────────────────────────────────
@@ -27113,6 +27454,7 @@ voyages:       <VoyagesPage   user={user} data={data} setData={setData}/>,
 accesos:       <AccessLog     data={data}/>,
 repuestos:     <RepuestosPage user={user} data={data} setData={setData} saveData={saveData}/>,
 config_reportes:<ConfigReportes user={user}/>,
+gastos:        <GastosPresupuesto user={user} activeModule={activeModule} activeBarco={activeBarco}/>,
 };
 
 return(
