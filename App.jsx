@@ -13787,6 +13787,7 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
   const [incluirPuntuales,setIncluirPuntuales]=useState(true);
   const [mesDetalle,setMesDetalle]=useState(null);
   const fileInputRef=useRef(null);
+  const vesselIdActual=activeModule==="maritimo"?(activeBarco||null):null;
 
   useEffect(()=>{
     const unsub1=onSnapshot(doc(db,COLL_GASTOS_CONFIG_CENTROS,"config"),snap=>{
@@ -14073,7 +14074,6 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
   };
 
   // ── Presupuesto manual (Bloque 5) ──
-  const vesselIdActual=activeModule==="maritimo"?(activeBarco||null):null;
   const presupuestoDelModulo=useMemo(()=>{
     return presupuesto.filter(p=>p.modulo===activeModule&&(p.vesselId||null)===vesselIdActual)
       .sort((a,b)=>(b.anio-a.anio)||(a.mes||"").localeCompare(b.mes||"")||a.categoria.localeCompare(b.categoria));
