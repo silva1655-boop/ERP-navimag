@@ -13766,6 +13766,9 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
   const [nuevoCentro,setNuevoCentro]=useState({centroCoste:"",modulo:"taller",vesselId:""});
   const [nuevaRegla,setNuevaRegla]=useState({nombre:"",modulo:"ambos",campo:"claseCoste",operador:"contiene",valores:"",accion:"excluir",activo:true});
   const [presupuesto,setPresupuesto]=useState([]);
+  const [nuevoPresupuesto,setNuevoPresupuesto]=useState({categoria:"TOTAL",anio:String(new Date().getFullYear()),mes:"",montoPresupuestado:"",notas:""});
+  const [presupuestoEditId,setPresupuestoEditId]=useState(null);
+  const [presupuestoEditForm,setPresupuestoEditForm]=useState(null);
   const [filtroMesDesde,setFiltroMesDesde]=useState("");
   const [filtroMesHasta,setFiltroMesHasta]=useState("");
   const [filtroCentro,setFiltroCentro]=useState("");
@@ -13953,6 +13956,69 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
     saveReglas(reglas.filter(r=>r.id!==id));
   };
 
+  // ── Presupuesto manual (Bloque 5) ──
+  const vesselIdActual=activeModule==="maritimo"?(activeBarco||null):null;
+  const presupuestoDelModulo=useMemo(()=>{
+    return presupuesto.filter(p=>p.modulo===activeModule&&(p.vesselId||null)===vesselIdActual)
+      .sort((a,b)=>(b.anio-a.anio)||(a.mes||"").localeCompare(b.mes||"")||a.categoria.localeCompare(b.categoria));
+  },[presupuesto,activeModule,vesselIdActual]);
+
+  const savePresupuesto=async(updated)=>{
+    setPresupuesto(updated);
+    await setDoc(doc(db,COLL_GASTOS_PRESUPUESTO,"presupuesto"),{data:updated});
+  };
+
+  const agregarPresupuesto=()=>{
+    const monto=parseFloat(nuevoPresupuesto.montoPresupuestado);
+    const anio=parseInt(nuevoPresupuesto.anio);
+    if(!nuevoPresupuesto.categoria||isNaN(monto)||monto<0||isNaN(anio)) return;
+    const entry={
+      modulo:activeModule,
+      vesselId:vesselIdActual,
+      categoria:nuevoPresupuesto.categoria,
+      anio,
+      mes:nuevoPresupuesto.mes||null,
+      montoPresupuestado:monto,
+      notas:nuevoPresupuesto.notas||"",
+      actualizadoPor:user.name||user.username||"",
+      actualizadoEn:new Date().toISOString(),
+    };
+    // Reemplaza si ya existe una entrada para la misma combinación (evita duplicados silenciosos)
+    const yaExiste=presupuesto.findIndex(p=>p.modulo===entry.modulo&&(p.vesselId||null)===(entry.vesselId||null)&&p.categoria===entry.categoria&&p.anio===entry.anio&&(p.mes||null)===(entry.mes||null));
+    const updated=yaExiste>=0?presupuesto.map((p,i)=>i===yaExiste?entry:p):[...presupuesto,entry];
+    savePresupuesto(updated);
+    setNuevoPresupuesto({categoria:"TOTAL",anio:String(new Date().getFullYear()),mes:"",montoPresupuestado:"",notas:""});
+  };
+
+  const claveDePresupuesto=(e)=>JSON.stringify([e.categoria,e.anio,e.mes||null]);
+  const abrirEdicionPresupuesto=(entry)=>{
+    const clave=claveDePresupuesto(entry);
+    if(presupuestoEditId===clave){
+      setPresupuestoEditId(null);
+      setPresupuestoEditForm(null);
+    }else{
+      setPresupuestoEditId(clave);
+      setPresupuestoEditForm({...entry,montoPresupuestado:String(entry.montoPresupuestado)});
+    }
+  };
+
+  const guardarEdicionPresupuesto=()=>{
+    const monto=parseFloat(presupuestoEditForm.montoPresupuestado);
+    if(isNaN(monto)||monto<0) return;
+    const updated=presupuesto.map(p=>
+      (p.modulo===presupuestoEditForm.modulo&&(p.vesselId||null)===(presupuestoEditForm.vesselId||null)&&p.categoria===presupuestoEditForm.categoria&&p.anio===presupuestoEditForm.anio&&(p.mes||null)===(presupuestoEditForm.mes||null))
+        ?{...presupuestoEditForm,montoPresupuestado:monto,actualizadoPor:user.name||user.username||"",actualizadoEn:new Date().toISOString()}
+        :p
+    );
+    savePresupuesto(updated);
+    setPresupuestoEditId(null);
+    setPresupuestoEditForm(null);
+  };
+
+  const eliminarPresupuesto=(entry)=>{
+    savePresupuesto(presupuesto.filter(p=>!(p.modulo===entry.modulo&&(p.vesselId||null)===(entry.vesselId||null)&&p.categoria===entry.categoria&&p.anio===entry.anio&&(p.mes||null)===(entry.mes||null))));
+  };
+
   const saveConfigCentros=async(updated)=>{
     setConfigCentros(updated);
     await setDoc(doc(db,COLL_GASTOS_CONFIG_CENTROS,"config"),{data:updated});
@@ -14057,7 +14123,7 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
       </div>
 
       <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-700">
-        Bloques 1-4 de 8 (colecciones + import, reglas de filtro, dashboard con gráficos). Pendiente: presupuesto manual y motor de pronóstico — por eso el presupuesto de los gráficos siempre muestra $0 por ahora.
+        Bloques 1-5 de 8 (colecciones + import, reglas de filtro, dashboard con gráficos, presupuesto manual). Pendiente: motor de pronóstico y la línea de proyección en el acumulado.
       </div>
 
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
@@ -14243,6 +14309,68 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
                 <button onClick={()=>eliminarRegla(r.id)} className="ml-auto text-gray-300 hover:text-red-500 flex-shrink-0"><X size={13}/></button>
               </div>
             ))}
+          </div>
+        )}
+      </div>
+
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+        <h2 className="font-bold text-gray-800 text-sm mb-3">Presupuesto — {activeModule==="maritimo"?`Marítimo${activeBarco?" · "+activeBarco:""}`:"Taller"}</h2>
+        <div className="grid grid-cols-2 sm:grid-cols-6 gap-2 mb-3">
+          <select value={nuevoPresupuesto.categoria} onChange={e=>setNuevoPresupuesto(f=>({...f,categoria:e.target.value}))}
+            className="px-2.5 py-2 rounded-lg border border-gray-200 text-xs col-span-2">
+            <option value="TOTAL">TOTAL (presupuesto global)</option>
+            {categoriasDisponibles.map(c=><option key={c} value={c}>{c}</option>)}
+          </select>
+          <input type="number" value={nuevoPresupuesto.anio} onChange={e=>setNuevoPresupuesto(f=>({...f,anio:e.target.value}))}
+            placeholder="Año" className="px-2.5 py-2 rounded-lg border border-gray-200 text-xs"/>
+          <select value={nuevoPresupuesto.mes} onChange={e=>setNuevoPresupuesto(f=>({...f,mes:e.target.value}))}
+            className="px-2.5 py-2 rounded-lg border border-gray-200 text-xs">
+            <option value="">Anual (sin prorratear)</option>
+            {Array.from({length:12},(_,i)=>`${nuevoPresupuesto.anio||new Date().getFullYear()}-${String(i+1).padStart(2,"0")}`).map(m=>(
+              <option key={m} value={m}>{m}</option>
+            ))}
+          </select>
+          <input type="number" value={nuevoPresupuesto.montoPresupuestado} onChange={e=>setNuevoPresupuesto(f=>({...f,montoPresupuestado:e.target.value}))}
+            placeholder="Monto CLP" className="px-2.5 py-2 rounded-lg border border-gray-200 text-xs"/>
+          <button onClick={agregarPresupuesto} className="px-2.5 py-2 rounded-lg text-white text-xs font-semibold" style={{background:NV.blue}}>
+            + Guardar
+          </button>
+          <input value={nuevoPresupuesto.notas} onChange={e=>setNuevoPresupuesto(f=>({...f,notas:e.target.value}))}
+            placeholder="Notas (opcional)" className="px-2.5 py-2 rounded-lg border border-gray-200 text-xs col-span-2 sm:col-span-6"/>
+        </div>
+        <p className="text-gray-300 text-[10px] mb-3">Si ya existe una entrada para la misma categoría/año/mes, guardar la reemplaza (no duplica).</p>
+        {presupuestoDelModulo.length===0?(
+          <p className="text-gray-400 text-xs italic">Sin presupuesto cargado todavía para este módulo — los gráficos de arriba muestran $0.</p>
+        ):(
+          <div className="space-y-1.5">
+            {presupuestoDelModulo.map(p=>{
+              const clave=claveDePresupuesto(p);
+              const editando=presupuestoEditId===clave;
+              return(
+                <div key={clave} className="text-xs rounded-lg bg-gray-50 px-3 py-2">
+                  {editando?(
+                    <div className="flex flex-wrap items-center gap-2">
+                      <input type="number" value={presupuestoEditForm.montoPresupuestado}
+                        onChange={e=>setPresupuestoEditForm(f=>({...f,montoPresupuestado:e.target.value}))}
+                        className="px-2 py-1 rounded border border-gray-200 w-32"/>
+                      <input value={presupuestoEditForm.notas} onChange={e=>setPresupuestoEditForm(f=>({...f,notas:e.target.value}))}
+                        placeholder="Notas" className="px-2 py-1 rounded border border-gray-200 flex-1 min-w-[120px]"/>
+                      <button onClick={guardarEdicionPresupuesto} className="text-white px-2.5 py-1 rounded font-semibold" style={{background:NV.blue}}>Guardar</button>
+                      <button onClick={()=>{setPresupuestoEditId(null);setPresupuestoEditForm(null);}} className="text-gray-500 px-2.5 py-1 rounded border border-gray-200">Cancelar</button>
+                    </div>
+                  ):(
+                    <div className="flex items-center gap-3">
+                      <span className="font-semibold text-gray-700">{p.categoria}</span>
+                      <span className="text-gray-400">{p.anio}{p.mes?` · ${p.mes}`:" · anual"}</span>
+                      <span className="font-bold text-gray-800 ml-auto">{fmtCLP(p.montoPresupuestado)}</span>
+                      {p.notas&&<span className="text-gray-400 truncate max-w-[160px]" title={p.notas}>· {p.notas}</span>}
+                      <button onClick={()=>abrirEdicionPresupuesto(p)} className="text-gray-400 hover:text-blue-600 flex-shrink-0"><Edit2 size={13}/></button>
+                      <button onClick={()=>eliminarPresupuesto(p)} className="text-gray-300 hover:text-red-500 flex-shrink-0"><X size={13}/></button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
