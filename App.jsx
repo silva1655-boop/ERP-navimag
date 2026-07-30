@@ -2455,8 +2455,9 @@ vessels:       {label:"Buques y Certificados",icon:Layers},
 voyages:       {label:"Registro de Travesías",icon:Activity},
 repuestos:     {label:"Repuestos",            icon:Package},
 };
-function Topbar({user,page,onNav,notifCount,onToggleSidebar,fontSize,setFontSize,onChangePassword,onChangeModule,onLogout,onInstall,onOpenChat,chatBadge,navCategorias:navCats}){
+function Topbar({user,page,onNav,notifCount,onToggleSidebar,fontSize,setFontSize,onChangePassword,onChangeModule,onLogout,onInstall,onOpenChat,chatBadge,onOpenPlanner,plannerBadge,navCategorias:navCats}){
 const navCategorias=navCats||NAV_CATEGORIAS;
+const canUsePlanner=["supervisor","admin"].includes(user?.role)||user?.authRole==="ADMIN";
 const catKey=getCategoriaActiva(page,navCategorias);
 const categoria=catKey?navCategorias[catKey]:null;
 const [showUserMenu,setShowUserMenu]=useState(false);
@@ -2490,6 +2491,12 @@ return(
         <MessageCircle size={17} className="text-gray-500"/>
         {chatBadge>0&&<span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-bold">{chatBadge}</span>}
       </button>
+      {canUsePlanner&&(
+        <button onClick={onOpenPlanner} className="relative p-2 rounded-lg hover:bg-gray-50 transition">
+          <Calendar size={17} className="text-gray-500"/>
+          {plannerBadge>0&&<span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-blue-500 text-white text-xs rounded-full flex items-center justify-center font-bold">{plannerBadge>9?"9+":plannerBadge}</span>}
+        </button>
+      )}
       <button className="p-2 rounded-lg hover:bg-gray-50 transition">
         <HelpCircle size={17} className="text-gray-500"/>
       </button>
@@ -21091,6 +21098,564 @@ const calcCumplimientoPorFecha=(checklistsFiltrados)=>{
   return{resultados,promedioPct};
 };
 
+// ─── MANTEK PLANNER ──────────────────────────────────────────────────────────
+function PlannerPanel({user,data,activeCOLL,onNav,onClose}){
+  const [tab,setTab]=useState("hoy");
+  const [compromisos,setCompromisos]=useState([]);
+  const [proyectos,setProyectos]=useState([]);
+  const [showForm,setShowForm]=useState(false);
+  const [checkInDone,setCheckInDone]=useState(false);
+  const [loading,setLoading]=useState(true);
+
+  const today=new Date().toISOString().slice(0,10);
+  const todayKey="planner_checkin_"+today;
+
+  useEffect(()=>{
+    if(!user?.id) return;
+    const uid=user.id;
+    setLoading(true);
+    const docRef=doc(db,activeCOLL,"planner_"+uid);
+    const unsub=onSnapshot(docRef,snap=>{
+      if(snap.exists()){
+        const d=snap.data();
+        setCompromisos(d.compromisos||[]);
+        setProyectos(d.proyectos||[]);
+      }
+      setLoading(false);
+    });
+    const done=localStorage.getItem(todayKey);
+    setCheckInDone(!!done);
+    return()=>unsub();
+  },[user,activeCOLL]);
+
+  const save=async(newCompromisos,newProyectos)=>{
+    const uid=user.id;
+    const docRef=doc(db,activeCOLL,"planner_"+uid);
+    await setDoc(docRef,{
+      compromisos:newCompromisos||compromisos,
+      proyectos:newProyectos||proyectos,
+      updatedAt:new Date().toISOString(),
+      userId:uid,
+    });
+  };
+
+  const crearCompromiso=(form)=>{
+    const nuevo={
+      id:"pl_"+Math.random().toString(36).slice(2,10),
+      titulo:form.titulo,
+      fecha:form.fecha||today,
+      hora:form.hora||"",
+      prioridad:form.prioridad||"media",
+      estado:"pendiente",
+      privado:form.privado!==false,
+      vinculo:form.vinculo||null,
+      asignadoA:form.asignadoA||null,
+      creadoPor:user.name||user.username,
+      creadoAt:new Date().toISOString(),
+      postergaciones:0,
+      notas:form.notas||"",
+    };
+    const updated=[...compromisos,nuevo];
+    setCompromisos(updated);
+    save(updated);
+    setShowForm(false);
+  };
+
+  const cambiarEstado=(id,estado)=>{
+    const updated=compromisos.map(c=>
+      c.id===id?{...c,estado,completadoAt:estado==="completado"?new Date().toISOString():null}:c
+    );
+    setCompromisos(updated);
+    save(updated);
+  };
+
+  const postergar=(id,nuevaFecha)=>{
+    const updated=compromisos.map(c=>{
+      if(c.id!==id) return c;
+      const posts=(c.postergaciones||0)+1;
+      return{...c,fecha:nuevaFecha,postergaciones:posts,enRiesgo:posts>=3};
+    });
+    setCompromisos(updated);
+    save(updated);
+  };
+
+  const eliminar=(id)=>{
+    const updated=compromisos.filter(c=>c.id!==id);
+    setCompromisos(updated);
+    save(updated);
+  };
+
+  const recordatoriosERP=useMemo(()=>{
+    const items=[];
+    const hoy=new Date();
+    (data.wos||[])
+      .filter(w=>w.status!=="completada"&&w.status!=="cancelada"&&w.scheduledDate&&w.scheduledDate<today)
+      .slice(0,3)
+      .forEach(w=>{
+        items.push({
+          id:"erp_ot_"+w.id,tipo:"ot_vencida",
+          titulo:"OT vencida: "+w.code+" — "+(w.title||"").slice(0,30),
+          prioridad:"alta",vinculo:{tipo:"ot",id:w.id,code:w.code},
+          auto:true,
+        });
+      });
+    (data.plans||[])
+      .filter(p=>{
+        if(!p.nextDate) return false;
+        const d=new Date(p.nextDate+"T12:00:00");
+        const diff=(d-hoy)/(86400000);
+        return diff>=0&&diff<=7;
+      })
+      .slice(0,3)
+      .forEach(p=>{
+        items.push({
+          id:"erp_pm_"+p.id,tipo:"pm_proximo",
+          titulo:"PM próximo: "+(p.name||p.code||"").slice(0,30),
+          prioridad:"media",vinculo:{tipo:"plan",id:p.id},
+          auto:true,
+        });
+      });
+    return items;
+  },[data.wos,data.plans,today]);
+
+  const compHoy=[
+    ...recordatoriosERP,
+    ...compromisos.filter(c=>c.fecha===today&&c.estado!=="completado"),
+  ].sort((a,b)=>(a.hora||"99:99").localeCompare(b.hora||"99:99"));
+
+  const lunes=new Date();
+  lunes.setDate(lunes.getDate()-lunes.getDay()+1);
+  const viernes=new Date(lunes);
+  viernes.setDate(viernes.getDate()+4);
+  const compSemana=compromisos.filter(c=>{
+    const d=new Date(c.fecha+"T12:00:00");
+    return d>=lunes&&d<=viernes&&c.estado!=="completado";
+  });
+
+  const ayer=new Date();
+  ayer.setDate(ayer.getDate()-1);
+  const ayerStr=ayer.toISOString().slice(0,10);
+  const pendientesAyer=compromisos.filter(c=>c.fecha===ayerStr&&c.estado==="pendiente");
+
+  const prioColor={
+    alta:"text-red-600 bg-red-50 border-red-200",
+    media:"text-amber-600 bg-amber-50 border-amber-200",
+    baja:"text-blue-600 bg-blue-50 border-blue-200",
+  };
+
+  return(
+    <div className="fixed inset-0 bg-black/40 z-50" onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
+      <div className="fixed right-0 top-0 h-full w-full max-w-lg bg-white shadow-2xl flex flex-col overflow-hidden" onClick={e=>e.stopPropagation()}>
+
+        {/* Header */}
+        <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between flex-shrink-0"
+          style={{background:"linear-gradient(135deg,#1e3a5f,#2563eb)"}}>
+          <div>
+            <p className="text-white font-bold text-lg flex items-center gap-2">
+              <Calendar size={18}/> Mi Planner
+            </p>
+            <p className="text-blue-200 text-xs mt-0.5">
+              {new Date().toLocaleDateString("es-CL",{weekday:"long",day:"numeric",month:"long"})}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={()=>setShowForm(true)}
+              className="px-3 py-1.5 rounded-xl bg-white/20 hover:bg-white/30 text-white text-xs font-semibold transition flex items-center gap-1">
+              <Plus size={14}/> Nuevo
+            </button>
+            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/20 text-white/70 hover:text-white transition">
+              <X size={16}/>
+            </button>
+          </div>
+        </div>
+
+        {/* Check-in banner */}
+        {!checkInDone&&pendientesAyer.length>0&&(
+          <div className="px-5 py-3 bg-amber-50 border-b border-amber-200 flex-shrink-0">
+            <p className="text-amber-800 text-sm font-semibold flex items-center gap-2">
+              <span>☀️</span>
+              {pendientesAyer.length} compromiso{pendientesAyer.length>1?"s":""} pendiente{pendientesAyer.length>1?"s":""} de ayer
+            </p>
+            <div className="flex gap-2 mt-2">
+              <button onClick={()=>{
+                  pendientesAyer.forEach(c=>postergar(c.id,today));
+                  localStorage.setItem(todayKey,"1");
+                  setCheckInDone(true);
+                }}
+                className="text-xs px-2 py-1 rounded-lg bg-amber-200 text-amber-800 font-semibold hover:bg-amber-300 transition">
+                Mover todos a hoy
+              </button>
+              <button onClick={()=>{localStorage.setItem(todayKey,"1");setCheckInDone(true);}}
+                className="text-xs px-2 py-1 rounded-lg bg-white text-amber-700 border border-amber-200 hover:bg-amber-50 transition">
+                Revisar después
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Tabs */}
+        <div className="flex border-b border-gray-100 bg-gray-50 flex-shrink-0">
+          {[
+            {key:"hoy",label:"Hoy",badge:compHoy.length},
+            {key:"semana",label:"Semana",badge:compSemana.length},
+            {key:"proyectos",label:"Proyectos",badge:proyectos.filter(p=>p.estado==="activo").length},
+            {key:"decisiones",label:"Decisiones",badge:0},
+          ].map(t=>(
+            <button key={t.key} onClick={()=>setTab(t.key)}
+              className={`flex-1 py-2.5 text-xs font-semibold transition relative
+                ${tab===t.key?"text-blue-600 border-b-2 border-blue-600 bg-white":"text-gray-400 hover:text-gray-600"}`}>
+              {t.label}
+              {t.badge>0&&(
+                <span className={`ml-1 text-[9px] px-1 py-0.5 rounded-full font-bold
+                  ${tab===t.key?"bg-blue-100 text-blue-700":"bg-gray-200 text-gray-500"}`}>
+                  {t.badge}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+
+        {/* Contenido */}
+        <div className="flex-1 overflow-y-auto">
+
+          {tab==="hoy"&&(
+            <div className="p-4 space-y-2">
+              {loading?(
+                <p className="text-center text-gray-400 py-8 text-sm">Cargando...</p>
+              ):compHoy.length===0?(
+                <div className="text-center py-12">
+                  <p className="text-4xl mb-3">✅</p>
+                  <p className="text-gray-500 font-semibold">Sin compromisos para hoy</p>
+                  <button onClick={()=>setShowForm(true)} className="mt-4 text-xs text-blue-600 hover:underline">
+                    + Agregar compromiso
+                  </button>
+                </div>
+              ):(
+                compHoy.map(c=>(
+                  <div key={c.id} className={`rounded-xl border p-3 transition hover:shadow-sm ${c.enRiesgo?"border-red-300 bg-red-50":"border-gray-200 bg-white"}`}>
+                    <div className="flex items-start gap-2">
+                      {!c.auto&&(
+                        <button onClick={()=>cambiarEstado(c.id,c.estado==="completado"?"pendiente":"completado")}
+                          className={`mt-0.5 w-5 h-5 rounded-md border-2 flex-shrink-0 flex items-center justify-center transition
+                            ${c.estado==="completado"?"bg-emerald-500 border-emerald-500":"border-gray-300 hover:border-blue-400"}`}>
+                          {c.estado==="completado"&&<span className="text-white text-[10px]">✓</span>}
+                        </button>
+                      )}
+                      {c.auto&&<span className="mt-0.5 text-base flex-shrink-0">{c.tipo==="ot_vencida"?"⚠️":"🛡"}</span>}
+
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-sm font-semibold leading-tight ${c.estado==="completado"?"line-through text-gray-400":"text-gray-800"}`}>
+                          {c.titulo}
+                        </p>
+                        <div className="flex items-center flex-wrap gap-1.5 mt-1.5">
+                          {c.hora&&<span className="text-[10px] text-gray-500 flex items-center gap-1">🕐 {c.hora}</span>}
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full border font-semibold ${prioColor[c.prioridad||"media"]}`}>
+                            {c.prioridad||"media"}
+                          </span>
+                          {c.enRiesgo&&(
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 border border-red-200 font-bold">
+                              ⚠️ En riesgo
+                            </span>
+                          )}
+                          {c.vinculo&&(
+                            <button onClick={()=>{
+                                if(c.vinculo.tipo==="ot") onNav("workorders");
+                                else if(c.vinculo.tipo==="plan") onNav("plans");
+                                onClose();
+                              }}
+                              className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200 font-semibold hover:bg-blue-100 transition">
+                              🔗 {c.vinculo.code||c.vinculo.tipo}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {!c.auto&&(
+                        <div className="flex flex-col gap-1 flex-shrink-0">
+                          <button onClick={()=>{
+                              const nuevaFecha=prompt("Nueva fecha (YYYY-MM-DD):",today);
+                              if(nuevaFecha) postergar(c.id,nuevaFecha);
+                            }}
+                            className="text-[10px] text-gray-400 hover:text-amber-600 transition" title="Postergar">📅</button>
+                          <button onClick={()=>eliminar(c.id)} className="text-[10px] text-gray-400 hover:text-red-500 transition" title="Eliminar">🗑</button>
+                        </div>
+                      )}
+                      {c.auto&&(
+                        <button onClick={()=>{
+                            if(c.vinculo?.tipo==="ot") onNav("workorders");
+                            else if(c.vinculo?.tipo==="plan") onNav("plans");
+                            onClose();
+                          }}
+                          className="text-[10px] px-2 py-1 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700 transition flex-shrink-0">
+                          Ver →
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
+          {tab==="semana"&&(
+            <div className="p-4">
+              {compSemana.length===0?(
+                <div className="text-center py-12">
+                  <p className="text-4xl mb-3">📅</p>
+                  <p className="text-gray-500 text-sm font-semibold">Sin compromisos esta semana</p>
+                </div>
+              ):(
+                Object.entries(
+                  compSemana.reduce((acc,c)=>{
+                    if(!acc[c.fecha]) acc[c.fecha]=[];
+                    acc[c.fecha].push(c);
+                    return acc;
+                  },{})
+                ).sort(([a],[b])=>a.localeCompare(b))
+                .map(([fecha,items])=>(
+                  <div key={fecha} className="mb-4">
+                    <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">
+                      {new Date(fecha+"T12:00:00").toLocaleDateString("es-CL",{weekday:"long",day:"numeric",month:"short"})}
+                      {fecha===today&&<span className="ml-2 text-blue-600 normal-case font-semibold">· Hoy</span>}
+                    </p>
+                    <div className="space-y-1.5">
+                      {items.map(c=>(
+                        <div key={c.id} className="flex items-center gap-2 bg-white rounded-xl border border-gray-200 px-3 py-2.5">
+                          <button onClick={()=>cambiarEstado(c.id,c.estado==="completado"?"pendiente":"completado")}
+                            className={`w-4 h-4 rounded border-2 flex-shrink-0 flex items-center justify-center transition
+                              ${c.estado==="completado"?"bg-emerald-500 border-emerald-500":"border-gray-300"}`}>
+                            {c.estado==="completado"&&<span className="text-white text-[8px]">✓</span>}
+                          </button>
+                          <p className={`flex-1 text-sm ${c.estado==="completado"?"line-through text-gray-400":"text-gray-700"}`}>
+                            {c.titulo}
+                          </p>
+                          <span className={`text-[9px] px-1.5 py-0.5 rounded-full border font-semibold ${prioColor[c.prioridad||"media"]}`}>
+                            {c.prioridad}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
+          {tab==="proyectos"&&(
+            <div className="p-4">
+              {proyectos.length===0?(
+                <div className="text-center py-12">
+                  <p className="text-4xl mb-3">📁</p>
+                  <p className="text-gray-500 text-sm font-semibold">Sin proyectos activos</p>
+                  <button onClick={()=>{
+                      const nombre=prompt("Nombre del proyecto:");
+                      if(!nombre) return;
+                      const nuevo={id:"proj_"+Math.random().toString(36).slice(2,8),nombre,estado:"activo",creadoAt:new Date().toISOString(),tareas:[]};
+                      const updated=[...proyectos,nuevo];
+                      setProyectos(updated);
+                      save(compromisos,updated);
+                    }}
+                    className="mt-4 text-sm text-blue-600 hover:underline font-semibold">
+                    + Crear proyecto
+                  </button>
+                </div>
+              ):(
+                <div className="space-y-4">
+                  {proyectos.map(p=>{
+                    const cols={"por_hacer":"Por hacer","en_proceso":"En proceso","bloqueado":"Bloqueado","listo":"Listo"};
+                    return(
+                      <div key={p.id} className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+                        <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+                          <p className="font-bold text-gray-800 text-sm">{p.nombre}</p>
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${p.estado==="activo"?"bg-emerald-100 text-emerald-700":"bg-gray-100 text-gray-500"}`}>
+                            {p.estado}
+                          </span>
+                        </div>
+                        <div className="p-3 grid grid-cols-2 gap-2">
+                          {Object.entries(cols).map(([col,label])=>{
+                            const tareas=(p.tareas||[]).filter(t=>t.col===col);
+                            return(
+                              <div key={col} className={`rounded-xl p-2 min-h-16 ${col==="bloqueado"?"bg-red-50 border border-red-100":col==="listo"?"bg-emerald-50 border border-emerald-100":"bg-gray-50 border border-gray-100"}`}>
+                                <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-1.5">
+                                  {label}<span className="ml-1 normal-case font-normal">({tareas.length})</span>
+                                </p>
+                                {tareas.map(t=>(
+                                  <div key={t.id} className="bg-white rounded-lg border border-gray-200 px-2 py-1.5 mb-1 text-xs text-gray-700 font-medium shadow-sm">
+                                    {t.titulo}
+                                  </div>
+                                ))}
+                                <button onClick={()=>{
+                                    const titulo=prompt("Nueva tarea:");
+                                    if(!titulo) return;
+                                    const tarea={id:"t_"+Math.random().toString(36).slice(2,8),titulo,col,creadoAt:new Date().toISOString()};
+                                    const updated=proyectos.map(pp=>pp.id===p.id?{...pp,tareas:[...(pp.tareas||[]),tarea]}:pp);
+                                    setProyectos(updated);
+                                    save(compromisos,updated);
+                                  }}
+                                  className="text-[10px] text-gray-400 hover:text-blue-500 w-full text-left mt-1 transition">
+                                  + agregar
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <button onClick={()=>{
+                      const nombre=prompt("Nombre del proyecto:");
+                      if(!nombre) return;
+                      const nuevo={id:"proj_"+Math.random().toString(36).slice(2,8),nombre,estado:"activo",creadoAt:new Date().toISOString(),tareas:[]};
+                      const updated=[...proyectos,nuevo];
+                      setProyectos(updated);
+                      save(compromisos,updated);
+                    }}
+                    className="w-full py-3 rounded-xl border-2 border-dashed border-gray-200 text-gray-400 text-sm hover:border-blue-300 hover:text-blue-500 transition font-semibold">
+                    + Nuevo proyecto
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {tab==="decisiones"&&(
+            <div className="p-4">
+              <div className="text-center py-12">
+                <p className="text-4xl mb-3">📝</p>
+                <p className="text-gray-500 text-sm font-semibold">Registro de decisiones</p>
+                <p className="text-gray-400 text-xs mt-1">Próximamente</p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer con métricas rápidas */}
+        <div className="border-t border-gray-100 px-5 py-3 bg-gray-50 flex items-center justify-between flex-shrink-0">
+          <div className="flex gap-4">
+            <div className="text-center">
+              <p className="text-lg font-bold text-emerald-600">
+                {compromisos.filter(c=>c.estado==="completado"&&c.creadoAt?.slice(0,7)===today.slice(0,7)).length}
+              </p>
+              <p className="text-[10px] text-gray-400">Completados</p>
+            </div>
+            <div className="text-center">
+              <p className="text-lg font-bold text-amber-600">{compromisos.filter(c=>c.estado==="pendiente").length}</p>
+              <p className="text-[10px] text-gray-400">Pendientes</p>
+            </div>
+            <div className="text-center">
+              <p className="text-lg font-bold text-red-600">{compromisos.filter(c=>c.enRiesgo).length}</p>
+              <p className="text-[10px] text-gray-400">En riesgo</p>
+            </div>
+          </div>
+          <p className="text-[10px] text-gray-400">Solo visible para ti</p>
+        </div>
+
+        {/* Modal crear compromiso */}
+        {showForm&&(
+          <div className="absolute inset-0 flex items-center justify-center z-10 p-4" style={{background:"rgba(0,0,0,0.5)"}}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden" onClick={e=>e.stopPropagation()}>
+              <div className="px-5 py-4 border-b border-gray-100">
+                <p className="font-bold text-gray-900">Nuevo compromiso</p>
+              </div>
+              <PlannerForm onSave={crearCompromiso} onCancel={()=>setShowForm(false)} today={today} data={data}/>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PlannerForm({onSave,onCancel,today,data}){
+  const [form,setForm]=useState({titulo:"",fecha:today,hora:"",prioridad:"media",privado:true,vinculo:null,notas:""});
+  const [busqueda,setBusqueda]=useState("");
+
+  const resultados=useMemo(()=>{
+    if(!busqueda||busqueda.length<2) return [];
+    const q=busqueda.toLowerCase();
+    const ots=(data.wos||[])
+      .filter(w=>(w.code||"").toLowerCase().includes(q)||(w.title||"").toLowerCase().includes(q))
+      .slice(0,3)
+      .map(w=>({tipo:"ot",id:w.id,code:w.code,label:w.title}));
+    const planes=(data.plans||[])
+      .filter(p=>(p.name||"").toLowerCase().includes(q))
+      .slice(0,3)
+      .map(p=>({tipo:"plan",id:p.id,label:p.name}));
+    return [...ots,...planes];
+  },[busqueda,data]);
+
+  return(
+    <div className="px-5 py-4 space-y-3">
+      <div>
+        <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">¿Qué debes hacer? *</label>
+        <input value={form.titulo} onChange={e=>setForm(f=>({...f,titulo:e.target.value}))}
+          className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-blue-400"
+          placeholder="Ej: Revisar OTs vencidas con equipo" autoFocus/>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Fecha</label>
+          <input type="date" value={form.fecha} onChange={e=>setForm(f=>({...f,fecha:e.target.value}))}
+            className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-blue-400"/>
+        </div>
+        <div>
+          <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Hora</label>
+          <input type="time" value={form.hora} onChange={e=>setForm(f=>({...f,hora:e.target.value}))}
+            className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-blue-400"/>
+        </div>
+      </div>
+      <div>
+        <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Prioridad</label>
+        <div className="flex gap-2">
+          {["alta","media","baja"].map(p=>(
+            <button key={p} onClick={()=>setForm(f=>({...f,prioridad:p}))}
+              className={`flex-1 py-1.5 rounded-xl text-xs font-semibold border transition capitalize
+                ${form.prioridad===p
+                  ?p==="alta"?"bg-red-100 text-red-700 border-red-300":p==="media"?"bg-amber-100 text-amber-700 border-amber-300":"bg-blue-100 text-blue-700 border-blue-300"
+                  :"bg-gray-50 text-gray-500 border-gray-200"}`}>
+              {p}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div>
+        <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Vincular a OT o Plan (opcional)</label>
+        <input value={busqueda} onChange={e=>setBusqueda(e.target.value)}
+          className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-blue-400"
+          placeholder="Buscar OT o plan..."/>
+        {resultados.length>0&&(
+          <div className="mt-1 border border-gray-200 rounded-xl overflow-hidden">
+            {resultados.map(r=>(
+              <button key={r.id} onClick={()=>{setForm(f=>({...f,vinculo:r}));setBusqueda(r.code||r.label||"");}}
+                className="w-full text-left px-3 py-2 text-xs hover:bg-blue-50 border-b border-gray-100 last:border-0 flex items-center gap-2">
+                <span>{r.tipo==="ot"?"🔧":"🛡"}</span>
+                <span className="font-semibold">{r.code}</span>
+                <span className="text-gray-500 truncate">{r.label}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        {form.vinculo&&(
+          <div className="mt-1 flex items-center gap-2 bg-blue-50 rounded-xl px-3 py-1.5">
+            <span className="text-xs text-blue-700 font-semibold">🔗 {form.vinculo.code||form.vinculo.tipo}</span>
+            <button onClick={()=>{setForm(f=>({...f,vinculo:null}));setBusqueda("");}} className="text-blue-400 hover:text-red-500 text-xs ml-auto">×</button>
+          </div>
+        )}
+      </div>
+      <div className="flex gap-3 pt-2">
+        <button onClick={onCancel} className="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-600 text-sm font-semibold hover:bg-gray-50 transition">
+          Cancelar
+        </button>
+        <button onClick={()=>{if(form.titulo.trim()) onSave(form);}} disabled={!form.titulo.trim()}
+          className="flex-1 py-2.5 rounded-xl text-white text-sm font-bold transition disabled:opacity-40"
+          style={{background:"linear-gradient(135deg,#2563eb,#1d4ed8)"}}>
+          Guardar
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── DASHBOARD CHECKLIST ─────────────────────────────────────────────────────
 function DashboardChecklist({data,activeModule}){
   const {checklists=[],equip=[]}=data;
@@ -25008,6 +25573,7 @@ const [pmNotifications,setPmNotifications]=useState([]);
 const [imgViewer,setImgViewer]=useState(null);
 const [conversaciones,setConversaciones]=useState([]);
 const [showChatPanel,setShowChatPanel]=useState(false);
+const [showPlanner,setShowPlanner]=useState(false);
 useEffect(()=>{window._mantekViewImg=setImgViewer;return()=>{window._mantekViewImg=null;};},[]);
 const navigate=p=>{setPage(p);setSidebarOpen(false);};
 const MODULE_LABEL=activeModule==="maritimo"
@@ -26008,7 +26574,7 @@ return(
 {sidebarOpen&&<div className="fixed inset-0 bg-black/40 z-40 lg:hidden" onClick={()=>setSidebarOpen(false)}/>}
 <Sidebar user={user} active={page} onNav={handleNav} onLogout={async()=>{try{await fetch(AUTH_URL+'/api/auth/logout',{method:'POST',credentials:'include'});}catch(e){console.warn('logout:',e);}setUser(null);setPage("dashboard");}} onChangePassword={()=>setShowChangePwd(true)} onChangeModule={()=>{setActiveModule(null);setActiveBarco(null);setPage("dashboard");setUser(null);setLoading(false);unsubs.current.forEach(u=>u());unsubs.current=[];setData({users:[],equip:[],plans:[],requests:[],wos:[],taskTemplates:[],checklists:[]});}} notifications={pendingReqs} devBadge={devBadge} online={online} collapsed={!sidebarOpen} moduleLabel={MODULE_LABEL} onInstall={showInstallBtn?async()=>{if(!installPrompt)return;installPrompt.prompt();const r=await installPrompt.userChoice;if(r.outcome==="accepted"){setShowInstallBtn(false);setInstallPrompt(null);}}:null} fontSize={fontSize} setFontSize={setFontSize} data={data} navCategorias={activeModule==="sgn"?SGN_NAV_CATEGORIAS:activeModule==="maritimo"?NAV_CATEGORIAS_MARITIMO:NAV_CATEGORIAS} userPerms={activeModule==="sgn"?getSgnUserPerms(user):getUserPerms(user)}/>
 <div className="flex-1 min-h-screen flex flex-col overflow-hidden">
-  <Topbar user={user} page={page} onNav={handleNav} notifCount={pendingReqs} onToggleSidebar={()=>setSidebarOpen(s=>!s)} fontSize={fontSize} setFontSize={setFontSize} onChangePassword={()=>setShowChangePwd(true)} onChangeModule={()=>{setActiveModule(null);setActiveBarco(null);setPage("dashboard");setUser(null);setLoading(false);unsubs.current.forEach(u=>u());unsubs.current=[];setData({users:[],equip:[],plans:[],requests:[],wos:[],taskTemplates:[],checklists:[]});}} onLogout={async()=>{try{await fetch(AUTH_URL+'/api/auth/logout',{method:'POST',credentials:'include'});}catch(e){console.warn('logout:',e);}setUser(null);setPage("dashboard");}} onInstall={showInstallBtn?async()=>{if(!installPrompt)return;installPrompt.prompt();const r=await installPrompt.userChoice;if(r.outcome==="accepted"){setShowInstallBtn(false);setInstallPrompt(null);}}:null} onOpenChat={()=>setShowChatPanel(true)} chatBadge={totalNoLeidos} navCategorias={activeModule==="sgn"?SGN_NAV_CATEGORIAS:activeModule==="maritimo"?NAV_CATEGORIAS_MARITIMO:NAV_CATEGORIAS}/>
+  <Topbar user={user} page={page} onNav={handleNav} notifCount={pendingReqs} onToggleSidebar={()=>setSidebarOpen(s=>!s)} fontSize={fontSize} setFontSize={setFontSize} onChangePassword={()=>setShowChangePwd(true)} onChangeModule={()=>{setActiveModule(null);setActiveBarco(null);setPage("dashboard");setUser(null);setLoading(false);unsubs.current.forEach(u=>u());unsubs.current=[];setData({users:[],equip:[],plans:[],requests:[],wos:[],taskTemplates:[],checklists:[]});}} onLogout={async()=>{try{await fetch(AUTH_URL+'/api/auth/logout',{method:'POST',credentials:'include'});}catch(e){console.warn('logout:',e);}setUser(null);setPage("dashboard");}} onInstall={showInstallBtn?async()=>{if(!installPrompt)return;installPrompt.prompt();const r=await installPrompt.userChoice;if(r.outcome==="accepted"){setShowInstallBtn(false);setInstallPrompt(null);}}:null} onOpenChat={()=>setShowChatPanel(true)} chatBadge={totalNoLeidos} onOpenPlanner={()=>setShowPlanner(true)} plannerBadge={0} navCategorias={activeModule==="sgn"?SGN_NAV_CATEGORIAS:activeModule==="maritimo"?NAV_CATEGORIAS_MARITIMO:NAV_CATEGORIAS}/>
   {(()=>{const _navCats=activeModule==="sgn"?SGN_NAV_CATEGORIAS:activeModule==="maritimo"?NAV_CATEGORIAS_MARITIMO:NAV_CATEGORIAS;const catKey=getCategoriaActiva(page,_navCats);const categoria=catKey?_navCats[catKey]:null;const paginaLabel=getPaginaLabel(page);if(!categoria)return null;return(<div className="flex items-center gap-1.5 text-xs text-gray-400 px-5 pt-3 pb-1"><span>{categoria.label}</span><ChevronRight size={11}/><span className="text-gray-600 font-medium">{paginaLabel}</span></div>);})()}
   <main className="flex-1 overflow-y-auto"><ErrorBoundary key={page}>{
     (()=>{
@@ -26084,6 +26650,7 @@ return(
   </div>
 )}
 {showChatPanel&&<ChatPanel user={user} users={data.users||[]} conversaciones={conversaciones} activeCOLL={activeCOLL} onClose={()=>setShowChatPanel(false)}/>}
+{showPlanner&&<PlannerPanel user={user} data={data} activeCOLL={activeCOLL} onNav={handleNav} onClose={()=>setShowPlanner(false)}/>}
 {showChangePwd&&<ChangePasswordModal user={user} onSave={async(o,n)=>handleChangePwd(o,n)} onClose={()=>setShowChangePwd(false)}/>}
 </div>
 );
