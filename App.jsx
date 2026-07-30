@@ -21106,6 +21106,7 @@ function PlannerPanel({user,data,activeCOLL,onNav,onClose}){
   const [showForm,setShowForm]=useState(false);
   const [checkInDone,setCheckInDone]=useState(false);
   const [loading,setLoading]=useState(true);
+  const [proyectoActivo,setProyectoActivo]=useState(null);
 
   const today=new Date().toISOString().slice(0,10);
   const todayKey="planner_checkin_"+today;
@@ -21269,6 +21270,24 @@ function PlannerPanel({user,data,activeCOLL,onNav,onClose}){
           </div>
         </div>
 
+        {proyectoActivo?(
+        <ProyectoEditor
+          proyecto={proyectoActivo}
+          onClose={()=>setProyectoActivo(null)}
+          onSave={(proyectoActualizado)=>{
+            const updated=proyectos.map(p=>p.id===proyectoActualizado.id?proyectoActualizado:p);
+            setProyectos(updated);
+            setProyectoActivo(proyectoActualizado);
+            save(compromisos,updated);
+          }}
+          onDelete={(id)=>{
+            const updated=proyectos.filter(p=>p.id!==id);
+            setProyectos(updated);
+            setProyectoActivo(null);
+            save(compromisos,updated);
+          }}
+        />
+        ):(<>
         {/* Check-in banner */}
         {!checkInDone&&pendientesAyer.length>0&&(
           <div className="px-5 py-3 bg-amber-50 border-b border-amber-200 flex-shrink-0">
@@ -21442,79 +21461,69 @@ function PlannerPanel({user,data,activeCOLL,onNav,onClose}){
           )}
 
           {tab==="proyectos"&&(
-            <div className="p-4">
+            <div className="p-4 space-y-3">
               {proyectos.length===0?(
                 <div className="text-center py-12">
                   <p className="text-4xl mb-3">📁</p>
                   <p className="text-gray-500 text-sm font-semibold">Sin proyectos activos</p>
-                  <button onClick={()=>{
-                      const nombre=prompt("Nombre del proyecto:");
-                      if(!nombre) return;
-                      const nuevo={id:"proj_"+Math.random().toString(36).slice(2,8),nombre,estado:"activo",creadoAt:new Date().toISOString(),tareas:[]};
-                      const updated=[...proyectos,nuevo];
-                      setProyectos(updated);
-                      save(compromisos,updated);
-                    }}
-                    className="mt-4 text-sm text-blue-600 hover:underline font-semibold">
-                    + Crear proyecto
-                  </button>
                 </div>
               ):(
-                <div className="space-y-4">
-                  {proyectos.map(p=>{
-                    const cols={"por_hacer":"Por hacer","en_proceso":"En proceso","bloqueado":"Bloqueado","listo":"Listo"};
-                    return(
-                      <div key={p.id} className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-                        <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-                          <p className="font-bold text-gray-800 text-sm">{p.nombre}</p>
-                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${p.estado==="activo"?"bg-emerald-100 text-emerald-700":"bg-gray-100 text-gray-500"}`}>
-                            {p.estado}
-                          </span>
+                proyectos.map(p=>{
+                  const tareasTotal=p.tareas?.length||0;
+                  const tareasListas=(p.tareas||[]).filter(t=>t.col==="listo").length;
+                  const pct=tareasTotal>0?Math.round(tareasListas/tareasTotal*100):0;
+                  return(
+                    <div key={p.id}
+                      onClick={()=>setProyectoActivo(p)}
+                      className="bg-white rounded-2xl border border-gray-200 p-4 cursor-pointer hover:shadow-md hover:border-blue-300 transition group">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1 min-w-0">
+                          <p className="font-bold text-gray-800 group-hover:text-blue-700 transition">{p.nombre}</p>
+                          <p className="text-xs text-gray-400 mt-0.5">
+                            {tareasTotal} tareas · {tareasListas} listas
+                            {p.fechaObjetivo&&` · Meta: ${new Date(p.fechaObjetivo+"T12:00:00").toLocaleDateString("es-CL",{day:"numeric",month:"short"})}`}
+                          </p>
                         </div>
-                        <div className="p-3 grid grid-cols-2 gap-2">
-                          {Object.entries(cols).map(([col,label])=>{
-                            const tareas=(p.tareas||[]).filter(t=>t.col===col);
-                            return(
-                              <div key={col} className={`rounded-xl p-2 min-h-16 ${col==="bloqueado"?"bg-red-50 border border-red-100":col==="listo"?"bg-emerald-50 border border-emerald-100":"bg-gray-50 border border-gray-100"}`}>
-                                <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-1.5">
-                                  {label}<span className="ml-1 normal-case font-normal">({tareas.length})</span>
-                                </p>
-                                {tareas.map(t=>(
-                                  <div key={t.id} className="bg-white rounded-lg border border-gray-200 px-2 py-1.5 mb-1 text-xs text-gray-700 font-medium shadow-sm">
-                                    {t.titulo}
-                                  </div>
-                                ))}
-                                <button onClick={()=>{
-                                    const titulo=prompt("Nueva tarea:");
-                                    if(!titulo) return;
-                                    const tarea={id:"t_"+Math.random().toString(36).slice(2,8),titulo,col,creadoAt:new Date().toISOString()};
-                                    const updated=proyectos.map(pp=>pp.id===p.id?{...pp,tareas:[...(pp.tareas||[]),tarea]}:pp);
-                                    setProyectos(updated);
-                                    save(compromisos,updated);
-                                  }}
-                                  className="text-[10px] text-gray-400 hover:text-blue-500 w-full text-left mt-1 transition">
-                                  + agregar
-                                </button>
-                              </div>
-                            );
-                          })}
-                        </div>
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold flex-shrink-0 ml-2 ${p.estado==="activo"?"bg-emerald-100 text-emerald-700":"bg-gray-100 text-gray-500"}`}>
+                          {p.estado}
+                        </span>
                       </div>
-                    );
-                  })}
-                  <button onClick={()=>{
-                      const nombre=prompt("Nombre del proyecto:");
-                      if(!nombre) return;
-                      const nuevo={id:"proj_"+Math.random().toString(36).slice(2,8),nombre,estado:"activo",creadoAt:new Date().toISOString(),tareas:[]};
-                      const updated=[...proyectos,nuevo];
-                      setProyectos(updated);
-                      save(compromisos,updated);
-                    }}
-                    className="w-full py-3 rounded-xl border-2 border-dashed border-gray-200 text-gray-400 text-sm hover:border-blue-300 hover:text-blue-500 transition font-semibold">
-                    + Nuevo proyecto
-                  </button>
-                </div>
+                      {tareasTotal>0&&(
+                        <div className="mt-3">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-[10px] text-gray-400">Progreso</span>
+                            <span className="text-[10px] font-bold text-gray-600">{pct}%</span>
+                          </div>
+                          <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                            <div className="h-full bg-blue-500 rounded-full transition-all" style={{width:pct+"%"}}/>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
               )}
+              <button
+                onClick={()=>{
+                  const nombre=prompt("Nombre del proyecto:");
+                  if(!nombre?.trim()) return;
+                  const fechaObjetivo=prompt("Fecha objetivo (YYYY-MM-DD):",new Date(Date.now()+30*86400000).toISOString().slice(0,10));
+                  const nuevo={
+                    id:"proj_"+Math.random().toString(36).slice(2,8),
+                    nombre:nombre.trim(),
+                    estado:"activo",
+                    fechaObjetivo:fechaObjetivo||"",
+                    creadoAt:new Date().toISOString(),
+                    tareas:[],
+                  };
+                  const updated=[...proyectos,nuevo];
+                  setProyectos(updated);
+                  save(compromisos,updated);
+                  setProyectoActivo(nuevo);
+                }}
+                className="w-full py-3 rounded-xl border-2 border-dashed border-gray-200 text-gray-400 text-sm hover:border-blue-300 hover:text-blue-500 transition font-semibold">
+                + Nuevo proyecto
+              </button>
             </div>
           )}
 
@@ -21549,6 +21558,7 @@ function PlannerPanel({user,data,activeCOLL,onNav,onClose}){
           </div>
           <p className="text-[10px] text-gray-400">Solo visible para ti</p>
         </div>
+        </>)}
 
         {/* Modal crear compromiso */}
         {showForm&&(
@@ -21562,6 +21572,328 @@ function PlannerPanel({user,data,activeCOLL,onNav,onClose}){
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function ProyectoEditor({proyecto,onClose,onSave,onDelete}){
+  const [vistaEditor,setVistaEditor]=useState("kanban");
+  const [tareas,setTareas]=useState(proyecto.tareas||[]);
+  const [showFormTarea,setShowFormTarea]=useState(false);
+  const [formTarea,setFormTarea]=useState({titulo:"",col:"por_hacer",fechaInicio:"",duracion:1,responsable:"",notas:""});
+
+  const guardarTarea=()=>{
+    if(!formTarea.titulo.trim()) return;
+    const fechaInicio=formTarea.fechaInicio||new Date().toISOString().slice(0,10);
+    const dur=parseInt(formTarea.duracion)||1;
+    const fechaFin=new Date(new Date(fechaInicio+"T12:00:00").getTime()+(dur-1)*86400000).toISOString().slice(0,10);
+
+    const nueva={
+      id:"t_"+Math.random().toString(36).slice(2,8),
+      titulo:formTarea.titulo.trim(),
+      col:formTarea.col,
+      fechaInicio,
+      duracion:dur,
+      fechaFin,
+      responsable:formTarea.responsable||"",
+      notas:formTarea.notas||"",
+      creadoAt:new Date().toISOString(),
+    };
+    const updated=[...tareas,nueva];
+    setTareas(updated);
+    onSave({...proyecto,tareas:updated});
+    setShowFormTarea(false);
+    setFormTarea({titulo:"",col:"por_hacer",fechaInicio:"",duracion:1,responsable:"",notas:""});
+  };
+
+  const cambiarCol=(tareaId,nuevoCol)=>{
+    const updated=tareas.map(t=>t.id===tareaId?{...t,col:nuevoCol}:t);
+    setTareas(updated);
+    onSave({...proyecto,tareas:updated});
+  };
+
+  const eliminarTarea=(id)=>{
+    const updated=tareas.filter(t=>t.id!==id);
+    setTareas(updated);
+    onSave({...proyecto,tareas:updated});
+  };
+
+  const cols={
+    por_hacer:{label:"Por hacer",color:"bg-gray-50 border-gray-200"},
+    en_proceso:{label:"En proceso",color:"bg-blue-50 border-blue-200"},
+    bloqueado:{label:"Bloqueado",color:"bg-red-50 border-red-200"},
+    listo:{label:"Listo",color:"bg-emerald-50 border-emerald-200"},
+  };
+
+  const pct=tareas.length>0?Math.round(tareas.filter(t=>t.col==="listo").length/tareas.length*100):0;
+
+  const fechasValidas=tareas
+    .filter(t=>t.fechaInicio&&t.fechaFin)
+    .flatMap(t=>[new Date(t.fechaInicio+"T12:00:00"),new Date(t.fechaFin+"T12:00:00")]);
+  const ganttStart=fechasValidas.length>0?new Date(Math.min(...fechasValidas)):new Date();
+  const ganttEnd=fechasValidas.length>0?new Date(Math.max(...fechasValidas)):new Date(Date.now()+30*86400000);
+  const totalDias=Math.max(Math.round((ganttEnd-ganttStart)/86400000)+1,7);
+
+  return(
+    <div className="flex-1 flex flex-col overflow-hidden">
+
+      {/* Header del editor */}
+      <div className="px-5 py-3 border-b border-gray-100 flex items-center gap-3 bg-white flex-shrink-0">
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-700 transition text-lg">←</button>
+        <div className="flex-1 min-w-0">
+          <p className="font-bold text-gray-900 truncate">{proyecto.nombre}</p>
+          <div className="flex items-center gap-2 mt-0.5">
+            <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden max-w-24">
+              <div className="h-full bg-blue-500 rounded-full" style={{width:pct+"%"}}/>
+            </div>
+            <span className="text-[10px] text-gray-400 font-semibold">{pct}%</span>
+            {proyecto.fechaObjetivo&&(
+              <span className="text-[10px] text-gray-400">
+                · Meta: {new Date(proyecto.fechaObjetivo+"T12:00:00").toLocaleDateString("es-CL",{day:"numeric",month:"short"})}
+              </span>
+            )}
+          </div>
+        </div>
+        <button onClick={()=>setShowFormTarea(true)} className="px-3 py-1.5 rounded-xl text-xs font-bold text-white transition" style={{background:"#2563eb"}}>
+          + Tarea
+        </button>
+        <button onClick={()=>{if(window.confirm(`¿Eliminar el proyecto "${proyecto.nombre}"? Esta acción no se puede deshacer.`))onDelete(proyecto.id);}}
+          className="text-gray-300 hover:text-red-500 transition" title="Eliminar proyecto">
+          🗑
+        </button>
+      </div>
+
+      {/* Selector de vista */}
+      <div className="flex border-b border-gray-100 bg-gray-50 px-4 flex-shrink-0">
+        {[
+          {key:"kanban",label:"Kanban"},
+          {key:"gantt",label:"Gantt"},
+          {key:"lista",label:"Lista"},
+        ].map(v=>(
+          <button key={v.key} onClick={()=>setVistaEditor(v.key)}
+            className={`py-2 px-3 text-xs font-semibold border-b-2 transition mr-1
+              ${vistaEditor===v.key?"border-blue-600 text-blue-600":"border-transparent text-gray-400 hover:text-gray-600"}`}>
+            {v.label}
+          </button>
+        ))}
+      </div>
+
+      {/* VISTA KANBAN */}
+      {vistaEditor==="kanban"&&(
+        <div className="flex-1 overflow-y-auto p-3">
+          {tareas.length===0?(
+            <div className="text-center py-12">
+              <p className="text-3xl mb-2">📋</p>
+              <p className="text-gray-500 text-sm">Sin tareas aún</p>
+              <button onClick={()=>setShowFormTarea(true)} className="mt-3 text-sm text-blue-600 hover:underline font-semibold">
+                + Agregar primera tarea
+              </button>
+            </div>
+          ):(
+            <div className="grid grid-cols-2 gap-2">
+              {Object.entries(cols).map(([colKey,colData])=>{
+                const tareasCol=tareas.filter(t=>t.col===colKey);
+                return(
+                  <div key={colKey} className={`rounded-xl border p-2 min-h-24 ${colData.color}`}>
+                    <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-2">
+                      {colData.label}<span className="ml-1 normal-case font-normal">({tareasCol.length})</span>
+                    </p>
+                    <div className="space-y-1.5">
+                      {tareasCol.map(t=>(
+                        <div key={t.id} className="bg-white rounded-lg border border-gray-200 p-2 shadow-sm">
+                          <p className="text-xs font-semibold text-gray-800 leading-tight">{t.titulo}</p>
+                          {t.fechaInicio&&(
+                            <p className="text-[10px] text-gray-400 mt-1">
+                              {new Date(t.fechaInicio+"T12:00:00").toLocaleDateString("es-CL",{day:"numeric",month:"short"})}
+                              {t.duracion>1&&` · ${t.duracion}d`}
+                            </p>
+                          )}
+                          <div className="flex gap-1 mt-1.5 flex-wrap">
+                            {Object.entries(cols).filter(([k])=>k!==colKey).map(([k,d])=>(
+                              <button key={k} onClick={()=>cambiarCol(t.id,k)}
+                                className="text-[9px] px-1.5 py-0.5 rounded-md border border-gray-200 text-gray-500 hover:bg-gray-100 transition">
+                                → {d.label}
+                              </button>
+                            ))}
+                            <button onClick={()=>eliminarTarea(t.id)} className="text-[9px] px-1.5 py-0.5 rounded-md text-red-400 hover:text-red-600 transition ml-auto">
+                              🗑
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* VISTA GANTT */}
+      {vistaEditor==="gantt"&&(
+        <div className="flex-1 overflow-auto p-3">
+          {tareas.filter(t=>t.fechaInicio).length===0?(
+            <div className="text-center py-12">
+              <p className="text-3xl mb-2">📊</p>
+              <p className="text-gray-500 text-sm">Agrega tareas con fecha para ver el Gantt</p>
+            </div>
+          ):(
+            <div>
+              <div className="flex mb-1" style={{marginLeft:"120px"}}>
+                {Array.from({length:Math.min(totalDias,60)},(_,i)=>{
+                  const d=new Date(ganttStart.getTime()+i*86400000);
+                  const esHoy=d.toISOString().slice(0,10)===new Date().toISOString().slice(0,10);
+                  return(
+                    <div key={i} className={`flex-shrink-0 text-center text-[8px] border-r border-gray-100 ${esHoy?"text-blue-600 font-bold":"text-gray-400"}`} style={{width:"20px"}}>
+                      {d.getDate()===1||i===0?d.toLocaleDateString("es-CL",{month:"short"}):d.getDate()}
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="space-y-1">
+                {tareas.filter(t=>t.fechaInicio).sort((a,b)=>(a.fechaInicio||"").localeCompare(b.fechaInicio||"")).map(t=>{
+                  const ini=new Date(t.fechaInicio+"T12:00:00");
+                  const fin=new Date(t.fechaFin?t.fechaFin+"T12:00:00":ini.getTime()+(t.duracion-1)*86400000);
+                  const offsetDias=Math.round((ini-ganttStart)/86400000);
+                  const durDias=Math.round((fin-ini)/86400000)+1;
+                  const colColor={por_hacer:"#94a3b8",en_proceso:"#3b82f6",bloqueado:"#ef4444",listo:"#10b981"}[t.col]||"#94a3b8";
+
+                  return(
+                    <div key={t.id} className="flex items-center">
+                      <div className="flex-shrink-0 w-28 pr-2 text-right">
+                        <p className="text-[10px] font-semibold text-gray-700 truncate" title={t.titulo}>{t.titulo}</p>
+                      </div>
+                      <div className="flex relative" style={{width:Math.min(totalDias,60)*20+"px"}}>
+                        <div className="absolute inset-0 flex pointer-events-none">
+                          {Array.from({length:Math.min(totalDias,60)},(_,i)=>(
+                            <div key={i} className="flex-shrink-0 border-r border-gray-100" style={{width:"20px"}}/>
+                          ))}
+                        </div>
+                        <div className="absolute h-5 rounded-md flex items-center justify-center text-white text-[9px] font-bold shadow-sm"
+                          style={{left:offsetDias*20+"px",width:Math.max(durDias*20,20)+"px",background:colColor,top:"2px"}}
+                          title={`${t.titulo} · ${t.duracion}d`}>
+                          {durDias>2&&`${t.duracion}d`}
+                        </div>
+                        {(()=>{
+                          const hoyOffset=Math.round((new Date()-ganttStart)/86400000);
+                          if(hoyOffset<0||hoyOffset>Math.min(totalDias,60)) return null;
+                          return(
+                            <div className="absolute top-0 bottom-0 w-px bg-red-400 pointer-events-none" style={{left:hoyOffset*20+"px",zIndex:10}}/>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="flex gap-3 mt-4 pt-3 border-t border-gray-100 flex-wrap">
+                {Object.entries({por_hacer:"#94a3b8",en_proceso:"#3b82f6",bloqueado:"#ef4444",listo:"#10b981"}).map(([k,color])=>(
+                  <div key={k} className="flex items-center gap-1.5">
+                    <div className="w-3 h-3 rounded-sm" style={{background:color}}/>
+                    <span className="text-[10px] text-gray-500 capitalize">{cols[k]?.label||k}</span>
+                  </div>
+                ))}
+                <div className="flex items-center gap-1.5">
+                  <div className="w-px h-3 bg-red-400"/>
+                  <span className="text-[10px] text-gray-500">Hoy</span>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* VISTA LISTA */}
+      {vistaEditor==="lista"&&(
+        <div className="flex-1 overflow-y-auto">
+          {tareas.length===0?(
+            <div className="text-center py-12">
+              <p className="text-gray-400 text-sm">Sin tareas</p>
+            </div>
+          ):(
+            <div className="divide-y divide-gray-100">
+              {tareas.sort((a,b)=>(a.fechaInicio||"9999").localeCompare(b.fechaInicio||"9999")).map(t=>(
+                <div key={t.id} className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition">
+                  <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${t.col==="listo"?"bg-emerald-500":t.col==="en_proceso"?"bg-blue-500":t.col==="bloqueado"?"bg-red-500":"bg-gray-300"}`}/>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-gray-800">{t.titulo}</p>
+                    <div className="flex gap-3 mt-0.5">
+                      {t.fechaInicio&&<span className="text-[10px] text-gray-400">📅 {new Date(t.fechaInicio+"T12:00:00").toLocaleDateString("es-CL")}</span>}
+                      {t.duracion>0&&<span className="text-[10px] text-gray-400">⏱ {t.duracion} día{t.duracion>1?"s":""}</span>}
+                      {t.responsable&&<span className="text-[10px] text-gray-400">👤 {t.responsable}</span>}
+                    </div>
+                  </div>
+                  <select value={t.col} onChange={e=>cambiarCol(t.id,e.target.value)}
+                    className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 bg-white text-gray-600 focus:outline-none">
+                    {Object.entries(cols).map(([k,d])=><option key={k} value={k}>{d.label}</option>)}
+                  </select>
+                  <button onClick={()=>eliminarTarea(t.id)} className="text-gray-300 hover:text-red-400 transition text-sm flex-shrink-0">🗑</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Modal nueva tarea */}
+      {showFormTarea&&(
+        <div className="absolute inset-0 flex items-center justify-center z-10 p-4" style={{background:"rgba(0,0,0,0.5)"}}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden" onClick={e=>e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+              <p className="font-bold text-gray-900">Nueva tarea</p>
+              <button onClick={()=>setShowFormTarea(false)} className="text-gray-400 hover:text-gray-600">
+                <X size={16}/>
+              </button>
+            </div>
+            <div className="px-5 py-4 space-y-3">
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Tarea *</label>
+                <input value={formTarea.titulo} onChange={e=>setFormTarea(f=>({...f,titulo:e.target.value}))}
+                  className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-blue-400"
+                  placeholder="Ej: Desmontar motor" autoFocus/>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Fecha inicio</label>
+                  <input type="date" value={formTarea.fechaInicio} onChange={e=>setFormTarea(f=>({...f,fechaInicio:e.target.value}))}
+                    className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-blue-400"/>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Duración (días)</label>
+                  <input type="number" min="1" value={formTarea.duracion} onChange={e=>setFormTarea(f=>({...f,duracion:parseInt(e.target.value)||1}))}
+                    className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-blue-400"/>
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Estado inicial</label>
+                <select value={formTarea.col} onChange={e=>setFormTarea(f=>({...f,col:e.target.value}))}
+                  className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-blue-400">
+                  {Object.entries(cols).map(([k,d])=><option key={k} value={k}>{d.label}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Responsable (opcional)</label>
+                <input value={formTarea.responsable} onChange={e=>setFormTarea(f=>({...f,responsable:e.target.value}))}
+                  className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-blue-400"
+                  placeholder="Nombre del responsable"/>
+              </div>
+              <div className="flex gap-3 pt-1">
+                <button onClick={()=>setShowFormTarea(false)}
+                  className="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-600 text-sm font-semibold hover:bg-gray-50 transition">
+                  Cancelar
+                </button>
+                <button onClick={guardarTarea} disabled={!formTarea.titulo.trim()}
+                  className="flex-1 py-2.5 rounded-xl text-white text-sm font-bold transition disabled:opacity-40" style={{background:"#2563eb"}}>
+                  Agregar tarea
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
