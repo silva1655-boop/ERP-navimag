@@ -8670,7 +8670,7 @@ const [showImport,setShowImport]=useState(false);
 const [importResult,setImportResult]=useState(null);
 const [importing,setImporting]=useState(false);
 const [editPlanTarget,setEditPlanTarget]=useState(null);
-const [editPlanForm,setEditPlanForm]=useState({frequency:"",estimatedHours:""});
+const [editPlanForm,setEditPlanForm]=useState({frequency:"",estimatedHours:"",materialesAsociados:[]});
 const [selPlanesIds,setSelPlanesIds]=useState(new Set());
 const [showBulkEditPlan,setShowBulkEditPlan]=useState(false);
 const [bulkEditForm,setBulkEditForm]=useState({campo:"estimatedHours",modo:"fijar",valor:""});
@@ -8919,7 +8919,7 @@ const savePlanEdit=()=>{
   if(isNaN(freq)||freq<=0){alert("Frecuencia inválida");return;}
   if(isNaN(hrs)||hrs<0){alert("Horas estimadas inválidas");return;}
   const updatedPlans=plans.map(pl=>pl.id===editPlanTarget.id
-    ?{...pl,frequency:freq,estimatedHours:hrs,horometroTarget:(parseFloat(pl.lastHorometro)||0)+freq}
+    ?{...pl,frequency:freq,estimatedHours:hrs,horometroTarget:(parseFloat(pl.lastHorometro)||0)+freq,materialesAsociados:editPlanForm.materialesAsociados||[]}
     :pl);
   setData(d=>({...d,plans:updatedPlans}));
   saveData("plans",updatedPlans);
@@ -9015,6 +9015,7 @@ const openEditPlanAssign=(assign)=>{
     area:assign.area||"",
     responsable:assign.responsable||"",
     estimatedHours:String(assign._isLegacy?(assign._estimatedHours||""):(assign.estimatedHoursOverride??tplA?.estimatedHours??"")),
+    materialesAsociados:assign._isLegacy?(assign._planRef?.materialesAsociados||[]):(assign.materialesAsociados||[]),
   });
   setShowEditPlanAssign(true);
 };
@@ -9050,6 +9051,7 @@ const saveEditPlanAssign=()=>{
       responsablePlan:f.responsable,
       technician:f.responsable,
       estimatedHours:parseFloat(f.estimatedHours)||0,
+      materialesAsociados:f.materialesAsociados||[],
       ...(tipoPlanNorm==="horometro"
         ?{horometroTarget:(parseFloat(pl.lastHorometro)||0)+freq,nextDueDate:null,proximaFecha:""}
         :{horometroTarget:null,nextDueDate:nextDueDateCalc,proximaFecha:nextDueDateCalc||""}),
@@ -9081,6 +9083,7 @@ const saveEditPlanAssign=()=>{
       area:f.area,
       responsable:f.responsable,
       estimatedHoursOverride:parseFloat(f.estimatedHours)||0,
+      materialesAsociados:f.materialesAsociados||[],
       ...(tipoPlanNorm==="horometro"
         ?{nextDueHours:(parseFloat(a.lastBaseHours)||0)+freq,nextDueDate:null}
         :{nextDueHours:null,nextDueDate:nextDueDateCalc,lastExecutionDate:a.lastExecutionDate||new Date().toISOString().slice(0,10)}),
@@ -9110,7 +9113,7 @@ const confirmAssignOT=()=>{
   const nc=normalizeCriticality(tpl.criticidad);
   const priority=nc==="alto"?"alta":nc==="medio"?"media":"baja";
   const otCode=nextOTCode(wos);
-  const newOT={id:uid(),code:otCode,type:"preventiva",source:"plan",assignmentId:assign.id,templateId:tpl.id,equipId:assign.equipId,title:tpl.name,priority,status:"asignada",assignedTo:assignOTMechanic,createdAt:new Date().toISOString(),scheduledDate:assignOTDate||new Date().toISOString().slice(0,10),estimatedHours:0,actualHours:null,description:`Plan ${tpl.code}: ${tpl.name}\nÁrea: ${tpl.area||"—"}\nTareas: ${(tpl.tasks||[]).map(t=>typeof t==="object"?t.name:t).join(", ")||"—"}`,observations:"",parts:[],materialesPlanificados:tpl.materiales||[],urgenciaBacklog:"programable",log:[{ts:new Date().toISOString(),action:"creada",user:user.name,detail:`OT desde asignación ${assign.code} · Plan ${tpl.code}`}]};
+  const newOT={id:uid(),code:otCode,type:"preventiva",source:"plan",assignmentId:assign.id,templateId:tpl.id,equipId:assign.equipId,title:tpl.name,priority,status:"asignada",assignedTo:assignOTMechanic,createdAt:new Date().toISOString(),scheduledDate:assignOTDate||new Date().toISOString().slice(0,10),estimatedHours:0,actualHours:null,description:`Plan ${tpl.code}: ${tpl.name}\nÁrea: ${tpl.area||"—"}\nTareas: ${(tpl.tasks||[]).map(t=>typeof t==="object"?t.name:t).join(", ")||"—"}`,observations:"",parts:[],materialesPlanificados:assign.materialesAsociados||tpl.materiales||[],urgenciaBacklog:"programable",log:[{ts:new Date().toISOString(),action:"creada",user:user.name,detail:`OT desde asignación ${assign.code} · Plan ${tpl.code}`}]};
   const updW=[...wos,newOT];setData(d=>({...d,wos:updW}));saveData("workOrders",updW);
   setShowAssignOTModal(false);setPendingAssignment(null);setAssignOTMechanic("");setAssignOTDate("");
   alert(`✅ OT ${otCode} generada`);
@@ -9374,6 +9377,22 @@ if(isMaritimo){
               <option key={u.id} value={u.id}>{u.name} ({u.role})</option>
             ))}
           </select>
+        </div>
+        <div>
+          <MaterialesEquipoQuickPick
+            equipId={editPlanAssign.equipId}
+            materialesEquipo={materialesEquipo}
+            onAgregarAPlan={m=>setEditPlanAssignForm(f=>({...f,materialesAsociados:[...(f.materialesAsociados||[]),{codigo:m.codigo,descripcion:m.descripcion,cantidad:m.cantidad||1,unidad:m.unidad||"Pza",_modoIngreso:"manual"}]}))}
+            onAbrirCatalogo={()=>{setMatEquipoTarget(editPlanAssign.equipId);setShowMatEquipo(true);}}
+          />
+          <MaterialSelector
+            items={editPlanAssignForm.materialesAsociados||[]}
+            onChange={items=>setEditPlanAssignForm(f=>({...f,materialesAsociados:items}))}
+            taxonomiaObj={taxonomiaObj}
+            repuestos={data.repuestos||[]}
+            label="MATERIALES ASOCIADOS (Previsión)"
+            emptyText="Sin materiales de previsión — no descuenta stock"
+          />
         </div>
       </div>
       <ModalActions onSave={saveEditPlanAssign} onCancel={()=>{setShowEditPlanAssign(false);setEditPlanAssign(null);setEditPlanAssignForm(null);}} label="Guardar cambios"/>
@@ -10786,7 +10805,7 @@ return(
 <div className="flex flex-col items-end gap-2 flex-shrink-0">
 {user.role==="supervisor"&&<>
 <input type="checkbox" checked={selPlanesIds.has(p.id)} onChange={e=>{setSelPlanesIds(prev=>{const n=new Set(prev);e.target.checked?n.add(p.id):n.delete(p.id);return n;});}} className="w-4 h-4" style={{accentColor:NV.blue}}/>
-<button onClick={()=>{setEditPlanTarget(p);setEditPlanForm({frequency:String(p.frequency),estimatedHours:String(p.estimatedHours||0)});}} className="p-1.5 rounded-lg hover:bg-blue-50 transition" style={{color:NV.blue}} title="Editar plan"><Edit2 size={13}/></button>
+<button onClick={()=>{setEditPlanTarget(p);setEditPlanForm({frequency:String(p.frequency),estimatedHours:String(p.estimatedHours||0),materialesAsociados:p.materialesAsociados||[]});}} className="p-1.5 rounded-lg hover:bg-blue-50 transition" style={{color:NV.blue}} title="Editar plan"><Edit2 size={13}/></button>
 <button onClick={()=>generateOT(p)} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg hover:opacity-90 transition font-medium text-white" style={{background:NV.blue}}><Zap size={12}/>Generar OT</button>
 <button onClick={()=>deletePlan(p.id)} className="text-xs text-gray-300 hover:text-red-500 transition p-1"><Trash2 size={13}/></button>
 </>}
@@ -10925,7 +10944,7 @@ return(
                               <td className="px-4 py-3 text-center">
                                 <div className="flex items-center justify-center gap-1">
                                   <input type="checkbox" checked={selPlanesIds.has(p.id)} onChange={e=>{setSelPlanesIds(prev=>{const n=new Set(prev);e.target.checked?n.add(p.id):n.delete(p.id);return n;});}} className="w-3.5 h-3.5" style={{accentColor:NV.blue}}/>
-                                  <button onClick={()=>{setEditPlanTarget(p);setEditPlanForm({frequency:String(p.frequency),estimatedHours:String(p.estimatedHours||0)});}} className="p-1 rounded hover:bg-blue-50 transition" style={{color:NV.blue}} title="Editar plan">
+                                  <button onClick={()=>{setEditPlanTarget(p);setEditPlanForm({frequency:String(p.frequency),estimatedHours:String(p.estimatedHours||0),materialesAsociados:p.materialesAsociados||[]});}} className="p-1 rounded hover:bg-blue-50 transition" style={{color:NV.blue}} title="Editar plan">
                                     <Edit2 size={12}/>
                                   </button>
                                   {!hasActiveOT&&(
@@ -11642,7 +11661,7 @@ return(
 
 {/* Individual plan edit modal */}
 {editPlanTarget&&(
-<Modal title={`Editar Plan: ${editPlanTarget.name}`} onClose={()=>setEditPlanTarget(null)}>
+<Modal title={`Editar Plan: ${editPlanTarget.name}`} onClose={()=>setEditPlanTarget(null)} wide={true}>
 <div className="space-y-4">
 <div className="grid grid-cols-2 gap-3">
 <div><label className="text-gray-500 text-xs font-medium mb-1 block">FRECUENCIA (horas)</label><input type="number" value={editPlanForm.frequency} onChange={e=>setEditPlanForm(f=>({...f,frequency:e.target.value}))} className={iCls} placeholder="250"/></div>
@@ -11651,6 +11670,22 @@ return(
 <div className="rounded-lg p-3 text-xs flex items-start gap-2" style={{background:NV.light,color:NV.navy,border:`1px solid #BFD9F2`}}>
 <Info size={13} className="flex-shrink-0 mt-0.5"/>
 <span>Nueva meta horómetro = base + frecuencia = <strong>{((parseFloat(editPlanTarget.lastHorometro)||0)+(parseFloat(editPlanForm.frequency)||0)).toLocaleString()}h</strong></span>
+</div>
+<div>
+  <MaterialesEquipoQuickPick
+    equipId={editPlanTarget.equipId}
+    materialesEquipo={materialesEquipo}
+    onAgregarAPlan={m=>setEditPlanForm(f=>({...f,materialesAsociados:[...(f.materialesAsociados||[]),{codigo:m.codigo,descripcion:m.descripcion,cantidad:m.cantidad||1,unidad:m.unidad||"Pza",_modoIngreso:"manual"}]}))}
+    onAbrirCatalogo={()=>{setMatEquipoTarget(editPlanTarget.equipId);setShowMatEquipo(true);}}
+  />
+  <MaterialSelector
+    items={editPlanForm.materialesAsociados||[]}
+    onChange={items=>setEditPlanForm(f=>({...f,materialesAsociados:items}))}
+    taxonomiaObj={taxonomiaObj}
+    repuestos={data.repuestos||[]}
+    label="MATERIALES ASOCIADOS (Previsión)"
+    emptyText="Sin materiales de previsión — no descuenta stock"
+  />
 </div>
 </div>
 <ModalActions onSave={savePlanEdit} onCancel={()=>setEditPlanTarget(null)} label="Guardar cambios"/>
