@@ -13786,6 +13786,8 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
   const [filtroCategoria,setFiltroCategoria]=useState("");
   const [incluirPuntuales,setIncluirPuntuales]=useState(true);
   const [mesDetalle,setMesDetalle]=useState(null);
+  const [reclasificando,setReclasificando]=useState(false);
+  const [reclasificarResult,setReclasificarResult]=useState(null);
   const fileInputRef=useRef(null);
   const vesselIdActual=activeModule==="maritimo"?(activeBarco||null):null;
 
@@ -13826,7 +13828,7 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
   const resumenPorMes=useMemo(()=>{
     const r={};
     Object.entries(txnsPorMes).forEach(([mes,rows])=>{
-      r[mes]={count:rows.length,total:rows.reduce((s,t)=>s+(t.valor||0),0)};
+      r[mes]={count:rows.length,total:rows.reduce((s,t)=>s+(t.valor||0),0),sinModulo:rows.filter(t=>!t.modulo).length};
     });
     return r;
   },[txnsPorMes]);
@@ -14182,28 +14184,42 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
       }
       const importId=uid();
       const centrosNoMapeados=new Set();
-      let totalInsertadas=0,totalDuplicadas=0;
+      let totalInsertadas=0,totalDuplicadas=0,totalReclasificadas=0;
       for(const [mes,txns] of Object.entries(porMes)){
         const ref=doc(db,COLL_GASTOS_TXN,mes);
         const snap=await getDoc(ref);
         const existentes=snap.exists()?(snap.data().data||[]):[];
-        const hashesExistentes=new Set(existentes.map(t=>t.hashDedupe));
+        const indicePorHash=new Map(existentes.map((t,i)=>[t.hashDedupe,i]));
         const nuevas=[];
+        let huboReclasificacion=false;
         txns.forEach(t=>{
-          if(hashesExistentes.has(t.hashDedupe)){totalDuplicadas++;return;}
           const cfg=configCentros.find(c=>c.centroCoste===t.centroCoste);
           if(!cfg) centrosNoMapeados.add(t.centroCoste||"(vacío)");
+          const nuevoModulo=cfg?.modulo||null;
+          const nuevoVesselId=cfg?.vesselId||null;
+          if(indicePorHash.has(t.hashDedupe)){
+            totalDuplicadas++;
+            // La fila ya existía — si el centro de costo se mapeó/cambió
+            // DESPUÉS de esta importación, se reclasifica en vez de ignorarla.
+            const idx=indicePorHash.get(t.hashDedupe);
+            const actual=existentes[idx];
+            if((actual.modulo||null)!==nuevoModulo||(actual.vesselId||null)!==nuevoVesselId){
+              existentes[idx]={...actual,modulo:nuevoModulo,vesselId:nuevoVesselId};
+              huboReclasificacion=true;
+              totalReclasificadas++;
+            }
+            return;
+          }
           nuevas.push({
             ...t,
-            modulo:cfg?.modulo||null,
-            vesselId:cfg?.vesselId||null,
+            modulo:nuevoModulo,
+            vesselId:nuevoVesselId,
             importId,
             importedAt:new Date().toISOString(),
             importedBy:user.name||user.username||"",
           });
-          hashesExistentes.add(t.hashDedupe);
         });
-        if(nuevas.length>0){
+        if(nuevas.length>0||huboReclasificacion){
           const mergedArr=[...existentes,...nuevas];
           const sizeKB=Math.round(JSON.stringify({data:mergedArr}).length/1024);
           if(sizeKB>1000){
@@ -14222,6 +14238,7 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
       setImportResult({
         insertadas:totalInsertadas,
         duplicadas:totalDuplicadas,
+        reclasificadas:totalReclasificadas,
         centrosNoMapeados:[...centrosNoMapeados],
         errores,
       });
@@ -14231,6 +14248,36 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
     }
     setImporting(false);
     if(fileInputRef.current) fileInputRef.current.value="";
+  };
+
+  // Re-aplica la configuración actual de centros de costo a TODAS las filas ya
+  // guardadas, sin necesitar el archivo original — para cuando se agrega o
+  // corrige un centro de costo después de haber importado.
+  const reclasificarTodo=async()=>{
+    setReclasificando(true);
+    setReclasificarResult(null);
+    let total=0;
+    for(const mes of mesesIndex){
+      const ref=doc(db,COLL_GASTOS_TXN,mes);
+      const snap=await getDoc(ref);
+      if(!snap.exists()) continue;
+      const rows=snap.data().data||[];
+      let cambiaron=false;
+      const actualizadas=rows.map(t=>{
+        const cfg=configCentros.find(c=>c.centroCoste===t.centroCoste);
+        const nuevoModulo=cfg?.modulo||null;
+        const nuevoVesselId=cfg?.vesselId||null;
+        if((t.modulo||null)!==nuevoModulo||(t.vesselId||null)!==nuevoVesselId){
+          cambiaron=true;
+          total++;
+          return{...t,modulo:nuevoModulo,vesselId:nuevoVesselId};
+        }
+        return t;
+      });
+      if(cambiaron) await setDoc(ref,{data:actualizadas});
+    }
+    setReclasificando(false);
+    setReclasificarResult(total);
   };
 
   const fmtCLP=(n)=>"$"+Math.round(n||0).toLocaleString("es-CL");
@@ -14569,6 +14616,20 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
             ))}
           </div>
         )}
+        {mesesIndex.length>0&&(
+          <div className="mt-3 pt-3 border-t border-gray-100">
+            <button onClick={reclasificarTodo} disabled={reclasificando}
+              className="text-xs px-3 py-2 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition disabled:opacity-50">
+              {reclasificando?"Reclasificando...":"🔄 Reclasificar todas las filas ya importadas"}
+            </button>
+            <p className="text-gray-300 text-[10px] mt-1">
+              Vuelve a aplicar esta configuración a todas las transacciones ya guardadas — úsalo después de agregar o corregir un centro de costo (reimportar el mismo archivo NO reclasifica solo, porque las filas duplicadas se saltan).
+            </p>
+            {reclasificarResult!=null&&(
+              <p className="text-emerald-700 text-xs mt-2">✅ {reclasificarResult} fila(s) reclasificadas.</p>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
@@ -14581,7 +14642,7 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
             <div className="mt-3 bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-700">{importResult.error}</div>
           ):(
             <div className="mt-3 bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-700 space-y-1">
-              <p>✅ {importResult.insertadas} filas insertadas · {importResult.duplicadas} duplicadas (saltadas)</p>
+              <p>✅ {importResult.insertadas} filas insertadas · {importResult.duplicadas} duplicadas (saltadas){importResult.reclasificadas>0?` · ${importResult.reclasificadas} reclasificadas`:""}</p>
               {importResult.centrosNoMapeados.length>0&&(
                 <p className="text-amber-700">⚠️ Centros de costo sin mapear: {importResult.centrosNoMapeados.join(", ")} — agrégalos arriba y vuelve a importar el mismo archivo (las filas ya insertadas no se duplican).</p>
               )}
@@ -14604,6 +14665,7 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
             <thead><tr className="text-gray-400 text-xs border-b border-gray-100">
               <th className="text-left py-1.5 font-medium">Mes</th>
               <th className="text-right py-1.5 font-medium">Filas</th>
+              <th className="text-right py-1.5 font-medium">Sin módulo</th>
               <th className="text-right py-1.5 font-medium">Total</th>
             </tr></thead>
             <tbody>
@@ -14611,12 +14673,20 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
                 <tr key={mes} className="border-b border-gray-50 last:border-0">
                   <td className="py-1.5 font-mono">{mes}</td>
                   <td className="py-1.5 text-right">{resumenPorMes[mes]?.count??"—"}</td>
+                  <td className="py-1.5 text-right">
+                    {resumenPorMes[mes]?.sinModulo>0?(
+                      <span className="text-amber-600 font-semibold">{resumenPorMes[mes].sinModulo}</span>
+                    ):resumenPorMes[mes]?(
+                      <span className="text-emerald-600">0</span>
+                    ):"—"}
+                  </td>
                   <td className="py-1.5 text-right font-semibold">{resumenPorMes[mes]?fmtCLP(resumenPorMes[mes].total):"—"}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
+        <p className="text-gray-300 text-[10px] mt-2">"Sin módulo" cuenta filas cuyo centro de costo todavía no está mapeado arriba en "Configuración de Centros de Costo" — esas filas no aparecen en las tarjetas ni en las gráficas hasta que se mapeen y se reclasifiquen.</p>
       </div>
     </div>
   );
