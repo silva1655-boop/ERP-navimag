@@ -1591,6 +1591,13 @@ const NAV_CATEGORIAS={
       {key:"dashboard", label:"Dashboard"},
     ],
   },
+  operacion:{
+    label:"Operación", icon:Activity,
+    paginas:[
+      {key:"checklist",        label:"Checklist Pre-op"},
+      {key:"historial_postop", label:"Historial Post-Op"},
+    ],
+  },
   mantenimiento:{
     label:"Mantenimiento", icon:Wrench,
     paginas:[
@@ -1631,13 +1638,6 @@ const NAV_CATEGORIAS_MARITIMO={
     label:"Inicio", icon:Gauge,
     paginas:[
       {key:"dashboard", label:"Dashboard"},
-    ],
-  },
-  operacion:{
-    label:"Operación", icon:Activity,
-    paginas:[
-      {key:"checklist",        label:"Checklist Pre-op"},
-      {key:"historial_postop", label:"Historial Post-Op"},
     ],
   },
   mantenimiento:{
