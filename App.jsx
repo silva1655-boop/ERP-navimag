@@ -13727,6 +13727,34 @@ function parseGastosXLSXRows(rows){
   return{porMes,missingCols:[],sinCentro,errores};
 }
 
+// Línea real acumulado vs. presupuesto acumulado (sin proyección — Bloque 6)
+function GastosLineChart({series,height=160,width=600}){
+  if(!series||series.length<2) return(
+    <div className="flex items-center justify-center h-32 text-gray-300 text-xs">Sin datos suficientes</div>
+  );
+  const max=Math.max(...series.flatMap(s=>[s.real,s.presupuesto]),1);
+  const W=width,H=height;
+  const pad={t:10,b:22,l:8,r:8};
+  const cW=W-pad.l-pad.r,cH=H-pad.t-pad.b;
+  const xAt=i=>pad.l+(i/(series.length-1||1))*cW;
+  const yAt=v=>pad.t+cH-(v/max)*cH;
+  const pathFor=key=>series.map((s,i)=>`${i===0?"M":"L"}${xAt(i).toFixed(1)},${yAt(s[key]).toFixed(1)}`).join(" ");
+  return(
+    <div>
+      <svg width="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{display:"block",height:`${H}px`}}>
+        <path d={pathFor("presupuesto")} fill="none" stroke="#94a3b8" strokeWidth="2" strokeDasharray="4,3"/>
+        <path d={pathFor("real")} fill="none" stroke="#2563eb" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+        {series.map((s,i)=>(<circle key={i} cx={xAt(i)} cy={yAt(s.real)} r="3" fill="white" stroke="#2563eb" strokeWidth="2"/>))}
+        {series.map((s,i)=>(<text key={i} x={xAt(i)} y={H-4} textAnchor="middle" fontSize="9" fill="#9CA3AF">{s.mes.slice(5)}</text>))}
+      </svg>
+      <div className="flex items-center gap-4 mt-1.5 justify-center">
+        <span className="flex items-center gap-1.5 text-xs text-gray-500"><span className="w-3 h-0.5 bg-blue-600 inline-block rounded"/>Real acumulado</span>
+        <span className="flex items-center gap-1.5 text-xs text-gray-500"><span className="w-3 h-0.5 inline-block" style={{borderTop:"2px dashed #94a3b8"}}/>Presupuesto acumulado</span>
+      </div>
+    </div>
+  );
+}
+
 function GastosPresupuesto({user,activeModule,activeBarco}){
   const [configCentros,setConfigCentros]=useState([]);
   const [mesesIndex,setMesesIndex]=useState([]);
@@ -13737,6 +13765,13 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
   const [importResult,setImportResult]=useState(null);
   const [nuevoCentro,setNuevoCentro]=useState({centroCoste:"",modulo:"taller",vesselId:""});
   const [nuevaRegla,setNuevaRegla]=useState({nombre:"",modulo:"ambos",campo:"claseCoste",operador:"contiene",valores:"",accion:"excluir",activo:true});
+  const [presupuesto,setPresupuesto]=useState([]);
+  const [filtroMesDesde,setFiltroMesDesde]=useState("");
+  const [filtroMesHasta,setFiltroMesHasta]=useState("");
+  const [filtroCentro,setFiltroCentro]=useState("");
+  const [filtroCategoria,setFiltroCategoria]=useState("");
+  const [incluirPuntuales,setIncluirPuntuales]=useState(true);
+  const [mesDetalle,setMesDetalle]=useState(null);
   const fileInputRef=useRef(null);
 
   useEffect(()=>{
@@ -13750,8 +13785,18 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
     const unsub3=onSnapshot(doc(db,COLL_GASTOS_REGLAS,"reglas"),snap=>{
       setReglas(snap.exists()?(snap.data().data||[]):[]);
     });
-    return()=>{unsub1();unsub2();unsub3();};
+    const unsub4=onSnapshot(doc(db,COLL_GASTOS_PRESUPUESTO,"presupuesto"),snap=>{
+      setPresupuesto(snap.exists()?(snap.data().data||[]):[]);
+    });
+    return()=>{unsub1();unsub2();unsub3();unsub4();};
   },[]);
+
+  // Rango de meses por defecto: todo lo cargado, hasta que el usuario lo acote
+  useEffect(()=>{
+    if(mesesIndex.length===0) return;
+    setFiltroMesDesde(prev=>prev||mesesIndex[0]);
+    setFiltroMesHasta(prev=>prev||mesesIndex[mesesIndex.length-1]);
+  },[mesesIndex]);
 
   useEffect(()=>{
     if(mesesIndex.length===0) return;
@@ -13787,27 +13832,95 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
     return reglas.filter(r=>r.activo&&(r.modulo==="ambos"||r.modulo===activeModule));
   },[reglas,activeModule]);
 
-  const gastoAgregado=useMemo(()=>{
-    const real=todasTxns.filter(t=>activeModule==="maritimo"?(t.modulo==="maritimo"&&(!activeBarco||t.vesselId===activeBarco)):t.modulo==="taller");
-    const excluidas=new Set();
-    const puntuales=new Set();
-    real.forEach(t=>{
+  // Cada transacción del módulo activo, anotada con qué regla la excluyó o
+  // la marcó puntual (si alguna aplicó) — permite mostrar el motivo en la
+  // tabla de detalle sin recalcular las reglas de nuevo ahí.
+  const txnsAnotadas=useMemo(()=>{
+    const base=todasTxns.filter(t=>activeModule==="maritimo"?(t.modulo==="maritimo"&&(!activeBarco||t.vesselId===activeBarco)):t.modulo==="taller");
+    return base.map(t=>{
+      let reglaExcluida=null,reglaPuntual=null;
       for(const regla of reglasAplicables){
         if(aplicaRegla(t,regla)){
-          if(regla.accion==="excluir") excluidas.add(t.hashDedupe);
-          else if(regla.accion==="marcar_puntual") puntuales.add(t.hashDedupe);
+          if(regla.accion==="excluir"&&!reglaExcluida) reglaExcluida=regla.nombre;
+          else if(regla.accion==="marcar_puntual"&&!reglaPuntual) reglaPuntual=regla.nombre;
         }
       }
+      return{...t,_reglaExcluida:reglaExcluida,_reglaPuntual:reglaPuntual};
     });
-    const filtrado=real.filter(t=>!excluidas.has(t.hashDedupe));
-    const filtradoSinPuntuales=filtrado.filter(t=>!puntuales.has(t.hashDedupe));
+  },[todasTxns,reglasAplicables,activeModule,activeBarco]);
+
+  const gastoAgregado=useMemo(()=>{
+    const real=txnsAnotadas;
+    const filtrado=real.filter(t=>!t._reglaExcluida);
+    const filtradoSinPuntuales=filtrado.filter(t=>!t._reglaPuntual);
     const sum=arr=>arr.reduce((s,t)=>s+(t.valor||0),0);
     return{
       real,filtrado,filtradoSinPuntuales,
       totalReal:sum(real),totalFiltrado:sum(filtrado),totalFiltradoSinPuntuales:sum(filtradoSinPuntuales),
-      countExcluidas:excluidas.size,countPuntuales:puntuales.size,
+      countExcluidas:filtrado.length<real.length?real.length-filtrado.length:0,
+      countPuntuales:filtrado.length-filtradoSinPuntuales.length,
     };
-  },[todasTxns,reglasAplicables,activeModule,activeBarco]);
+  },[txnsAnotadas]);
+
+  // ── Filtros en vivo + series para los gráficos (Bloque 4) ──
+  const centrosDisponibles=useMemo(()=>[...new Set(txnsAnotadas.map(t=>t.centroCoste).filter(Boolean))].sort(),[txnsAnotadas]);
+  const categoriasDisponibles=useMemo(()=>[...new Set(txnsAnotadas.map(t=>t.descripClaseCoste).filter(Boolean))].sort(),[txnsAnotadas]);
+
+  const txnsFiltradas=useMemo(()=>{
+    return txnsAnotadas.filter(t=>{
+      if(filtroMesDesde&&t.mes<filtroMesDesde) return false;
+      if(filtroMesHasta&&t.mes>filtroMesHasta) return false;
+      if(filtroCentro&&t.centroCoste!==filtroCentro) return false;
+      if(filtroCategoria&&t.descripClaseCoste!==filtroCategoria) return false;
+      return true;
+    });
+  },[txnsAnotadas,filtroMesDesde,filtroMesHasta,filtroCentro,filtroCategoria]);
+
+  const mesesEnRango=useMemo(()=>{
+    return mesesIndex.filter(m=>(!filtroMesDesde||m>=filtroMesDesde)&&(!filtroMesHasta||m<=filtroMesHasta));
+  },[mesesIndex,filtroMesDesde,filtroMesHasta]);
+
+  // Presupuesto todavía no tiene formulario de carga (Bloque 5) — hoy siempre
+  // devuelve 0, pero el gráfico ya queda listo para cuando exista el dato.
+  const presupuestoPorMes=(mes,categoria)=>{
+    const cat=categoria||"TOTAL";
+    const anio=parseInt(mes.slice(0,4));
+    const vId=activeModule==="maritimo"?(activeBarco||null):null;
+    const exacto=presupuesto.find(p=>p.modulo===activeModule&&(p.vesselId||null)===vId&&p.categoria===cat&&p.anio===anio&&p.mes===mes);
+    if(exacto) return exacto.montoPresupuestado||0;
+    const anual=presupuesto.find(p=>p.modulo===activeModule&&(p.vesselId||null)===vId&&p.categoria===cat&&p.anio===anio&&!p.mes);
+    return anual?(anual.montoPresupuestado||0)/12:0;
+  };
+
+  const serieMensual=useMemo(()=>{
+    return mesesEnRango.map(mes=>{
+      const rows=txnsFiltradas.filter(t=>t.mes===mes&&!t._reglaExcluida&&(incluirPuntuales||!t._reglaPuntual));
+      const real=rows.reduce((s,t)=>s+(t.valor||0),0);
+      const presupuestoMes=presupuestoPorMes(mes,filtroCategoria);
+      const pct=presupuestoMes>0?Math.round((real/presupuestoMes)*100):null;
+      return{mes,real,presupuesto:presupuestoMes,pct};
+    });
+  },[mesesEnRango,txnsFiltradas,incluirPuntuales,presupuesto,filtroCategoria,activeModule,activeBarco]);
+
+  const serieAcumulada=useMemo(()=>{
+    let accReal=0,accPres=0;
+    return serieMensual.map(m=>{
+      accReal+=m.real;accPres+=m.presupuesto;
+      return{mes:m.mes,real:accReal,presupuesto:accPres};
+    });
+  },[serieMensual]);
+
+  const txnsDetalle=useMemo(()=>{
+    if(!mesDetalle) return[];
+    return txnsFiltradas.filter(t=>t.mes===mesDetalle).sort((a,b)=>(b.valor||0)-(a.valor||0));
+  },[txnsFiltradas,mesDetalle]);
+
+  const desviacionCls=(pct)=>{
+    if(pct==null) return "text-gray-400 bg-gray-50 border-gray-200";
+    if(pct<90) return "text-emerald-700 bg-emerald-50 border-emerald-200";
+    if(pct<=110) return "text-amber-700 bg-amber-50 border-amber-200";
+    return "text-red-700 bg-red-50 border-red-200";
+  };
 
   const saveReglas=async(updated)=>{
     setReglas(updated);
@@ -13944,7 +14057,7 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
       </div>
 
       <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-700">
-        Bloques 1-2 de 8 (colecciones + import con dedupe, motor de reglas de filtro). Pendiente: presupuesto manual, motor de pronóstico y gráficos del dashboard.
+        Bloques 1-4 de 8 (colecciones + import, reglas de filtro, dashboard con gráficos). Pendiente: presupuesto manual y motor de pronóstico — por eso el presupuesto de los gráficos siempre muestra $0 por ahora.
       </div>
 
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
@@ -13967,6 +14080,118 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
           </div>
         </div>
       </div>
+
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+        <h2 className="font-bold text-gray-800 text-sm mb-3">Filtros</h2>
+        <div className="flex flex-wrap gap-2 items-end">
+          <div>
+            <label className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide block mb-1">Mes desde</label>
+            <select value={filtroMesDesde} onChange={e=>setFiltroMesDesde(e.target.value)} className="px-2.5 py-2 rounded-lg border border-gray-200 text-xs">
+              {mesesIndex.map(m=><option key={m} value={m}>{m}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide block mb-1">Mes hasta</label>
+            <select value={filtroMesHasta} onChange={e=>setFiltroMesHasta(e.target.value)} className="px-2.5 py-2 rounded-lg border border-gray-200 text-xs">
+              {mesesIndex.map(m=><option key={m} value={m}>{m}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide block mb-1">Centro de costo</label>
+            <select value={filtroCentro} onChange={e=>setFiltroCentro(e.target.value)} className="px-2.5 py-2 rounded-lg border border-gray-200 text-xs">
+              <option value="">Todos</option>
+              {centrosDisponibles.map(c=><option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide block mb-1">Categoría</label>
+            <select value={filtroCategoria} onChange={e=>setFiltroCategoria(e.target.value)} className="px-2.5 py-2 rounded-lg border border-gray-200 text-xs max-w-[220px]">
+              <option value="">Todas</option>
+              {categoriasDisponibles.map(c=><option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+          <label className="flex items-center gap-1.5 text-xs text-gray-600 px-2.5 py-2">
+            <input type="checkbox" checked={incluirPuntuales} onChange={e=>setIncluirPuntuales(e.target.checked)}/>
+            Incluir eventos puntuales
+          </label>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+        <h2 className="font-bold text-gray-800 text-sm mb-3">Gasto mensual — presupuesto vs. real filtrado</h2>
+        {serieMensual.length===0?(
+          <p className="text-gray-400 text-xs italic">Sin meses en el rango seleccionado.</p>
+        ):(
+          <div className="flex items-end gap-3 overflow-x-auto pb-2" style={{minHeight:"160px"}}>
+            {(()=>{
+              const maxVal=Math.max(...serieMensual.flatMap(m=>[m.real,m.presupuesto]),1);
+              return serieMensual.map(m=>(
+                <button key={m.mes} onClick={()=>setMesDetalle(m.mes)}
+                  className={`flex flex-col items-center flex-shrink-0 w-16 rounded-lg py-1.5 transition ${mesDetalle===m.mes?"bg-blue-50":"hover:bg-gray-50"}`}>
+                  <span className={`text-[9px] px-1.5 py-0.5 rounded-full border font-bold mb-1 ${desviacionCls(m.pct)}`}>
+                    {m.pct==null?"—":m.pct+"%"}
+                  </span>
+                  <div className="flex items-end gap-1 h-24">
+                    <div className="w-3 rounded-t bg-blue-500" style={{height:`${Math.max((m.real/maxVal)*96,m.real>0?4:0)}px`}} title={`Real: ${fmtCLP(m.real)}`}/>
+                    <div className="w-3 rounded-t bg-gray-300" style={{height:`${Math.max((m.presupuesto/maxVal)*96,m.presupuesto>0?4:0)}px`}} title={`Presupuesto: ${fmtCLP(m.presupuesto)}`}/>
+                  </div>
+                  <span className="text-[9px] font-mono text-gray-500 mt-1">{m.mes.slice(5)}</span>
+                </button>
+              ));
+            })()}
+          </div>
+        )}
+        <div className="flex items-center gap-4 mt-2 justify-center">
+          <span className="flex items-center gap-1.5 text-xs text-gray-500"><span className="w-2.5 h-2.5 rounded-sm bg-blue-500 inline-block"/>Real filtrado</span>
+          <span className="flex items-center gap-1.5 text-xs text-gray-500"><span className="w-2.5 h-2.5 rounded-sm bg-gray-300 inline-block"/>Presupuesto</span>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+        <h2 className="font-bold text-gray-800 text-sm mb-3">Acumulado anual — real vs. presupuesto</h2>
+        <GastosLineChart series={serieAcumulada}/>
+      </div>
+
+      {mesDetalle&&(
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-bold text-gray-800 text-sm">Detalle — {mesDetalle}{filtroCategoria?` · ${filtroCategoria}`:""}</h2>
+            <button onClick={()=>setMesDetalle(null)} className="text-gray-300 hover:text-red-500"><X size={14}/></button>
+          </div>
+          {txnsDetalle.length===0?(
+            <p className="text-gray-400 text-xs italic">Sin transacciones para este mes con los filtros actuales.</p>
+          ):(
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead><tr className="text-gray-400 border-b border-gray-100">
+                  <th className="text-left py-1.5 font-medium">Categoría</th>
+                  <th className="text-left py-1.5 font-medium">Centro</th>
+                  <th className="text-right py-1.5 font-medium">Valor</th>
+                  <th className="text-left py-1.5 font-medium">Estado</th>
+                </tr></thead>
+                <tbody>
+                  {txnsDetalle.map((t,i)=>(
+                    <tr key={i} className="border-b border-gray-50 last:border-0">
+                      <td className="py-1.5">{t.descripClaseCoste}</td>
+                      <td className="py-1.5 font-mono text-gray-500">{t.centroCoste}</td>
+                      <td className="py-1.5 text-right font-semibold">{fmtCLP(t.valor)}</td>
+                      <td className="py-1.5">
+                        {t._reglaExcluida?(
+                          <span className="px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 font-semibold">Excluida — {t._reglaExcluida}</span>
+                        ):t._reglaPuntual?(
+                          <span className="px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-semibold">Puntual — {t._reglaPuntual}</span>
+                        ):(
+                          <span className="text-gray-400">Normal</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
         <h2 className="font-bold text-gray-800 text-sm mb-3">Reglas de filtro</h2>
