@@ -21668,7 +21668,7 @@ function ProyectoEditor({proyecto,onClose,onSave,onDelete}){
   const ganttEnd=fechasValidas.length>0?new Date(Math.max(...fechasValidas)):new Date(Date.now()+30*86400000);
   const totalDias=Math.max(Math.round((ganttEnd-ganttStart)/86400000)+1,7);
 
-  const DAY_W=28;
+  const DAY_W=40;
   const [ganttDrag,setGanttDrag]=useState(null);
 
   const iniciarDragGantt=(e,t,mode,offsetDias,durDias)=>{
@@ -21820,7 +21820,7 @@ function ProyectoEditor({proyecto,onClose,onSave,onDelete}){
 
       {/* VISTA GANTT */}
       {vistaEditor==="gantt"&&(
-        <div className="flex-1 overflow-auto p-3">
+        <div className="flex-1 overflow-auto p-4">
           {tareas.filter(t=>t.fechaInicio).length===0?(
             <div className="text-center py-12">
               <p className="text-3xl mb-2">📊</p>
@@ -21828,22 +21828,22 @@ function ProyectoEditor({proyecto,onClose,onSave,onDelete}){
             </div>
           ):(
             <div>
-              <p className="text-[10px] text-gray-400 mb-2">
+              <p className="text-xs text-gray-400 mb-3">
                 🖱️ Arrastra una barra para mover la tarea · arrastra su borde derecho para cambiar la duración · click para editar
               </p>
-              <div className="flex mb-1" style={{marginLeft:"168px"}}>
+              <div className="flex mb-1.5" style={{marginLeft:"192px"}}>
                 {Array.from({length:Math.min(totalDias,60)},(_,i)=>{
                   const d=new Date(ganttStart.getTime()+i*86400000);
                   const esHoy=d.toISOString().slice(0,10)===new Date().toISOString().slice(0,10);
                   return(
-                    <div key={i} className={`flex-shrink-0 text-center text-[8px] border-r border-gray-100 ${esHoy?"text-blue-600 font-bold":"text-gray-400"}`} style={{width:DAY_W+"px"}}>
+                    <div key={i} className={`flex-shrink-0 text-center text-xs py-1 border-r border-gray-100 ${esHoy?"text-blue-600 font-bold":"text-gray-400"}`} style={{width:DAY_W+"px"}}>
                       {d.getDate()===1||i===0?d.toLocaleDateString("es-CL",{month:"short"}):d.getDate()}
                     </div>
                   );
                 })}
               </div>
 
-              <div className="space-y-1">
+              <div className="space-y-2.5">
                 {tareas.filter(t=>t.fechaInicio).sort((a,b)=>(a.fechaInicio||"").localeCompare(b.fechaInicio||"")).map(t=>{
                   const ini=new Date(t.fechaInicio+"T12:00:00");
                   const fin=new Date(t.fechaFin?t.fechaFin+"T12:00:00":ini.getTime()+(t.duracion-1)*86400000);
@@ -21855,14 +21855,14 @@ function ProyectoEditor({proyecto,onClose,onSave,onDelete}){
                   const colColor={por_hacer:"#94a3b8",en_proceso:"#3b82f6",bloqueado:"#ef4444",listo:"#10b981"}[t.col]||"#94a3b8";
 
                   return(
-                    <div key={t.id} className="flex items-center">
-                      <div className="flex-shrink-0 w-40 pr-2 text-right">
+                    <div key={t.id} className="flex items-center h-9">
+                      <div className="flex-shrink-0 w-48 pr-3 text-right">
                         <p onClick={()=>abrirEdicionTarea(t)}
-                          className="text-xs font-semibold text-gray-700 truncate cursor-pointer hover:text-blue-700 transition" title={t.titulo}>
+                          className="text-sm font-semibold text-gray-700 truncate cursor-pointer hover:text-blue-700 transition" title={t.titulo}>
                           {t.titulo}
                         </p>
                       </div>
-                      <div className="flex relative" style={{width:Math.min(totalDias,60)*DAY_W+"px"}}>
+                      <div className="flex relative h-full" style={{width:Math.min(totalDias,60)*DAY_W+"px"}}>
                         <div className="absolute inset-0 flex pointer-events-none">
                           {Array.from({length:Math.min(totalDias,60)},(_,i)=>(
                             <div key={i} className="flex-shrink-0 border-r border-gray-100" style={{width:DAY_W+"px"}}/>
@@ -21870,20 +21870,20 @@ function ProyectoEditor({proyecto,onClose,onSave,onDelete}){
                         </div>
                         <div
                           onMouseDown={e=>iniciarDragGantt(e,t,"move",offsetDiasBase,durDiasBase)}
-                          className={`absolute h-6 rounded-md flex items-center justify-center text-white text-[9px] font-bold shadow-sm select-none cursor-grab active:cursor-grabbing transition-shadow
+                          className={`absolute h-8 rounded-lg flex items-center justify-center text-white text-xs font-bold shadow-sm select-none cursor-grab active:cursor-grabbing transition-shadow
                             ${isDragging?"ring-2 ring-offset-1 ring-blue-400 shadow-lg z-20":""}`}
-                          style={{left:offsetDias*DAY_W+"px",width:Math.max(durDias*DAY_W,DAY_W)+"px",background:colColor,top:"1px"}}
+                          style={{left:offsetDias*DAY_W+"px",width:Math.max(durDias*DAY_W,DAY_W)+"px",background:colColor,top:"2px"}}
                           title={`${t.titulo} · ${t.duracion}d`}>
-                          {durDias>2&&`${isDragging?durDias:t.duracion}d`}
+                          {durDias>1&&`${isDragging?durDias:t.duracion}d`}
                           <div
                             onMouseDown={e=>iniciarDragGantt(e,t,"resize",offsetDiasBase,durDiasBase)}
-                            className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-black/20 rounded-r-md"/>
+                            className="absolute right-0 top-0 bottom-0 w-3 cursor-ew-resize hover:bg-black/20 rounded-r-lg"/>
                         </div>
                         {(()=>{
                           const hoyOffset=Math.round((new Date()-ganttStart)/86400000);
                           if(hoyOffset<0||hoyOffset>Math.min(totalDias,60)) return null;
                           return(
-                            <div className="absolute top-0 bottom-0 w-px bg-red-400 pointer-events-none" style={{left:hoyOffset*DAY_W+"px",zIndex:10}}/>
+                            <div className="absolute top-0 bottom-0 w-0.5 bg-red-400 pointer-events-none" style={{left:hoyOffset*DAY_W+"px",zIndex:10}}/>
                           );
                         })()}
                       </div>
@@ -21892,16 +21892,16 @@ function ProyectoEditor({proyecto,onClose,onSave,onDelete}){
                 })}
               </div>
 
-              <div className="flex gap-3 mt-4 pt-3 border-t border-gray-100 flex-wrap">
+              <div className="flex gap-4 mt-5 pt-3 border-t border-gray-100 flex-wrap">
                 {Object.entries({por_hacer:"#94a3b8",en_proceso:"#3b82f6",bloqueado:"#ef4444",listo:"#10b981"}).map(([k,color])=>(
                   <div key={k} className="flex items-center gap-1.5">
-                    <div className="w-3 h-3 rounded-sm" style={{background:color}}/>
-                    <span className="text-[10px] text-gray-500 capitalize">{cols[k]?.label||k}</span>
+                    <div className="w-4 h-4 rounded-sm" style={{background:color}}/>
+                    <span className="text-xs text-gray-500 capitalize">{cols[k]?.label||k}</span>
                   </div>
                 ))}
                 <div className="flex items-center gap-1.5">
-                  <div className="w-px h-3 bg-red-400"/>
-                  <span className="text-[10px] text-gray-500">Hoy</span>
+                  <div className="w-0.5 h-4 bg-red-400"/>
+                  <span className="text-xs text-gray-500">Hoy</span>
                 </div>
               </div>
             </div>
