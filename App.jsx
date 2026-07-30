@@ -21246,7 +21246,7 @@ function PlannerPanel({user,data,activeCOLL,onNav,onClose}){
 
   return(
     <div className="fixed inset-0 bg-black/40 z-50" onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
-      <div className="fixed right-0 top-0 h-full w-full max-w-3xl bg-white shadow-2xl flex flex-col overflow-hidden" onClick={e=>e.stopPropagation()}>
+      <div className="fixed right-0 top-0 h-full w-full lg:w-[88vw] max-w-6xl bg-white shadow-2xl flex flex-col overflow-hidden" onClick={e=>e.stopPropagation()}>
 
         {/* Header */}
         <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between flex-shrink-0"
@@ -21668,6 +21668,54 @@ function ProyectoEditor({proyecto,onClose,onSave,onDelete}){
   const ganttEnd=fechasValidas.length>0?new Date(Math.max(...fechasValidas)):new Date(Date.now()+30*86400000);
   const totalDias=Math.max(Math.round((ganttEnd-ganttStart)/86400000)+1,7);
 
+  const DAY_W=28;
+  const [ganttDrag,setGanttDrag]=useState(null);
+
+  const iniciarDragGantt=(e,t,mode,offsetDias,durDias)=>{
+    e.preventDefault();
+    e.stopPropagation();
+    setGanttDrag({id:t.id,mode,startX:e.clientX,startOffset:offsetDias,startDur:durDias,offset:offsetDias,dur:durDias,moved:false});
+  };
+
+  useEffect(()=>{
+    if(!ganttDrag) return;
+    const onMove=(e)=>{
+      setGanttDrag(prev=>{
+        if(!prev) return prev;
+        const deltaPx=e.clientX-prev.startX;
+        const deltaDias=Math.round(deltaPx/DAY_W);
+        const moved=prev.moved||Math.abs(deltaPx)>3;
+        if(prev.mode==="move"){
+          return{...prev,offset:Math.max(0,prev.startOffset+deltaDias),dur:prev.startDur,moved};
+        }
+        return{...prev,dur:Math.max(1,prev.startDur+deltaDias),offset:prev.startOffset,moved};
+      });
+    };
+    const onUp=()=>{
+      setGanttDrag(prev=>{
+        if(prev){
+          if(prev.moved){
+            const nuevaFechaInicio=new Date(ganttStart.getTime()+prev.offset*86400000).toISOString().slice(0,10);
+            const nuevaFechaFin=new Date(ganttStart.getTime()+(prev.offset+prev.dur-1)*86400000).toISOString().slice(0,10);
+            const updated=tareas.map(t=>t.id===prev.id?{...t,fechaInicio:nuevaFechaInicio,duracion:prev.dur,fechaFin:nuevaFechaFin}:t);
+            setTareas(updated);
+            onSave({...proyecto,tareas:updated});
+          }else{
+            const t=tareas.find(tt=>tt.id===prev.id);
+            if(t) abrirEdicionTarea(t);
+          }
+        }
+        return null;
+      });
+    };
+    window.addEventListener("mousemove",onMove);
+    window.addEventListener("mouseup",onUp);
+    return()=>{
+      window.removeEventListener("mousemove",onMove);
+      window.removeEventListener("mouseup",onUp);
+    };
+  },[ganttDrag?.id]);
+
   return(
     <div className="flex-1 flex flex-col overflow-hidden">
 
@@ -21780,12 +21828,15 @@ function ProyectoEditor({proyecto,onClose,onSave,onDelete}){
             </div>
           ):(
             <div>
-              <div className="flex mb-1" style={{marginLeft:"120px"}}>
+              <p className="text-[10px] text-gray-400 mb-2">
+                🖱️ Arrastra una barra para mover la tarea · arrastra su borde derecho para cambiar la duración · click para editar
+              </p>
+              <div className="flex mb-1" style={{marginLeft:"168px"}}>
                 {Array.from({length:Math.min(totalDias,60)},(_,i)=>{
                   const d=new Date(ganttStart.getTime()+i*86400000);
                   const esHoy=d.toISOString().slice(0,10)===new Date().toISOString().slice(0,10);
                   return(
-                    <div key={i} className={`flex-shrink-0 text-center text-[8px] border-r border-gray-100 ${esHoy?"text-blue-600 font-bold":"text-gray-400"}`} style={{width:"20px"}}>
+                    <div key={i} className={`flex-shrink-0 text-center text-[8px] border-r border-gray-100 ${esHoy?"text-blue-600 font-bold":"text-gray-400"}`} style={{width:DAY_W+"px"}}>
                       {d.getDate()===1||i===0?d.toLocaleDateString("es-CL",{month:"short"}):d.getDate()}
                     </div>
                   );
@@ -21796,31 +21847,43 @@ function ProyectoEditor({proyecto,onClose,onSave,onDelete}){
                 {tareas.filter(t=>t.fechaInicio).sort((a,b)=>(a.fechaInicio||"").localeCompare(b.fechaInicio||"")).map(t=>{
                   const ini=new Date(t.fechaInicio+"T12:00:00");
                   const fin=new Date(t.fechaFin?t.fechaFin+"T12:00:00":ini.getTime()+(t.duracion-1)*86400000);
-                  const offsetDias=Math.round((ini-ganttStart)/86400000);
-                  const durDias=Math.round((fin-ini)/86400000)+1;
+                  const offsetDiasBase=Math.round((ini-ganttStart)/86400000);
+                  const durDiasBase=Math.round((fin-ini)/86400000)+1;
+                  const isDragging=ganttDrag?.id===t.id;
+                  const offsetDias=isDragging?ganttDrag.offset:offsetDiasBase;
+                  const durDias=isDragging?ganttDrag.dur:durDiasBase;
                   const colColor={por_hacer:"#94a3b8",en_proceso:"#3b82f6",bloqueado:"#ef4444",listo:"#10b981"}[t.col]||"#94a3b8";
 
                   return(
                     <div key={t.id} className="flex items-center">
-                      <div className="flex-shrink-0 w-28 pr-2 text-right">
-                        <p className="text-[10px] font-semibold text-gray-700 truncate" title={t.titulo}>{t.titulo}</p>
+                      <div className="flex-shrink-0 w-40 pr-2 text-right">
+                        <p onClick={()=>abrirEdicionTarea(t)}
+                          className="text-xs font-semibold text-gray-700 truncate cursor-pointer hover:text-blue-700 transition" title={t.titulo}>
+                          {t.titulo}
+                        </p>
                       </div>
-                      <div className="flex relative" style={{width:Math.min(totalDias,60)*20+"px"}}>
+                      <div className="flex relative" style={{width:Math.min(totalDias,60)*DAY_W+"px"}}>
                         <div className="absolute inset-0 flex pointer-events-none">
                           {Array.from({length:Math.min(totalDias,60)},(_,i)=>(
-                            <div key={i} className="flex-shrink-0 border-r border-gray-100" style={{width:"20px"}}/>
+                            <div key={i} className="flex-shrink-0 border-r border-gray-100" style={{width:DAY_W+"px"}}/>
                           ))}
                         </div>
-                        <div className="absolute h-5 rounded-md flex items-center justify-center text-white text-[9px] font-bold shadow-sm"
-                          style={{left:offsetDias*20+"px",width:Math.max(durDias*20,20)+"px",background:colColor,top:"2px"}}
+                        <div
+                          onMouseDown={e=>iniciarDragGantt(e,t,"move",offsetDiasBase,durDiasBase)}
+                          className={`absolute h-6 rounded-md flex items-center justify-center text-white text-[9px] font-bold shadow-sm select-none cursor-grab active:cursor-grabbing transition-shadow
+                            ${isDragging?"ring-2 ring-offset-1 ring-blue-400 shadow-lg z-20":""}`}
+                          style={{left:offsetDias*DAY_W+"px",width:Math.max(durDias*DAY_W,DAY_W)+"px",background:colColor,top:"1px"}}
                           title={`${t.titulo} · ${t.duracion}d`}>
-                          {durDias>2&&`${t.duracion}d`}
+                          {durDias>2&&`${isDragging?durDias:t.duracion}d`}
+                          <div
+                            onMouseDown={e=>iniciarDragGantt(e,t,"resize",offsetDiasBase,durDiasBase)}
+                            className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-black/20 rounded-r-md"/>
                         </div>
                         {(()=>{
                           const hoyOffset=Math.round((new Date()-ganttStart)/86400000);
                           if(hoyOffset<0||hoyOffset>Math.min(totalDias,60)) return null;
                           return(
-                            <div className="absolute top-0 bottom-0 w-px bg-red-400 pointer-events-none" style={{left:hoyOffset*20+"px",zIndex:10}}/>
+                            <div className="absolute top-0 bottom-0 w-px bg-red-400 pointer-events-none" style={{left:hoyOffset*DAY_W+"px",zIndex:10}}/>
                           );
                         })()}
                       </div>
