@@ -4073,6 +4073,35 @@ function MaterialSelector({items,onChange,taxonomiaObj,repuestos,label="MATERIAL
   );
 }
 
+// Catálogo reutilizable de materiales por equipo — evita re-tipear los mismos
+// repuestos cada vez que se crea un plan/tarea nueva para el mismo equipo.
+function MaterialesEquipoQuickPick({equipId,materialesEquipo,onAgregarAPlan,onAbrirCatalogo}){
+  if(!equipId) return null;
+  const items=(materialesEquipo||[]).filter(m=>m.equipId===equipId);
+  return(
+    <div className="mb-3 p-3 rounded-xl bg-gray-50 border border-gray-200">
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-gray-500 text-xs font-semibold flex items-center gap-1.5"><Package size={12}/>Materiales guardados de este equipo</p>
+        <button type="button" onClick={onAbrirCatalogo} className="text-xs text-blue-600 hover:underline font-semibold">📦 Gestionar catálogo</button>
+      </div>
+      {items.length===0?(
+        <p className="text-gray-400 text-xs italic">Este equipo aún no tiene materiales guardados. Usa "Gestionar catálogo" para crear su primera lista reutilizable.</p>
+      ):(
+        <div className="flex flex-wrap gap-1.5">
+          {items.map((m,i)=>(
+            <button key={i} type="button" onClick={()=>onAgregarAPlan(m)}
+              className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg border border-gray-200 bg-white hover:border-blue-300 hover:bg-blue-50 transition">
+              <Plus size={11} className="text-blue-500 flex-shrink-0"/>
+              <span className="font-mono font-semibold text-gray-700">{m.codigo||"—"}</span>
+              <span className="text-gray-500 truncate max-w-[140px]">{m.descripcion}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function WorkOrders({user,data,setData,saveData,appendToArray,updateInArray,activeCOLL,setPmNotifications,activeModule}){
 const {wos,equip,users,requests,plans}=data;
   const [filter,setFilter]=useState("all"); const [search,setSearch]=useState("");
@@ -8593,7 +8622,15 @@ function Plans({user,data,setData,saveData,appendToArray,updateInArray,activeMod
 const isMaritimo=activeModule==="maritimo";
 const isSup=user.role==="supervisor";
 const {plans,equip,users,wos,taskTemplates,checklists}=data;
+const materialesEquipo=data.materialesEquipo||[];
 const taxonomiaObj=useMemo(()=>getTaxonomiaComoObjeto(data.taxonomiaRepuestos||[]),[data.taxonomiaRepuestos]);
+const guardarMaterialesEquipo=(equipId,items)=>{
+  const otros=materialesEquipo.filter(m=>m.equipId!==equipId);
+  const propios=items.map(it=>({...it,equipId}));
+  const updated=[...otros,...propios];
+  setData(d=>({...d,materialesEquipo:updated}));
+  saveData("materialesEquipo",updated);
+};
 const liveHours=(equipId)=>{
 return equip.find(e=>e.id===equipId)?.hours||0;
 };
@@ -8610,6 +8647,8 @@ const [fltEquip,setFltEquip]=useState("");
 const [showTplForm,setShowTplForm]=useState(false);
 const [showAssign,setShowAssign]=useState(null);
 const [showPlanForm,setShowPlanForm]=useState(false);
+const [showMatEquipo,setShowMatEquipo]=useState(false);
+const [matEquipoTarget,setMatEquipoTarget]=useState(null);
 const [tplForm,setTplForm]=useState(EMPTY_TPL);
 const [planForm,setPlanForm]=useState(EMPTY_PLAN_FORM);
 const [selEquipsData,setSelEquipsData]=useState({});
@@ -10003,6 +10042,12 @@ if(isMaritimo){
         placeholder={"Limpieza filtro centrífugo\nLimpie y lubrique mecanismo de control\nCompruebe calidad de agua de enfriamiento"}/>
       <p className="text-gray-300 text-xs mt-2">Se ejecutarán todas las actividades definidas en cada intervención del plan.</p>
       <div className="mt-4">
+      <MaterialesEquipoQuickPick
+        equipId={planForm.equipId}
+        materialesEquipo={materialesEquipo}
+        onAgregarAPlan={m=>setPlanForm(f=>({...f,materialesAsociados:[...(f.materialesAsociados||[]),{codigo:m.codigo,descripcion:m.descripcion,cantidad:m.cantidad||1,unidad:m.unidad||"Pza",_modoIngreso:"manual"}]}))}
+        onAbrirCatalogo={()=>{setMatEquipoTarget(planForm.equipId);setShowMatEquipo(true);}}
+      />
       <MaterialSelector
         items={planForm.materialesAsociados||[]}
         onChange={items=>setPlanForm(f=>({...f,materialesAsociados:items}))}
@@ -11058,6 +11103,12 @@ return(
 )}
 <div><label className="text-gray-500 text-xs font-medium mb-1 block">HRS ESTIMADAS</label><input type="number" value={planForm.estimatedHours} onChange={e=>setPlanForm(f=>({...f,estimatedHours:e.target.value}))} className={iCls}/></div>
 <div><label className="text-gray-500 text-xs font-medium mb-1 block">TAREAS (una por línea)</label><textarea value={planForm.tasks} onChange={e=>setPlanForm(f=>({...f,tasks:e.target.value}))} rows={4} className={iCls+" resize-none"} placeholder={"Cambio aceite motor\nFiltro hidráulico\nRevisión frenos"}/></div>
+<MaterialesEquipoQuickPick
+  equipId={planForm.equipId}
+  materialesEquipo={materialesEquipo}
+  onAgregarAPlan={m=>setPlanForm(f=>({...f,materialesAsociados:[...(f.materialesAsociados||[]),{codigo:m.codigo,descripcion:m.descripcion,cantidad:m.cantidad||1,unidad:m.unidad||"Pza",_modoIngreso:"manual"}]}))}
+  onAbrirCatalogo={()=>{setMatEquipoTarget(planForm.equipId);setShowMatEquipo(true);}}
+/>
 <MaterialSelector
   items={planForm.materialesAsociados||[]}
   onChange={items=>setPlanForm(f=>({...f,materialesAsociados:items}))}
@@ -11571,6 +11622,22 @@ return(
   Deseleccionar todo
 </button>
 </div>
+)}
+
+{/* Catálogo de materiales por equipo — reutilizable en todos los planes de ese equipo */}
+{showMatEquipo&&matEquipoTarget&&(
+<Modal title={`Materiales — ${equip.find(e=>e.id===matEquipoTarget)?.code||""} ${equip.find(e=>e.id===matEquipoTarget)?.name||""}`}
+  onClose={()=>{setShowMatEquipo(false);setMatEquipoTarget(null);}}>
+  <MaterialSelector
+    items={materialesEquipo.filter(m=>m.equipId===matEquipoTarget)}
+    onChange={items=>guardarMaterialesEquipo(matEquipoTarget,items)}
+    taxonomiaObj={taxonomiaObj}
+    repuestos={data.repuestos||[]}
+    label="MATERIALES GUARDADOS PARA ESTE EQUIPO"
+    emptyText="Sin materiales guardados todavía"
+  />
+  <p className="text-gray-400 text-xs mt-3">Estos materiales quedan disponibles para agregar con un click a cualquier plan que crees para este equipo — no hace falta volver a tipearlos cada vez.</p>
+</Modal>
 )}
 
 {/* Individual plan edit modal */}
@@ -26047,6 +26114,7 @@ const [data,setData]=useState({
   hourmeterReadings:[],
   planTemplates:[],
   planAssignments:[],
+  materialesEquipo:[],
 });
 const unsubs=useRef([]);
 const [onlineUsers,setOnlineUsers]=useState([]);
@@ -26117,9 +26185,9 @@ const currentCOLL=getActiveCOLL(activeModule,activeBarco);
 const currentSeedEquip=activeModule==="maritimo"?SEED_EQUIPMENT_MARITIMO:SEED_EQUIPMENT;
 setLoading(true);
 const currentSeedUsers=activeModule==="maritimo"?(activeBarco==="dalka"?SEED_USERS_DALKA:SEED_USERS_MARITIMO):SEED_USERS_TALLER;
-const keys=["users","equipment","plans","requests","workOrders","taskTemplates","loginHistory","vessels","certificates","voyages","repuestos","movimientosStock","taxonomiaRepuestos","operadores","hourmeterReadings","planTemplates","planAssignments","procedimientos"];
-const seeds={users:currentSeedUsers,equipment:currentSeedEquip,plans:SEED_PM_PLANS,requests:SEED_REQUESTS,workOrders:SEED_WORK_ORDERS,taskTemplates:SEED_TASK_TEMPLATES,loginHistory:[],vessels:SEED_VESSELS,certificates:SEED_CERTIFICATES,voyages:SEED_VOYAGES,repuestos:[],movimientosStock:[],taxonomiaRepuestos:SEED_TAXONOMIA,operadores:[],hourmeterReadings:[],planTemplates:[],planAssignments:[],procedimientos:[]};
-const dk={users:"users",equipment:"equip",plans:"plans",workOrders:"wos",taskTemplates:"taskTemplates",loginHistory:"loginHistory",vessels:"vessels",certificates:"certificates",voyages:"voyages",repuestos:"repuestos",movimientosStock:"movimientosStock",taxonomiaRepuestos:"taxonomiaRepuestos",operadores:"operadores",hourmeterReadings:"hourmeterReadings",planTemplates:"planTemplates",planAssignments:"planAssignments",procedimientos:"procedimientos"};
+const keys=["users","equipment","plans","requests","workOrders","taskTemplates","loginHistory","vessels","certificates","voyages","repuestos","movimientosStock","taxonomiaRepuestos","operadores","hourmeterReadings","planTemplates","planAssignments","procedimientos","materialesEquipo"];
+const seeds={users:currentSeedUsers,equipment:currentSeedEquip,plans:SEED_PM_PLANS,requests:SEED_REQUESTS,workOrders:SEED_WORK_ORDERS,taskTemplates:SEED_TASK_TEMPLATES,loginHistory:[],vessels:SEED_VESSELS,certificates:SEED_CERTIFICATES,voyages:SEED_VOYAGES,repuestos:[],movimientosStock:[],taxonomiaRepuestos:SEED_TAXONOMIA,operadores:[],hourmeterReadings:[],planTemplates:[],planAssignments:[],procedimientos:[],materialesEquipo:[]};
+const dk={users:"users",equipment:"equip",plans:"plans",workOrders:"wos",taskTemplates:"taskTemplates",loginHistory:"loginHistory",vessels:"vessels",certificates:"certificates",voyages:"voyages",repuestos:"repuestos",movimientosStock:"movimientosStock",taxonomiaRepuestos:"taxonomiaRepuestos",operadores:"operadores",hourmeterReadings:"hourmeterReadings",planTemplates:"planTemplates",planAssignments:"planAssignments",procedimientos:"procedimientos",materialesEquipo:"materialesEquipo"};
 // requests is excluded from onSnapshot — managed via individual docs + loadRequests
 const snapshotKeys=keys.filter(k=>k!=="requests");
 (async()=>{
