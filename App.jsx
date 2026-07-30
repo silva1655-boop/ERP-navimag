@@ -13738,18 +13738,28 @@ function GastosLineChart({series,height=160,width=600}){
   const cW=W-pad.l-pad.r,cH=H-pad.t-pad.b;
   const xAt=i=>pad.l+(i/(series.length-1||1))*cW;
   const yAt=v=>pad.t+cH-(v/max)*cH;
-  const pathFor=key=>series.map((s,i)=>`${i===0?"M":"L"}${xAt(i).toFixed(1)},${yAt(s[key]).toFixed(1)}`).join(" ");
+  const pathSegment=(startIdx,endIdx,key)=>series.slice(startIdx,endIdx+1)
+    .map((s,i)=>`${i===0?"M":"L"}${xAt(startIdx+i).toFixed(1)},${yAt(s[key]).toFixed(1)}`).join(" ");
+  const pathFor=key=>pathSegment(0,series.length-1,key);
+  // Si hay meses proyectados, la línea real se parte en un tramo sólido
+  // (datos reales) y uno punteado (proyección) que arranca del último real.
+  const primerProyIdx=series.findIndex(s=>s.proyectado);
+  const finConexion=primerProyIdx<=0?0:primerProyIdx-1;
+  const pathRealSolido=primerProyIdx===-1?pathFor("real"):pathSegment(0,finConexion,"real");
+  const pathRealProyectado=primerProyIdx===-1?null:pathSegment(finConexion,series.length-1,"real");
   return(
     <div>
       <svg width="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{display:"block",height:`${H}px`}}>
         <path d={pathFor("presupuesto")} fill="none" stroke="#94a3b8" strokeWidth="2" strokeDasharray="4,3"/>
-        <path d={pathFor("real")} fill="none" stroke="#2563eb" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
-        {series.map((s,i)=>(<circle key={i} cx={xAt(i)} cy={yAt(s.real)} r="3" fill="white" stroke="#2563eb" strokeWidth="2"/>))}
-        {series.map((s,i)=>(<text key={i} x={xAt(i)} y={H-4} textAnchor="middle" fontSize="9" fill="#9CA3AF">{s.mes.slice(5)}</text>))}
+        <path d={pathRealSolido} fill="none" stroke="#2563eb" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+        {pathRealProyectado&&<path d={pathRealProyectado} fill="none" stroke="#2563eb" strokeWidth="2.5" strokeDasharray="5,4" strokeLinecap="round"/>}
+        {series.map((s,i)=>!s.proyectado&&(<circle key={i} cx={xAt(i)} cy={yAt(s.real)} r="3" fill="white" stroke="#2563eb" strokeWidth="2"/>))}
+        {series.map((s,i)=>(<text key={i} x={xAt(i)} y={H-4} textAnchor="middle" fontSize="9" fill={s.proyectado?"#c4cad3":"#9CA3AF"}>{s.mes.slice(5)}</text>))}
       </svg>
-      <div className="flex items-center gap-4 mt-1.5 justify-center">
+      <div className="flex items-center gap-4 mt-1.5 justify-center flex-wrap">
         <span className="flex items-center gap-1.5 text-xs text-gray-500"><span className="w-3 h-0.5 bg-blue-600 inline-block rounded"/>Real acumulado</span>
         <span className="flex items-center gap-1.5 text-xs text-gray-500"><span className="w-3 h-0.5 inline-block" style={{borderTop:"2px dashed #94a3b8"}}/>Presupuesto acumulado</span>
+        {primerProyIdx!==-1&&<span className="flex items-center gap-1.5 text-xs text-blue-400"><span className="w-3 h-0.5 inline-block" style={{borderTop:"2px dashed #2563eb"}}/>Proyección</span>}
       </div>
     </div>
   );
@@ -13769,6 +13779,7 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
   const [nuevoPresupuesto,setNuevoPresupuesto]=useState({categoria:"TOTAL",anio:String(new Date().getFullYear()),mes:"",montoPresupuestado:"",notas:""});
   const [presupuestoEditId,setPresupuestoEditId]=useState(null);
   const [presupuestoEditForm,setPresupuestoEditForm]=useState(null);
+  const [metodosPronostico,setMetodosPronostico]=useState([]);
   const [filtroMesDesde,setFiltroMesDesde]=useState("");
   const [filtroMesHasta,setFiltroMesHasta]=useState("");
   const [filtroCentro,setFiltroCentro]=useState("");
@@ -13790,6 +13801,7 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
     });
     const unsub4=onSnapshot(doc(db,COLL_GASTOS_PRESUPUESTO,"presupuesto"),snap=>{
       setPresupuesto(snap.exists()?(snap.data().data||[]):[]);
+      setMetodosPronostico(snap.exists()?(snap.data().metodosPronostico||[]):[]);
     });
     return()=>{unsub1();unsub2();unsub3();unsub4();};
   },[]);
@@ -13905,13 +13917,117 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
     });
   },[mesesEnRango,txnsFiltradas,incluirPuntuales,presupuesto,filtroCategoria,activeModule,activeBarco]);
 
+  // ── Motor de pronóstico (Bloque 6) ──
+  // Trabaja sobre el año del último mes cargado, con la base "real filtrado
+  // sin puntuales" — independiente del toggle incluirPuntuales, que es solo
+  // de visualización del gráfico mensual.
+  const anioTrabajo=useMemo(()=>{
+    if(mesesIndex.length===0) return new Date().getFullYear();
+    return parseInt(mesesIndex[mesesIndex.length-1].slice(0,4));
+  },[mesesIndex]);
+
+  const serieAnualPronostico=useMemo(()=>{
+    const mesesDelAnio=mesesIndex.filter(m=>m.startsWith(anioTrabajo+"-"));
+    return mesesDelAnio.map(mes=>{
+      const rows=txnsAnotadas.filter(t=>t.mes===mes&&!t._reglaExcluida&&!t._reglaPuntual
+        &&(!filtroCentro||t.centroCoste===filtroCentro)
+        &&(!filtroCategoria||t.descripClaseCoste===filtroCategoria));
+      return{mes,valor:rows.reduce((s,t)=>s+(t.valor||0),0)};
+    });
+  },[mesesIndex,anioTrabajo,txnsAnotadas,filtroCentro,filtroCategoria]);
+
+  const mesesFaltantesDelAnio=useMemo(()=>{
+    const presentes=new Set(serieAnualPronostico.map(m=>m.mes));
+    const faltantes=[];
+    for(let i=1;i<=12;i++){
+      const m=`${anioTrabajo}-${String(i).padStart(2,"0")}`;
+      if(!presentes.has(m)) faltantes.push(m);
+    }
+    return faltantes;
+  },[serieAnualPronostico,anioTrabajo]);
+
+  const presupuestoAnualCategoria=useMemo(()=>{
+    const cat=filtroCategoria||"TOTAL";
+    const entry=presupuesto.find(p=>p.modulo===activeModule&&(p.vesselId||null)===vesselIdActual&&p.categoria===cat&&p.anio===anioTrabajo&&!p.mes);
+    return entry?entry.montoPresupuestado:null;
+  },[presupuesto,activeModule,vesselIdActual,filtroCategoria,anioTrabajo]);
+
+  const pronostico=useMemo(()=>{
+    const n=serieAnualPronostico.length;
+    const promedioMovilVal=(()=>{
+      const ultimos3=serieAnualPronostico.slice(-3);
+      if(ultimos3.length===0) return null;
+      return ultimos3.reduce((s,m)=>s+m.valor,0)/ultimos3.length;
+    })();
+    const regresion=(()=>{
+      if(n<2) return null;
+      const xs=serieAnualPronostico.map((_,i)=>i+1);
+      const ys=serieAnualPronostico.map(m=>m.valor);
+      const sumX=xs.reduce((a,b)=>a+b,0),sumY=ys.reduce((a,b)=>a+b,0);
+      const sumXY=xs.reduce((s,x,i)=>s+x*ys[i],0);
+      const sumX2=xs.reduce((s,x)=>s+x*x,0);
+      const denom=n*sumX2-sumX*sumX;
+      if(denom===0) return null;
+      const b=(n*sumXY-sumX*sumY)/denom;
+      const a=(sumY-b*sumX)/n;
+      return{a,b};
+    })();
+    const gastadoAcumuladoAnual=serieAnualPronostico.reduce((s,m)=>s+m.valor,0);
+    const prorrateoVal=(presupuestoAnualCategoria!=null&&mesesFaltantesDelAnio.length>0)
+      ?(presupuestoAnualCategoria-gastadoAcumuladoAnual)/mesesFaltantesDelAnio.length
+      :null;
+    const valorParaMes=(metodo,k)=>{ // k = 1..mesesFaltantes, 1-indexado
+      if(metodo==="promedio_movil") return promedioMovilVal;
+      if(metodo==="regresion_lineal") return regresion?regresion.a+regresion.b*(n+k):null;
+      if(metodo==="prorrateo") return prorrateoVal;
+      return null;
+    };
+    return{
+      promedioMovil:promedioMovilVal,
+      regresionLineal:regresion?regresion.a+regresion.b*(n+1):null,
+      prorrateo:prorrateoVal,
+      valorParaMes,
+    };
+  },[serieAnualPronostico,presupuestoAnualCategoria,mesesFaltantesDelAnio]);
+
+  const metodoElegido=useMemo(()=>{
+    const cat=filtroCategoria||"TOTAL";
+    const entry=metodosPronostico.find(m=>m.modulo===activeModule&&(m.vesselId||null)===vesselIdActual&&m.categoria===cat&&m.anio===anioTrabajo);
+    return entry?entry.metodo:null;
+  },[metodosPronostico,activeModule,vesselIdActual,filtroCategoria,anioTrabajo]);
+
+  // El acumulado anual usa siempre TODO el año de trabajo (no el rango de
+  // meses del filtro) — si se acotara por rango, al agregar la proyección el
+  // acumulado quedaría subestimado por los meses ya cargados que quedan
+  // fuera del rango. Sí respeta incluirPuntuales/centro/categoría, igual que
+  // el resto del dashboard.
+  const serieAnualCompleta=useMemo(()=>{
+    const mesesDelAnio=mesesIndex.filter(m=>m.startsWith(anioTrabajo+"-"));
+    return mesesDelAnio.map(mes=>{
+      const rows=txnsAnotadas.filter(t=>t.mes===mes&&!t._reglaExcluida&&(incluirPuntuales||!t._reglaPuntual)
+        &&(!filtroCentro||t.centroCoste===filtroCentro)
+        &&(!filtroCategoria||t.descripClaseCoste===filtroCategoria));
+      return{mes,real:rows.reduce((s,t)=>s+(t.valor||0),0),presupuesto:presupuestoPorMes(mes,filtroCategoria)};
+    });
+  },[mesesIndex,anioTrabajo,txnsAnotadas,incluirPuntuales,filtroCentro,filtroCategoria,presupuesto]);
+
   const serieAcumulada=useMemo(()=>{
     let accReal=0,accPres=0;
-    return serieMensual.map(m=>{
+    const base=serieAnualCompleta.map(m=>{
       accReal+=m.real;accPres+=m.presupuesto;
-      return{mes:m.mes,real:accReal,presupuesto:accPres};
+      return{mes:m.mes,real:accReal,presupuesto:accPres,proyectado:false};
     });
-  },[serieMensual]);
+    if(!metodoElegido) return base;
+    let k=0;
+    const proyectados=mesesFaltantesDelAnio.map(mes=>{
+      k++;
+      const valorMes=pronostico.valorParaMes(metodoElegido,k)||0;
+      accReal+=valorMes;
+      accPres+=presupuestoPorMes(mes,filtroCategoria);
+      return{mes,real:accReal,presupuesto:accPres,proyectado:true};
+    });
+    return[...base,...proyectados];
+  },[serieAnualCompleta,metodoElegido,mesesFaltantesDelAnio,pronostico,filtroCategoria]);
 
   const txnsDetalle=useMemo(()=>{
     if(!mesDetalle) return[];
@@ -13965,7 +14081,15 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
 
   const savePresupuesto=async(updated)=>{
     setPresupuesto(updated);
-    await setDoc(doc(db,COLL_GASTOS_PRESUPUESTO,"presupuesto"),{data:updated});
+    await setDoc(doc(db,COLL_GASTOS_PRESUPUESTO,"presupuesto"),{data:updated,metodosPronostico});
+  };
+
+  const elegirMetodoPronostico=async(metodo)=>{
+    const cat=filtroCategoria||"TOTAL";
+    const otros=metodosPronostico.filter(m=>!(m.modulo===activeModule&&(m.vesselId||null)===vesselIdActual&&m.categoria===cat&&m.anio===anioTrabajo));
+    const updated=[...otros,{modulo:activeModule,vesselId:vesselIdActual,categoria:cat,anio:anioTrabajo,metodo}];
+    setMetodosPronostico(updated);
+    await setDoc(doc(db,COLL_GASTOS_PRESUPUESTO,"presupuesto"),{data:presupuesto,metodosPronostico:updated});
   };
 
   const agregarPresupuesto=()=>{
@@ -14123,7 +14247,7 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
       </div>
 
       <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-700">
-        Bloques 1-5 de 8 (colecciones + import, reglas de filtro, dashboard con gráficos, presupuesto manual). Pendiente: motor de pronóstico y la línea de proyección en el acumulado.
+        Módulo completo (8 de 8 bloques): colecciones + import, reglas de filtro, dashboard con gráficos, presupuesto manual, motor de pronóstico.
       </div>
 
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
@@ -14214,7 +14338,42 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
       </div>
 
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
-        <h2 className="font-bold text-gray-800 text-sm mb-3">Acumulado anual — real vs. presupuesto</h2>
+        <h2 className="font-bold text-gray-800 text-sm mb-3">
+          Pronóstico {anioTrabajo} — {filtroCategoria||"TOTAL"}
+        </h2>
+        {mesesFaltantesDelAnio.length===0?(
+          <p className="text-gray-400 text-xs italic">El año {anioTrabajo} ya tiene datos en todos los meses — no hay nada que pronosticar.</p>
+        ):(
+          <>
+            <p className="text-gray-400 text-xs mb-3">
+              Basado en {serieAnualPronostico.length} mes(es) con datos (gasto real filtrado sin puntuales). Faltan {mesesFaltantesDelAnio.length}: {mesesFaltantesDelAnio.join(", ")}.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {[
+                {key:"promedio_movil",label:"Promedio móvil (últimos 3 meses)",valor:pronostico.promedioMovil},
+                {key:"regresion_lineal",label:"Regresión lineal simple",valor:pronostico.regresionLineal},
+                {key:"prorrateo",label:"Prorrateo presupuesto anual restante",valor:pronostico.prorrateo,disabled:presupuestoAnualCategoria==null},
+              ].map(m=>(
+                <button key={m.key} disabled={m.valor==null}
+                  onClick={()=>elegirMetodoPronostico(m.key)}
+                  className={`text-left rounded-xl p-3 border transition disabled:opacity-40 disabled:cursor-not-allowed
+                    ${metodoElegido===m.key?"border-blue-400 bg-blue-50":"border-gray-200 bg-gray-50 hover:border-blue-300"}`}>
+                  <p className="text-[10px] text-gray-500 font-semibold uppercase tracking-wide">{m.label}</p>
+                  <p className="text-lg font-bold text-gray-800 mt-1">{m.valor==null?"—":fmtCLP(m.valor)}<span className="text-xs font-normal text-gray-400">/mes</span></p>
+                  {m.key==="prorrateo"&&presupuestoAnualCategoria==null&&(
+                    <p className="text-[10px] text-amber-600 mt-1">Requiere presupuesto anual (mes en blanco) cargado para esta categoría/año.</p>
+                  )}
+                  {metodoElegido===m.key&&<p className="text-[10px] text-blue-600 font-semibold mt-1">✓ En uso</p>}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+        <h2 className="font-bold text-gray-800 text-sm mb-1">Acumulado anual — real vs. presupuesto{metodoElegido?" vs. proyección":""}</h2>
+        <p className="text-gray-300 text-[10px] mb-3">Siempre muestra el año {anioTrabajo} completo, sin importar el filtro de rango de meses.</p>
         <GastosLineChart series={serieAcumulada}/>
       </div>
 
