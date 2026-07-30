@@ -21246,7 +21246,7 @@ function PlannerPanel({user,data,activeCOLL,onNav,onClose}){
 
   return(
     <div className="fixed inset-0 bg-black/40 z-50" onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
-      <div className="fixed right-0 top-0 h-full w-full max-w-lg bg-white shadow-2xl flex flex-col overflow-hidden" onClick={e=>e.stopPropagation()}>
+      <div className="fixed right-0 top-0 h-full w-full max-w-3xl bg-white shadow-2xl flex flex-col overflow-hidden" onClick={e=>e.stopPropagation()}>
 
         {/* Header */}
         <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between flex-shrink-0"
@@ -21580,7 +21580,28 @@ function ProyectoEditor({proyecto,onClose,onSave,onDelete}){
   const [vistaEditor,setVistaEditor]=useState("kanban");
   const [tareas,setTareas]=useState(proyecto.tareas||[]);
   const [showFormTarea,setShowFormTarea]=useState(false);
+  const [tareaEnEdicion,setTareaEnEdicion]=useState(null);
   const [formTarea,setFormTarea]=useState({titulo:"",col:"por_hacer",fechaInicio:"",duracion:1,responsable:"",notas:""});
+
+  const FORM_TAREA_VACIO={titulo:"",col:"por_hacer",fechaInicio:"",duracion:1,responsable:"",notas:""};
+
+  const abrirNuevaTarea=()=>{
+    setTareaEnEdicion(null);
+    setFormTarea(FORM_TAREA_VACIO);
+    setShowFormTarea(true);
+  };
+
+  const abrirEdicionTarea=(t)=>{
+    setTareaEnEdicion(t);
+    setFormTarea({titulo:t.titulo,col:t.col,fechaInicio:t.fechaInicio||"",duracion:t.duracion||1,responsable:t.responsable||"",notas:t.notas||""});
+    setShowFormTarea(true);
+  };
+
+  const cerrarFormTarea=()=>{
+    setShowFormTarea(false);
+    setTareaEnEdicion(null);
+    setFormTarea(FORM_TAREA_VACIO);
+  };
 
   const guardarTarea=()=>{
     if(!formTarea.titulo.trim()) return;
@@ -21588,22 +21609,35 @@ function ProyectoEditor({proyecto,onClose,onSave,onDelete}){
     const dur=parseInt(formTarea.duracion)||1;
     const fechaFin=new Date(new Date(fechaInicio+"T12:00:00").getTime()+(dur-1)*86400000).toISOString().slice(0,10);
 
-    const nueva={
-      id:"t_"+Math.random().toString(36).slice(2,8),
-      titulo:formTarea.titulo.trim(),
-      col:formTarea.col,
-      fechaInicio,
-      duracion:dur,
-      fechaFin,
-      responsable:formTarea.responsable||"",
-      notas:formTarea.notas||"",
-      creadoAt:new Date().toISOString(),
-    };
-    const updated=[...tareas,nueva];
+    let updated;
+    if(tareaEnEdicion){
+      updated=tareas.map(t=>t.id===tareaEnEdicion.id?{
+        ...t,
+        titulo:formTarea.titulo.trim(),
+        col:formTarea.col,
+        fechaInicio,
+        duracion:dur,
+        fechaFin,
+        responsable:formTarea.responsable||"",
+        notas:formTarea.notas||"",
+      }:t);
+    }else{
+      const nueva={
+        id:"t_"+Math.random().toString(36).slice(2,8),
+        titulo:formTarea.titulo.trim(),
+        col:formTarea.col,
+        fechaInicio,
+        duracion:dur,
+        fechaFin,
+        responsable:formTarea.responsable||"",
+        notas:formTarea.notas||"",
+        creadoAt:new Date().toISOString(),
+      };
+      updated=[...tareas,nueva];
+    }
     setTareas(updated);
     onSave({...proyecto,tareas:updated});
-    setShowFormTarea(false);
-    setFormTarea({titulo:"",col:"por_hacer",fechaInicio:"",duracion:1,responsable:"",notas:""});
+    cerrarFormTarea();
   };
 
   const cambiarCol=(tareaId,nuevoCol)=>{
@@ -21654,7 +21688,7 @@ function ProyectoEditor({proyecto,onClose,onSave,onDelete}){
             )}
           </div>
         </div>
-        <button onClick={()=>setShowFormTarea(true)} className="px-3 py-1.5 rounded-xl text-xs font-bold text-white transition" style={{background:"#2563eb"}}>
+        <button onClick={abrirNuevaTarea} className="px-3 py-1.5 rounded-xl text-xs font-bold text-white transition" style={{background:"#2563eb"}}>
           + Tarea
         </button>
         <button onClick={()=>{if(window.confirm(`¿Eliminar el proyecto "${proyecto.nombre}"? Esta acción no se puede deshacer.`))onDelete(proyecto.id);}}
@@ -21685,7 +21719,7 @@ function ProyectoEditor({proyecto,onClose,onSave,onDelete}){
             <div className="text-center py-12">
               <p className="text-3xl mb-2">📋</p>
               <p className="text-gray-500 text-sm">Sin tareas aún</p>
-              <button onClick={()=>setShowFormTarea(true)} className="mt-3 text-sm text-blue-600 hover:underline font-semibold">
+              <button onClick={abrirNuevaTarea} className="mt-3 text-sm text-blue-600 hover:underline font-semibold">
                 + Agregar primera tarea
               </button>
             </div>
@@ -21701,21 +21735,27 @@ function ProyectoEditor({proyecto,onClose,onSave,onDelete}){
                     <div className="space-y-1.5">
                       {tareasCol.map(t=>(
                         <div key={t.id} className="bg-white rounded-lg border border-gray-200 p-2 shadow-sm">
-                          <p className="text-xs font-semibold text-gray-800 leading-tight">{t.titulo}</p>
+                          <p onClick={()=>abrirEdicionTarea(t)}
+                            className="text-xs font-semibold text-gray-800 leading-tight cursor-pointer hover:text-blue-700 transition">
+                            {t.titulo}
+                          </p>
                           {t.fechaInicio&&(
                             <p className="text-[10px] text-gray-400 mt-1">
                               {new Date(t.fechaInicio+"T12:00:00").toLocaleDateString("es-CL",{day:"numeric",month:"short"})}
                               {t.duracion>1&&` · ${t.duracion}d`}
                             </p>
                           )}
-                          <div className="flex gap-1 mt-1.5 flex-wrap">
+                          <div className="flex gap-1 mt-1.5 flex-wrap items-center">
                             {Object.entries(cols).filter(([k])=>k!==colKey).map(([k,d])=>(
                               <button key={k} onClick={()=>cambiarCol(t.id,k)}
                                 className="text-[9px] px-1.5 py-0.5 rounded-md border border-gray-200 text-gray-500 hover:bg-gray-100 transition">
                                 → {d.label}
                               </button>
                             ))}
-                            <button onClick={()=>eliminarTarea(t.id)} className="text-[9px] px-1.5 py-0.5 rounded-md text-red-400 hover:text-red-600 transition ml-auto">
+                            <button onClick={()=>abrirEdicionTarea(t)} className="text-[9px] px-1.5 py-0.5 rounded-md text-gray-400 hover:text-blue-600 transition ml-auto">
+                              ✏️
+                            </button>
+                            <button onClick={()=>eliminarTarea(t.id)} className="text-[9px] px-1.5 py-0.5 rounded-md text-red-400 hover:text-red-600 transition">
                               🗑
                             </button>
                           </div>
@@ -21818,8 +21858,8 @@ function ProyectoEditor({proyecto,onClose,onSave,onDelete}){
               {tareas.sort((a,b)=>(a.fechaInicio||"9999").localeCompare(b.fechaInicio||"9999")).map(t=>(
                 <div key={t.id} className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition">
                   <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${t.col==="listo"?"bg-emerald-500":t.col==="en_proceso"?"bg-blue-500":t.col==="bloqueado"?"bg-red-500":"bg-gray-300"}`}/>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-gray-800">{t.titulo}</p>
+                  <div className="flex-1 min-w-0 cursor-pointer" onClick={()=>abrirEdicionTarea(t)}>
+                    <p className="text-sm font-semibold text-gray-800 hover:text-blue-700 transition">{t.titulo}</p>
                     <div className="flex gap-3 mt-0.5">
                       {t.fechaInicio&&<span className="text-[10px] text-gray-400">📅 {new Date(t.fechaInicio+"T12:00:00").toLocaleDateString("es-CL")}</span>}
                       {t.duracion>0&&<span className="text-[10px] text-gray-400">⏱ {t.duracion} día{t.duracion>1?"s":""}</span>}
@@ -21830,6 +21870,7 @@ function ProyectoEditor({proyecto,onClose,onSave,onDelete}){
                     className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 bg-white text-gray-600 focus:outline-none">
                     {Object.entries(cols).map(([k,d])=><option key={k} value={k}>{d.label}</option>)}
                   </select>
+                  <button onClick={()=>abrirEdicionTarea(t)} className="text-gray-300 hover:text-blue-500 transition text-sm flex-shrink-0">✏️</button>
                   <button onClick={()=>eliminarTarea(t.id)} className="text-gray-300 hover:text-red-400 transition text-sm flex-shrink-0">🗑</button>
                 </div>
               ))}
@@ -21843,8 +21884,8 @@ function ProyectoEditor({proyecto,onClose,onSave,onDelete}){
         <div className="absolute inset-0 flex items-center justify-center z-10 p-4" style={{background:"rgba(0,0,0,0.5)"}}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden" onClick={e=>e.stopPropagation()}>
             <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-              <p className="font-bold text-gray-900">Nueva tarea</p>
-              <button onClick={()=>setShowFormTarea(false)} className="text-gray-400 hover:text-gray-600">
+              <p className="font-bold text-gray-900">{tareaEnEdicion?"Editar tarea":"Nueva tarea"}</p>
+              <button onClick={cerrarFormTarea} className="text-gray-400 hover:text-gray-600">
                 <X size={16}/>
               </button>
             </div>
@@ -21880,14 +21921,21 @@ function ProyectoEditor({proyecto,onClose,onSave,onDelete}){
                   className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-blue-400"
                   placeholder="Nombre del responsable"/>
               </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Notas (opcional)</label>
+                <textarea value={formTarea.notas} onChange={e=>setFormTarea(f=>({...f,notas:e.target.value}))}
+                  rows={2}
+                  className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-blue-400 resize-none"
+                  placeholder="Detalles adicionales..."/>
+              </div>
               <div className="flex gap-3 pt-1">
-                <button onClick={()=>setShowFormTarea(false)}
+                <button onClick={cerrarFormTarea}
                   className="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-600 text-sm font-semibold hover:bg-gray-50 transition">
                   Cancelar
                 </button>
                 <button onClick={guardarTarea} disabled={!formTarea.titulo.trim()}
                   className="flex-1 py-2.5 rounded-xl text-white text-sm font-bold transition disabled:opacity-40" style={{background:"#2563eb"}}>
-                  Agregar tarea
+                  {tareaEnEdicion?"Guardar cambios":"Agregar tarea"}
                 </button>
               </div>
             </div>
