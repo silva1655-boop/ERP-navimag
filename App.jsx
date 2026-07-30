@@ -13728,16 +13728,26 @@ function parseGastosXLSXRows(rows){
 }
 
 // Línea real acumulado vs. presupuesto acumulado (sin proyección — Bloque 6)
-function GastosLineChart({series,height=160,width=600}){
+const fmtCompactCLP=(v)=>{
+  const s=v<0?"-":"";
+  const a=Math.abs(v);
+  if(a>=1e9) return s+"$"+(a/1e9).toFixed(1).replace(/\.0$/,"")+"MM";
+  if(a>=1e6) return s+"$"+(a/1e6).toFixed(1).replace(/\.0$/,"")+"M";
+  if(a>=1e3) return s+"$"+(a/1e3).toFixed(0)+"K";
+  return s+"$"+Math.round(a);
+};
+
+function GastosLineChart({series,height=240,width=700}){
   if(!series||series.length<2) return(
     <div className="flex items-center justify-center h-32 text-gray-300 text-xs">Sin datos suficientes</div>
   );
-  const max=Math.max(...series.flatMap(s=>[s.real,s.presupuesto]),1);
+  const hayPresupuesto=series.some(s=>s.presupuesto>0);
+  const max=Math.max(...series.flatMap(s=>[s.real,hayPresupuesto?s.presupuesto:0]),1);
   const W=width,H=height;
-  const pad={t:10,b:22,l:8,r:8};
+  const pad={t:28,b:26,l:56,r:16};
   const cW=W-pad.l-pad.r,cH=H-pad.t-pad.b;
   const xAt=i=>pad.l+(i/(series.length-1||1))*cW;
-  const yAt=v=>pad.t+cH-(v/max)*cH;
+  const yAt=v=>pad.t+cH-(Math.max(v,0)/max)*cH;
   const pathSegment=(startIdx,endIdx,key)=>series.slice(startIdx,endIdx+1)
     .map((s,i)=>`${i===0?"M":"L"}${xAt(startIdx+i).toFixed(1)},${yAt(s[key]).toFixed(1)}`).join(" ");
   const pathFor=key=>pathSegment(0,series.length-1,key);
@@ -13747,19 +13757,77 @@ function GastosLineChart({series,height=160,width=600}){
   const finConexion=primerProyIdx<=0?0:primerProyIdx-1;
   const pathRealSolido=primerProyIdx===-1?pathFor("real"):pathSegment(0,finConexion,"real");
   const pathRealProyectado=primerProyIdx===-1?null:pathSegment(finConexion,series.length-1,"real");
+  const areaD=pathFor("real")+` L${xAt(series.length-1).toFixed(1)},${(pad.t+cH).toFixed(1)} L${xAt(0).toFixed(1)},${(pad.t+cH).toFixed(1)} Z`;
+
+  // Grilla horizontal: 4 líneas a valores redondos entre 0 y max
+  const gridlines=Array.from({length:4},(_,i)=>{
+    const v=(max/3)*i;
+    return{v,y:yAt(v)};
+  });
+
+  const ultimoReal=primerProyIdx===-1?series[series.length-1]:series[finConexion];
+  const ultimoProyectado=primerProyIdx!==-1?series[series.length-1]:null;
+
   return(
     <div>
       <svg width="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{display:"block",height:`${H}px`}}>
-        <path d={pathFor("presupuesto")} fill="none" stroke="#94a3b8" strokeWidth="2" strokeDasharray="4,3"/>
+        <defs>
+          <linearGradient id="gastosAreaFill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#2563eb" stopOpacity="0.16"/>
+            <stop offset="100%" stopColor="#2563eb" stopOpacity="0"/>
+          </linearGradient>
+        </defs>
+
+        {/* Grilla + eje Y */}
+        {gridlines.map((g,i)=>(
+          <g key={i}>
+            <line x1={pad.l} x2={W-pad.r} y1={g.y} y2={g.y} stroke="#F1F3F5" strokeWidth="1"/>
+            <text x={pad.l-8} y={g.y+3} textAnchor="end" fontSize="9" fill="#B0B7C0">{fmtCompactCLP(g.v)}</text>
+          </g>
+        ))}
+
+        {/* Línea divisoria real / proyección */}
+        {primerProyIdx>0&&(
+          <g>
+            <line x1={xAt(finConexion)} x2={xAt(finConexion)} y1={pad.t} y2={pad.t+cH} stroke="#CBD5E1" strokeWidth="1" strokeDasharray="2,2"/>
+            <text x={xAt(finConexion)} y={pad.t-8} textAnchor="middle" fontSize="8" fill="#B0B7C0">último real</text>
+          </g>
+        )}
+
+        <path d={areaD} fill="url(#gastosAreaFill)"/>
+        {hayPresupuesto&&<path d={pathFor("presupuesto")} fill="none" stroke="#94a3b8" strokeWidth="2" strokeDasharray="4,3"/>}
         <path d={pathRealSolido} fill="none" stroke="#2563eb" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
-        {pathRealProyectado&&<path d={pathRealProyectado} fill="none" stroke="#2563eb" strokeWidth="2.5" strokeDasharray="5,4" strokeLinecap="round"/>}
-        {series.map((s,i)=>!s.proyectado&&(<circle key={i} cx={xAt(i)} cy={yAt(s.real)} r="3" fill="white" stroke="#2563eb" strokeWidth="2"/>))}
-        {series.map((s,i)=>(<text key={i} x={xAt(i)} y={H-4} textAnchor="middle" fontSize="9" fill={s.proyectado?"#c4cad3":"#9CA3AF"}>{s.mes.slice(5)}</text>))}
+        {pathRealProyectado&&<path d={pathRealProyectado} fill="none" stroke="#60a5fa" strokeWidth="2.5" strokeDasharray="5,4" strokeLinecap="round"/>}
+
+        {series.map((s,i)=>(
+          <circle key={i} cx={xAt(i)} cy={yAt(s.real)} r={s.proyectado?2.5:3.5}
+            fill={s.proyectado?"#60a5fa":"white"} stroke={s.proyectado?"#60a5fa":"#2563eb"} strokeWidth="2">
+            <title>{s.mes}{s.proyectado?" (proyectado)":""} · {fmtCompactCLP(s.real)}{hayPresupuesto?` · Presupuesto: ${fmtCompactCLP(s.presupuesto)}`:""}</title>
+          </circle>
+        ))}
+
+        {/* Valor destacado al final de lo real y al final de la proyección */}
+        {ultimoReal&&(
+          <text x={xAt(series.indexOf(ultimoReal))} y={yAt(ultimoReal.real)-10} textAnchor="middle" fontSize="9.5" fontWeight="700" fill="#1d4ed8">
+            {fmtCompactCLP(ultimoReal.real)}
+          </text>
+        )}
+        {ultimoProyectado&&(
+          <text x={Math.min(xAt(series.length-1),W-pad.r-4)} y={yAt(ultimoProyectado.real)-10} textAnchor="end" fontSize="9.5" fontWeight="700" fill="#60a5fa">
+            {fmtCompactCLP(ultimoProyectado.real)}
+          </text>
+        )}
+
+        {series.map((s,i)=>(<text key={i} x={xAt(i)} y={H-6} textAnchor="middle" fontSize="9" fill={s.proyectado?"#c4cad3":"#9CA3AF"}>{s.mes.slice(5)}</text>))}
       </svg>
       <div className="flex items-center gap-4 mt-1.5 justify-center flex-wrap">
         <span className="flex items-center gap-1.5 text-xs text-gray-500"><span className="w-3 h-0.5 bg-blue-600 inline-block rounded"/>Real acumulado</span>
-        <span className="flex items-center gap-1.5 text-xs text-gray-500"><span className="w-3 h-0.5 inline-block" style={{borderTop:"2px dashed #94a3b8"}}/>Presupuesto acumulado</span>
-        {primerProyIdx!==-1&&<span className="flex items-center gap-1.5 text-xs text-blue-400"><span className="w-3 h-0.5 inline-block" style={{borderTop:"2px dashed #2563eb"}}/>Proyección</span>}
+        {hayPresupuesto?(
+          <span className="flex items-center gap-1.5 text-xs text-gray-500"><span className="w-3 h-0.5 inline-block" style={{borderTop:"2px dashed #94a3b8"}}/>Presupuesto acumulado</span>
+        ):(
+          <span className="text-xs text-gray-300 italic">Sin presupuesto cargado</span>
+        )}
+        {primerProyIdx!==-1&&<span className="flex items-center gap-1.5 text-xs text-blue-400"><span className="w-3 h-0.5 inline-block" style={{borderTop:"2px dashed #60a5fa"}}/>Proyección</span>}
       </div>
     </div>
   );
