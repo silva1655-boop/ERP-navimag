@@ -603,22 +603,33 @@ function getISOWeek(date){
   return 1+Math.round((d-firstThursday)/(7*24*3600*1000));
 }
 
-// Campos derivados de una Faena (fórmulas del spec Disponibilidad y Utilización).
-// indisponibilidadHH es la suma de horasReparacion de las Detenciones asociadas
-// (bloque 2: siempre 0, todavía no existen Detenciones; bloque 3 la recalcula
-// en el cliente al guardar/editar/borrar una Detención).
+// Campos derivados de una Faena. indisponibilidadHH es la suma de
+// horasReparacion de las Detenciones asociadas (bloque 3 la recalcula en el
+// cliente al guardar/editar/borrar una Detención).
+//
+// Fórmulas validadas contra el Excel real (Registro_Detenciones_Tractos.xlsx,
+// hoja Faena) leyendo las fórmulas de celda reales de columnas F/H/L/M/N/O/P/T
+// (no solo el texto del spec) sobre las 180 filas históricas: coinciden
+// exactamente salvo 6 filas donde el propio Excel arrastró mal una referencia
+// relativa en su columna L (bug pre-existente del archivo original).
+// "horasOperacion" NO son horas de calendario: son horas-tracto entregadas
+// (tractosOp × horasOperacionBruta). Así "utilizacionEsperada" (target ×
+// horasOperacionBruta) y "horasOperacion" quedan en la misma unidad que
+// indisponibilidadHH (suma de horas de reparación, potencialmente de varios
+// tractos distintos), que es lo que hace comparables sus ratios.
 function calcularFaenaDerivados({buque,terminal,inicioOp,terminoOp,tractosOp,tractosUtilizados,capacidadOperadores},targets,indisponibilidadHH=0){
   const targetRow=(targets||[]).find(t=>t.buque===buque&&t.terminal===terminal);
   if(!targetRow||!inicioOp||!terminoOp) return null;
   const target=targetRow.target;
   const ini=new Date(inicioOp), fin=new Date(terminoOp);
   if(isNaN(ini.getTime())||isNaN(fin.getTime())||fin<=ini) return null;
+  const tOp=parseFloat(tractosOp)||0;
   const horasOperacionBruta=(fin-ini)/3600000;
+  const utilizacionEsperada=target*horasOperacionBruta;
+  const horasOperacion=tOp*horasOperacionBruta;
   const horasDescontables=Math.max(0,(target-(parseFloat(capacidadOperadores)||0))*horasOperacionBruta);
-  const horasOperacion=horasOperacionBruta-horasDescontables;
-  const utilizacionEsperada=target*horasOperacion;
   const disponibilidadTecnica=utilizacionEsperada>0?Math.max(0,Math.min(1,(horasOperacion-indisponibilidadHH)/utilizacionEsperada)):0;
-  const cumplimiento=target>0?Math.min(1,(parseFloat(tractosOp)||0)/target):0;
+  const cumplimiento=target>0?Math.min(1,tOp/target):0;
   const utilizacion=horasOperacion>0?Math.max(0,Math.min(1,(horasOperacion-indisponibilidadHH-horasDescontables)/horasOperacion)):0;
   return{
     target,horasOperacionBruta,horasDescontables,horasOperacion,utilizacionEsperada,
@@ -15904,6 +15915,7 @@ function DisponibilidadUtilizacion({user,data}){
             className="px-3 py-2 rounded-lg border border-gray-200 text-sm">
             <option value="MECANICA">Mecánica</option>
             <option value="ELECTRICA">Eléctrica</option>
+            <option value="HIDRAULICA">Hidráulica</option>
             <option value="OPERACIONAL">Operacional</option>
           </select>
           <label className="text-xs text-gray-500">
