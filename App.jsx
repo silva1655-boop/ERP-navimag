@@ -4576,13 +4576,16 @@ const finalizeWizard=async(closeOT)=>{
   };
   const finalStatus=closeOT?(statusMap[wz.estadoFinal]||"completada"):"en_proceso";
 
-  // Fecha real de la intervención (inicio del trabajo, editable por el técnico).
-  // Se usa para closingDate/closingISO en vez de "hoy" — afecta historial de
-  // ejecuciones y el recálculo de próxima fecha de planes. Hoisted aquí (antes
-  // del bloque de cierre) para que el setTimeout de re-evaluación de planes
-  // también pueda usarla.
-  const closingDate=(wz.startDateTime||new Date().toISOString()).slice(0,10);
-  const closingISO=wz.startDateTime||new Date().toISOString();
+  // Fecha real de cierre de la intervención: prioriza el término real
+  // (horaTerminoReal, editable por el técnico) sobre el inicio (startDateTime).
+  // Es la MISMA fuente que usa el bloque verde "ÚLTIMA EJECUCIÓN" del detalle
+  // del plan (selectedAssignDetail) — antes se usaba solo el inicio, lo que
+  // desincronizaba "Última ejecución"/"Próximo PM" (arriba, calendario) de la
+  // fecha real de cierre cuando inicio y término caían en días distintos.
+  // Hoisted aquí (antes del bloque de cierre) para que el setTimeout de
+  // re-evaluación de planes también pueda usarla.
+  const closingDate=(wz.horaTerminoReal||wz.startDateTime||new Date().toISOString()).slice(0,10);
+  const closingISO=wz.horaTerminoReal||wz.startDateTime||new Date().toISOString();
 
   // consumptions[] — estructura SAP-ready, derivada de la misma fuente que parts[]
   const consumptions=wz.repuestos.map(r=>{
@@ -4964,8 +4967,10 @@ if(rep.status==="completada"&&sel.planId){
   const thisPlan=plans.find(p=>p.id===sel.planId);
   const planFreq=parseFloat(thisPlan?.frequency)||0;
   const isCalendar=(thisPlan?.tipoPlan||"").toLowerCase()==="calendario";
-  // Fecha real de la intervención (ingresada por el técnico) en vez de "hoy"
-  const closingDate=rep.fechaInicio||new Date().toISOString().slice(0,10);
+  // Fecha real de cierre: prioriza el término real (rep.fechaTermino) sobre
+  // el inicio (rep.fechaInicio) — misma fuente que el bloque verde "ÚLTIMA
+  // EJECUCIÓN" del detalle del plan.
+  const closingDate=rep.fechaTermino||rep.fechaInicio||new Date().toISOString().slice(0,10);
   const nextDueDateNew=isCalendar?(()=>{const d=new Date(closingDate+"T12:00:00");d.setDate(d.getDate()+Math.round(planFreq));return d.toISOString().slice(0,10);})():null;
   const updP=plans.map(p=>p.id===sel.planId?{
     ...p,
@@ -4992,8 +4997,10 @@ if(rep.status==="completada"){
 }
 if(rep.status==="completada"&&sel.assignmentId){
   const closingH=parseFloat(rep.horometro)||equip.find(e=>e.id===sel.equipId)?.hours||0;
-  // Fecha real de la intervención (ingresada por el técnico) en vez de "hoy"
-  const closingDate=rep.fechaInicio||new Date().toISOString().slice(0,10);
+  // Fecha real de cierre: prioriza el término real (rep.fechaTermino) sobre
+  // el inicio (rep.fechaInicio) — misma fuente que el bloque verde "ÚLTIMA
+  // EJECUCIÓN" del detalle del plan.
+  const closingDate=rep.fechaTermino||rep.fechaInicio||new Date().toISOString().slice(0,10);
   const thisAssign=(data.planAssignments||[]).find(a=>a.id===sel.assignmentId);
   if(thisAssign){
     const thisTpl=(data.planTemplates||[]).find(t=>t.id===thisAssign.templateId);
@@ -8805,7 +8812,11 @@ const genOT=(plan,allWOs)=>{
 const eq=equip.find(e=>e.id===plan.equipId);if(!eq)return null;
 const priority=normalizeCriticality(eq.criticality)==="alto"?"alta":normalizeCriticality(eq.criticality)==="medio"?"media":"baja";
 const otCode=isMaritimo&&plan.code?nextPlanOTCode(plan.code,allWOs):nextOTCode(allWOs);
-return {id:uid(),code:otCode,type:"preventiva",equipId:plan.equipId,planId:plan.id,title:plan.name,priority,status:"asignada",assignedTo:plan.technician,createdAt:new Date().toISOString(),scheduledDate:"",estimatedHours:parseFloat(plan.estimatedHours)||0,actualHours:null,description:`OT automática. Tareas: ${Array.isArray(plan.tasks)?plan.tasks.join(", "):plan.tasks}`,observations:"",parts:[],materialesPlanificados:plan.materialesAsociados||[],source:"plan",urgenciaBacklog:"programable"};
+// Resolver responsable igual que checkAndAutoGenerateOTs (regeneración post-cierre) —
+// antes esta primera OT solo copiaba plan.technician crudo, sin pasar por
+// resolveResponsable, y no seteaba assignedToName/responsable/needsAssignment.
+const resp=resolveResponsable(plan.responsable||plan.responsablePlan||plan.technician||"",users);
+return {id:uid(),code:otCode,type:"preventiva",equipId:plan.equipId,planId:plan.id,title:plan.name,priority,status:"asignada",assignedTo:resp.userId||resp.userName,assignedToName:resp.userName,responsable:resp.userId||resp.userName,needsAssignment:!resp.found,createdAt:new Date().toISOString(),scheduledDate:"",estimatedHours:parseFloat(plan.estimatedHours)||0,actualHours:null,description:`OT automática. Tareas: ${Array.isArray(plan.tasks)?plan.tasks.join(", "):plan.tasks}`,observations:"",parts:[],materialesPlanificados:plan.materialesAsociados||[],source:"plan",urgenciaBacklog:"programable"};
 };
 
 const saveTpl=()=>{
