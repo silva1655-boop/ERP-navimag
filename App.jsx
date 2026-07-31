@@ -13650,6 +13650,11 @@ const GASTO_COL_MAP={
   usuario:["usuario"],
   documentoCabecera:["documentocomprascabecera","documentodecompras","documentocompras","doccabecera","documentocabecera"],
 };
+// Columnas opcionales: si no están en el archivo no bloquean el import (a
+// diferencia de GASTO_COL_MAP), simplemente quedan vacías.
+const GASTO_COL_MAP_OPCIONALES={
+  textoPedido:["textodepedido","textopedido","textobrevepedido","textobrevedepedido","textobreve"],
+};
 function hashGasto(str){
   let h=0;
   for(let i=0;i<str.length;i++){h=((h<<5)-h+str.charCodeAt(i))|0;}
@@ -13684,6 +13689,10 @@ function parseGastosXLSXRows(rows){
     if(found!==undefined) colIdx[field]=idx[found];
     else missingCols.push(field);
   });
+  Object.entries(GASTO_COL_MAP_OPCIONALES).forEach(([field,candidatos])=>{
+    const found=candidatos.find(c=>idx[c]!==undefined);
+    if(found!==undefined) colIdx[field]=idx[found];
+  });
   if(missingCols.length>0){
     return{porMes:{},missingCols,sinCentro:0,errores:[`Columnas no encontradas: ${missingCols.join(", ")}. Encabezados leídos: ${headerRow.join(" | ")}`]};
   }
@@ -13712,6 +13721,7 @@ function parseGastosXLSXRows(rows){
       documentoCabecera,
       material:String(row[colIdx.material]??"").trim(),
       descripcionMaterial:String(row[colIdx.descripcionMaterial]??"").trim(),
+      textoPedido:colIdx.textoPedido!==undefined?String(row[colIdx.textoPedido]??"").trim():"",
       usuario,
       fechaContabilizacion:fecha.toISOString(),
       centroCoste,
@@ -13868,6 +13878,46 @@ function GastosLineChart({series,height=240,width=700}){
   );
 }
 
+// Selector con checkboxes para elegir varios valores a la vez (ej. 2+ usuarios,
+// varias categorías) — un <select> nativo no permite multi-selección usable.
+function MultiSelectFiltro({label,opciones,seleccionados,onChange,placeholder="Todos"}){
+  const [abierto,setAbierto]=useState(false);
+  const ref=useRef(null);
+  useEffect(()=>{
+    const handler=e=>{if(ref.current&&!ref.current.contains(e.target))setAbierto(false);};
+    document.addEventListener("mousedown",handler);
+    return()=>document.removeEventListener("mousedown",handler);
+  },[]);
+  const toggle=(op)=>{
+    onChange(seleccionados.includes(op)?seleccionados.filter(s=>s!==op):[...seleccionados,op]);
+  };
+  return(
+    <div className="relative" ref={ref}>
+      <label className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide block mb-1">{label}</label>
+      <button type="button" onClick={()=>setAbierto(a=>!a)}
+        className={`px-2.5 py-2 rounded-lg border text-xs bg-white text-left w-full min-w-[140px] max-w-[200px] flex items-center justify-between gap-2 ${seleccionados.length>0?"border-blue-300 text-blue-700":"border-gray-200 text-gray-600"}`}>
+        <span className="truncate">{seleccionados.length===0?placeholder:seleccionados.length===1?seleccionados[0]:`${seleccionados.length} seleccionados`}</span>
+        <ChevronDown size={12} className="flex-shrink-0"/>
+      </button>
+      {abierto&&(
+        <div className="absolute z-20 mt-1 w-60 max-h-64 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg p-1.5">
+          {seleccionados.length>0&&(
+            <button onClick={()=>onChange([])} className="w-full text-left text-[10px] text-red-500 hover:bg-red-50 rounded px-2 py-1 mb-1 font-semibold">Limpiar selección ({seleccionados.length})</button>
+          )}
+          {opciones.length===0?(
+            <p className="text-gray-300 text-xs px-2 py-1">Sin opciones disponibles</p>
+          ):opciones.map(op=>(
+            <label key={op} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-gray-50 cursor-pointer text-xs">
+              <input type="checkbox" checked={seleccionados.includes(op)} onChange={()=>toggle(op)}/>
+              <span className="truncate">{op}</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GastosPresupuesto({user,activeModule,activeBarco}){
   const [configCentros,setConfigCentros]=useState([]);
   const [mesesIndex,setMesesIndex]=useState([]);
@@ -13887,9 +13937,9 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
   const [metodosPronostico,setMetodosPronostico]=useState([]);
   const [filtroMesDesde,setFiltroMesDesde]=useState("");
   const [filtroMesHasta,setFiltroMesHasta]=useState("");
-  const [filtroCentro,setFiltroCentro]=useState("");
-  const [filtroCategoria,setFiltroCategoria]=useState("");
-  const [filtroUsuario,setFiltroUsuario]=useState("");
+  const [filtrosCentro,setFiltrosCentro]=useState([]);
+  const [filtrosCategoria,setFiltrosCategoria]=useState([]);
+  const [filtrosUsuario,setFiltrosUsuario]=useState([]);
   const [incluirPuntuales,setIncluirPuntuales]=useState(true);
   const [mesDetalle,setMesDetalle]=useState(null);
   const [reclasificando,setReclasificando]=useState(false);
@@ -13991,42 +14041,48 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
   const categoriasDisponibles=useMemo(()=>[...new Set(txnsAnotadas.map(t=>t.descripClaseCoste).filter(Boolean))].sort(),[txnsAnotadas]);
   const usuariosDisponibles=useMemo(()=>[...new Set(txnsAnotadas.map(t=>t.usuario).filter(Boolean))].sort(),[txnsAnotadas]);
 
+  // Etiqueta compacta de una selección múltiple, para usar en títulos
+  const etiquetaSel=(arr,todos="TOTAL")=>arr.length===0?todos:arr.length===1?arr[0]:`${arr.length} seleccionados`;
+
   const txnsFiltradas=useMemo(()=>{
     return txnsAnotadas.filter(t=>{
       if(filtroMesDesde&&t.mes<filtroMesDesde) return false;
       if(filtroMesHasta&&t.mes>filtroMesHasta) return false;
-      if(filtroCentro&&t.centroCoste!==filtroCentro) return false;
-      if(filtroCategoria&&t.descripClaseCoste!==filtroCategoria) return false;
-      if(filtroUsuario&&t.usuario!==filtroUsuario) return false;
+      if(filtrosCentro.length>0&&!filtrosCentro.includes(t.centroCoste)) return false;
+      if(filtrosCategoria.length>0&&!filtrosCategoria.includes(t.descripClaseCoste)) return false;
+      if(filtrosUsuario.length>0&&!filtrosUsuario.includes(t.usuario)) return false;
       return true;
     });
-  },[txnsAnotadas,filtroMesDesde,filtroMesHasta,filtroCentro,filtroCategoria,filtroUsuario]);
+  },[txnsAnotadas,filtroMesDesde,filtroMesHasta,filtrosCentro,filtrosCategoria,filtrosUsuario]);
 
   const mesesEnRango=useMemo(()=>{
     return mesesIndex.filter(m=>(!filtroMesDesde||m>=filtroMesDesde)&&(!filtroMesHasta||m<=filtroMesHasta));
   },[mesesIndex,filtroMesDesde,filtroMesHasta]);
 
-  // Presupuesto todavía no tiene formulario de carga (Bloque 5) — hoy siempre
-  // devuelve 0, pero el gráfico ya queda listo para cuando exista el dato.
-  const presupuestoPorMes=(mes,categoria)=>{
-    const cat=categoria||"TOTAL";
+  // Presupuesto: si hay 0 o >1 categorías seleccionadas no hay una sola fila de
+  // presupuesto que corresponda — se suman las de cada categoría seleccionada
+  // (o "TOTAL" si no hay ninguna categoría filtrada).
+  const presupuestoPorMes=(mes,categorias)=>{
+    const cats=(categorias&&categorias.length>0)?categorias:["TOTAL"];
     const anio=parseInt(mes.slice(0,4));
     const vId=activeModule==="maritimo"?(activeBarco||null):null;
-    const exacto=presupuesto.find(p=>p.modulo===activeModule&&(p.vesselId||null)===vId&&p.categoria===cat&&p.anio===anio&&p.mes===mes);
-    if(exacto) return exacto.montoPresupuestado||0;
-    const anual=presupuesto.find(p=>p.modulo===activeModule&&(p.vesselId||null)===vId&&p.categoria===cat&&p.anio===anio&&!p.mes);
-    return anual?(anual.montoPresupuestado||0)/12:0;
+    return cats.reduce((sum,cat)=>{
+      const exacto=presupuesto.find(p=>p.modulo===activeModule&&(p.vesselId||null)===vId&&p.categoria===cat&&p.anio===anio&&p.mes===mes);
+      if(exacto) return sum+(exacto.montoPresupuestado||0);
+      const anual=presupuesto.find(p=>p.modulo===activeModule&&(p.vesselId||null)===vId&&p.categoria===cat&&p.anio===anio&&!p.mes);
+      return sum+(anual?(anual.montoPresupuestado||0)/12:0);
+    },0);
   };
 
   const serieMensual=useMemo(()=>{
     return mesesEnRango.map(mes=>{
       const rows=txnsFiltradas.filter(t=>t.mes===mes&&!t._reglaExcluida&&(incluirPuntuales||!t._reglaPuntual));
       const real=rows.reduce((s,t)=>s+(t.valor||0),0);
-      const presupuestoMes=presupuestoPorMes(mes,filtroCategoria);
+      const presupuestoMes=presupuestoPorMes(mes,filtrosCategoria);
       const pct=presupuestoMes>0?Math.round((real/presupuestoMes)*100):null;
       return{mes,real,presupuesto:presupuestoMes,pct};
     });
-  },[mesesEnRango,txnsFiltradas,incluirPuntuales,presupuesto,filtroCategoria,activeModule,activeBarco]);
+  },[mesesEnRango,txnsFiltradas,incluirPuntuales,presupuesto,filtrosCategoria,activeModule,activeBarco]);
 
   // ── Motor de pronóstico (Bloque 6) ──
   // Trabaja sobre el año del último mes cargado, con la base "real filtrado
@@ -14041,12 +14097,12 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
     const mesesDelAnio=mesesIndex.filter(m=>m.startsWith(anioTrabajo+"-"));
     return mesesDelAnio.map(mes=>{
       const rows=txnsAnotadas.filter(t=>t.mes===mes&&!t._reglaExcluida&&!t._reglaPuntual
-        &&(!filtroCentro||t.centroCoste===filtroCentro)
-        &&(!filtroCategoria||t.descripClaseCoste===filtroCategoria)
-        &&(!filtroUsuario||t.usuario===filtroUsuario));
+        &&(filtrosCentro.length===0||filtrosCentro.includes(t.centroCoste))
+        &&(filtrosCategoria.length===0||filtrosCategoria.includes(t.descripClaseCoste))
+        &&(filtrosUsuario.length===0||filtrosUsuario.includes(t.usuario)));
       return{mes,valor:rows.reduce((s,t)=>s+(t.valor||0),0)};
     });
-  },[mesesIndex,anioTrabajo,txnsAnotadas,filtroCentro,filtroCategoria,filtroUsuario]);
+  },[mesesIndex,anioTrabajo,txnsAnotadas,filtrosCentro,filtrosCategoria,filtrosUsuario]);
 
   const mesesFaltantesDelAnio=useMemo(()=>{
     const presentes=new Set(serieAnualPronostico.map(m=>m.mes));
@@ -14058,11 +14114,19 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
     return faltantes;
   },[serieAnualPronostico,anioTrabajo]);
 
+  // Clave de categoría para persistir el método de pronóstico elegido — una
+  // combinación específica de categorías cuenta como su propia "categoría".
+  const catKeyPronostico=filtrosCategoria.length===0?"TOTAL":filtrosCategoria.slice().sort().join("+");
+
   const presupuestoAnualCategoria=useMemo(()=>{
-    const cat=filtroCategoria||"TOTAL";
-    const entry=presupuesto.find(p=>p.modulo===activeModule&&(p.vesselId||null)===vesselIdActual&&p.categoria===cat&&p.anio===anioTrabajo&&!p.mes);
-    return entry?entry.montoPresupuestado:null;
-  },[presupuesto,activeModule,vesselIdActual,filtroCategoria,anioTrabajo]);
+    const cats=filtrosCategoria.length>0?filtrosCategoria:["TOTAL"];
+    let total=0,huboAlguno=false;
+    cats.forEach(cat=>{
+      const entry=presupuesto.find(p=>p.modulo===activeModule&&(p.vesselId||null)===vesselIdActual&&p.categoria===cat&&p.anio===anioTrabajo&&!p.mes);
+      if(entry){total+=entry.montoPresupuestado||0;huboAlguno=true;}
+    });
+    return huboAlguno?total:null;
+  },[presupuesto,activeModule,vesselIdActual,filtrosCategoria,anioTrabajo]);
 
   const pronostico=useMemo(()=>{
     const n=serieAnualPronostico.length;
@@ -14103,26 +14167,26 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
   },[serieAnualPronostico,presupuestoAnualCategoria,mesesFaltantesDelAnio]);
 
   const metodoElegido=useMemo(()=>{
-    const cat=filtroCategoria||"TOTAL";
-    const entry=metodosPronostico.find(m=>m.modulo===activeModule&&(m.vesselId||null)===vesselIdActual&&m.categoria===cat&&m.anio===anioTrabajo);
+    const entry=metodosPronostico.find(m=>m.modulo===activeModule&&(m.vesselId||null)===vesselIdActual&&m.categoria===catKeyPronostico&&m.anio===anioTrabajo);
     return entry?entry.metodo:null;
-  },[metodosPronostico,activeModule,vesselIdActual,filtroCategoria,anioTrabajo]);
+  },[metodosPronostico,activeModule,vesselIdActual,catKeyPronostico,anioTrabajo]);
 
   // El acumulado anual usa siempre TODO el año de trabajo (no el rango de
   // meses del filtro) — si se acotara por rango, al agregar la proyección el
   // acumulado quedaría subestimado por los meses ya cargados que quedan
-  // fuera del rango. Sí respeta incluirPuntuales/centro/categoría, igual que
-  // el resto del dashboard.
+  // fuera del rango. Sí respeta incluirPuntuales/centro/categoría/usuario,
+  // igual que el resto del dashboard — esta es la vista que refleja el
+  // filtro elegido, no el total de todo lo importado.
   const serieAnualCompleta=useMemo(()=>{
     const mesesDelAnio=mesesIndex.filter(m=>m.startsWith(anioTrabajo+"-"));
     return mesesDelAnio.map(mes=>{
       const rows=txnsAnotadas.filter(t=>t.mes===mes&&!t._reglaExcluida&&(incluirPuntuales||!t._reglaPuntual)
-        &&(!filtroCentro||t.centroCoste===filtroCentro)
-        &&(!filtroCategoria||t.descripClaseCoste===filtroCategoria)
-        &&(!filtroUsuario||t.usuario===filtroUsuario));
-      return{mes,real:rows.reduce((s,t)=>s+(t.valor||0),0),presupuesto:presupuestoPorMes(mes,filtroCategoria)};
+        &&(filtrosCentro.length===0||filtrosCentro.includes(t.centroCoste))
+        &&(filtrosCategoria.length===0||filtrosCategoria.includes(t.descripClaseCoste))
+        &&(filtrosUsuario.length===0||filtrosUsuario.includes(t.usuario)));
+      return{mes,real:rows.reduce((s,t)=>s+(t.valor||0),0),presupuesto:presupuestoPorMes(mes,filtrosCategoria)};
     });
-  },[mesesIndex,anioTrabajo,txnsAnotadas,incluirPuntuales,filtroCentro,filtroCategoria,filtroUsuario,presupuesto]);
+  },[mesesIndex,anioTrabajo,txnsAnotadas,incluirPuntuales,filtrosCentro,filtrosCategoria,filtrosUsuario,presupuesto]);
 
   const serieAcumulada=useMemo(()=>{
     let accReal=0,accPres=0;
@@ -14136,11 +14200,11 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
       k++;
       const valorMes=pronostico.valorParaMes(metodoElegido,k)||0;
       accReal+=valorMes;
-      accPres+=presupuestoPorMes(mes,filtroCategoria);
+      accPres+=presupuestoPorMes(mes,filtrosCategoria);
       return{mes,real:accReal,presupuesto:accPres,proyectado:true};
     });
     return[...base,...proyectados];
-  },[serieAnualCompleta,metodoElegido,mesesFaltantesDelAnio,pronostico,filtroCategoria]);
+  },[serieAnualCompleta,metodoElegido,mesesFaltantesDelAnio,pronostico,filtrosCategoria]);
 
   const txnsDetalle=useMemo(()=>{
     if(!mesDetalle) return[];
@@ -14197,9 +14261,8 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
   };
 
   const elegirMetodoPronostico=async(metodo)=>{
-    const cat=filtroCategoria||"TOTAL";
-    const otros=metodosPronostico.filter(m=>!(m.modulo===activeModule&&(m.vesselId||null)===vesselIdActual&&m.categoria===cat&&m.anio===anioTrabajo));
-    const updated=[...otros,{modulo:activeModule,vesselId:vesselIdActual,categoria:cat,anio:anioTrabajo,metodo}];
+    const otros=metodosPronostico.filter(m=>!(m.modulo===activeModule&&(m.vesselId||null)===vesselIdActual&&m.categoria===catKeyPronostico&&m.anio===anioTrabajo));
+    const updated=[...otros,{modulo:activeModule,vesselId:vesselIdActual,categoria:catKeyPronostico,anio:anioTrabajo,metodo}];
     setMetodosPronostico(updated);
     await setDoc(doc(db,COLL_GASTOS_PRESUPUESTO,"presupuesto"),{data:presupuesto,metodosPronostico:updated});
   };
@@ -14475,32 +14538,20 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
               {mesesIndex.map(m=><option key={m} value={m}>{m}</option>)}
             </select>
           </div>
-          <div>
-            <label className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide block mb-1">Centro de costo</label>
-            <select value={filtroCentro} onChange={e=>setFiltroCentro(e.target.value)} className="px-2.5 py-2 rounded-lg border border-gray-200 text-xs">
-              <option value="">Todos</option>
-              {centrosDisponibles.map(c=><option key={c} value={c}>{c}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide block mb-1">Categoría</label>
-            <select value={filtroCategoria} onChange={e=>setFiltroCategoria(e.target.value)} className="px-2.5 py-2 rounded-lg border border-gray-200 text-xs max-w-[220px]">
-              <option value="">Todas</option>
-              {categoriasDisponibles.map(c=><option key={c} value={c}>{c}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide block mb-1">Usuario (SAP)</label>
-            <select value={filtroUsuario} onChange={e=>setFiltroUsuario(e.target.value)} className="px-2.5 py-2 rounded-lg border border-gray-200 text-xs max-w-[180px]">
-              <option value="">Todos</option>
-              {usuariosDisponibles.map(u=><option key={u} value={u}>{u}</option>)}
-            </select>
-          </div>
+          <MultiSelectFiltro label="Centro de costo" opciones={centrosDisponibles} seleccionados={filtrosCentro} onChange={setFiltrosCentro}/>
+          <MultiSelectFiltro label="Categoría" opciones={categoriasDisponibles} seleccionados={filtrosCategoria} onChange={setFiltrosCategoria}/>
+          <MultiSelectFiltro label="Usuario (SAP)" opciones={usuariosDisponibles} seleccionados={filtrosUsuario} onChange={setFiltrosUsuario}/>
           <label className="flex items-center gap-1.5 text-xs text-gray-600 px-2.5 py-2">
             <input type="checkbox" checked={incluirPuntuales} onChange={e=>setIncluirPuntuales(e.target.checked)}/>
             Incluir eventos puntuales
           </label>
         </div>
+        {(filtrosCentro.length>0||filtrosCategoria.length>0||filtrosUsuario.length>0)&&(
+          <button onClick={()=>{setFiltrosCentro([]);setFiltrosCategoria([]);setFiltrosUsuario([]);}}
+            className="mt-2 text-[10px] text-red-500 hover:underline font-semibold">
+            Limpiar todos los filtros
+          </button>
+        )}
       </div>
 
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
@@ -14546,7 +14597,7 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
 
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
         <h2 className="font-bold text-gray-800 text-sm mb-3">
-          Pronóstico {anioTrabajo} — {filtroCategoria||"TOTAL"}
+          Pronóstico {anioTrabajo} — {etiquetaSel(filtrosCategoria)}
         </h2>
         {mesesFaltantesDelAnio.length===0?(
           <p className="text-gray-400 text-xs italic">El año {anioTrabajo} ya tiene datos en todos los meses — no hay nada que pronosticar.</p>
@@ -14587,7 +14638,7 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
       {mesDetalle&&(
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="font-bold text-gray-800 text-sm">Detalle — {mesDetalle}{filtroCategoria?` · ${filtroCategoria}`:""}</h2>
+            <h2 className="font-bold text-gray-800 text-sm">Detalle — {mesDetalle}{filtrosCategoria.length>0?` · ${etiquetaSel(filtrosCategoria)}`:""}</h2>
             <button onClick={()=>setMesDetalle(null)} className="text-gray-300 hover:text-red-500"><X size={14}/></button>
           </div>
           {txnsDetalle.length===0?(
@@ -14597,6 +14648,7 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
               <table className="w-full text-xs">
                 <thead><tr className="text-gray-400 border-b border-gray-100">
                   <th className="text-left py-1.5 font-medium">Categoría</th>
+                  <th className="text-left py-1.5 font-medium">Material / Pedido</th>
                   <th className="text-left py-1.5 font-medium">Centro</th>
                   <th className="text-left py-1.5 font-medium">Usuario</th>
                   <th className="text-right py-1.5 font-medium">Valor</th>
@@ -14606,6 +14658,11 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
                   {txnsDetalle.map((t,i)=>(
                     <tr key={i} className="border-b border-gray-50 last:border-0">
                       <td className="py-1.5">{t.descripClaseCoste}</td>
+                      <td className="py-1.5">
+                        {t.descripcionMaterial&&<p className="text-gray-700">{t.descripcionMaterial}</p>}
+                        {t.textoPedido&&<p className="text-gray-400 text-[10px]">{t.textoPedido}</p>}
+                        {!t.descripcionMaterial&&!t.textoPedido&&<span className="text-gray-300">—</span>}
+                      </td>
                       <td className="py-1.5 font-mono text-gray-500">{t.centroCoste}</td>
                       <td className="py-1.5 text-gray-500">{t.usuario}</td>
                       <td className="py-1.5 text-right font-semibold">{fmtCLP(t.valor)}</td>
