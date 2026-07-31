@@ -15450,11 +15450,46 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
 }
 
 // ─── DISPONIBILIDAD Y UTILIZACIÓN (Faena / Detenciones) ──────────────────────
-// Bloque 1 del spec: mantek_config_targets + CRUD admin-only. Los bloques
-// siguientes agregan Faena, Detenciones (+ recálculo en el cliente),
-// migración histórica y el dashboard completo.
 const FAENA_VACIA={buque:"ESPERANZA",terminal:"PMC",numeroFaena:"",inicioOp:"",terminoOp:"",tractosOp:"",tractosUtilizados:"",capacidadOperadores:""};
 const DETENCION_VACIA={buque:"ESPERANZA",faenaId:"",inicio:"",fin:"",equipo:"",componente:"",modoFalla:"",tipo:"DM",novedades:"",familiaEquipo:"KALMAR",clasificacion:"MECANICA"};
+const BUQUE_COLOR={ESPERANZA:"#0055A4",DALKA:"#F59E0B"};
+
+// Gráfico mensual comparativo por buque (equivalente a la hoja "Prom. Disp.
+// mensual" del Excel, extendido a 2 buques y a Disponibilidad+Utilización
+// per el spec — el Excel original solo traía un promedio combinado de
+// Disponibilidad, sin separar por buque ni incluir Utilización).
+function PromedioMensualChart({datos,height=180,width=620}){
+  const pad={l:34,r:10,t:10,b:22};
+  const cW=width-pad.l-pad.r, cH=height-pad.t-pad.b;
+  if(!datos||datos.length===0) return <p className="text-gray-400 text-xs italic py-6 text-center">Sin datos suficientes todavía.</p>;
+  const n=datos.length;
+  const x=i=>pad.l+(n<=1?cW/2:i/(n-1)*cW);
+  const y=v=>pad.t+cH-(v??0)*cH;
+  const buildPath=buque=>{
+    const pts=datos.map((d,i)=>({i,v:d[buque]})).filter(p=>p.v!=null);
+    if(pts.length<1) return "";
+    return pts.map((p,idx)=>`${idx===0?"M":"L"}${x(p.i).toFixed(1)},${y(p.v).toFixed(1)}`).join(" ");
+  };
+  return(
+    <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className="w-full" style={{height}}>
+      {[0,0.25,0.5,0.75,1].map(g=>(
+        <g key={g}>
+          <line x1={pad.l} x2={width-pad.r} y1={y(g)} y2={y(g)} stroke="#F3F4F6"/>
+          <text x={pad.l-6} y={y(g)+3} textAnchor="end" fontSize="9" fill="#9CA3AF">{Math.round(g*100)}%</text>
+        </g>
+      ))}
+      <path d={buildPath("ESPERANZA")} fill="none" stroke={BUQUE_COLOR.ESPERANZA} strokeWidth="2"/>
+      <path d={buildPath("DALKA")} fill="none" stroke={BUQUE_COLOR.DALKA} strokeWidth="2"/>
+      {datos.map((d,i)=>(
+        <g key={d.mesKey}>
+          {d.ESPERANZA!=null&&<circle cx={x(i)} cy={y(d.ESPERANZA)} r="3" fill={BUQUE_COLOR.ESPERANZA}><title>{`Esperanza ${d.mesKey}: ${Math.round(d.ESPERANZA*100)}%`}</title></circle>}
+          {d.DALKA!=null&&<circle cx={x(i)} cy={y(d.DALKA)} r="3" fill={BUQUE_COLOR.DALKA}><title>{`Dalka ${d.mesKey}: ${Math.round(d.DALKA*100)}%`}</title></circle>}
+          <text x={x(i)} y={height-6} textAnchor="middle" fontSize="9" fill="#9CA3AF">{d.mesKey.slice(2)}</text>
+        </g>
+      ))}
+    </svg>
+  );
+}
 
 function DisponibilidadUtilizacion({user,data}){
   const equip=data?.equip||[];
@@ -15473,6 +15508,11 @@ function DisponibilidadUtilizacion({user,data}){
   const [loadingDetenciones,setLoadingDetenciones]=useState(true);
   const [nuevaDetencion,setNuevaDetencion]=useState(DETENCION_VACIA);
   const [editDetencionId,setEditDetencionId]=useState(null);
+
+  const [filtrosBuqueTabla,setFiltrosBuqueTabla]=useState([]);
+  const [filtrosTerminalTabla,setFiltrosTerminalTabla]=useState([]);
+  const [fechaDesdeTabla,setFechaDesdeTabla]=useState("");
+  const [fechaHastaTabla,setFechaHastaTabla]=useState("");
 
   useEffect(()=>{
     const unsub=onSnapshot(doc(db,COLL_FAENA_TARGETS,"config"),snap=>{
@@ -15603,6 +15643,38 @@ function DisponibilidadUtilizacion({user,data}){
   const faenasOrdenadas=useMemo(()=>[...faenas].sort((a,b)=>new Date(b.terminoOp)-new Date(a.terminoOp)),[faenas]);
   const fmtPct=v=>`${Math.round((v||0)*100)}%`;
   const fmtH=v=>`${(Math.round((v||0)*10)/10).toLocaleString("es-CL")} h`;
+  const semaforoClass=v=>(v||0)>=0.9?"text-green-700 bg-green-50":(v||0)>=0.75?"text-amber-700 bg-amber-50":"text-red-700 bg-red-50";
+
+  const faenasFiltradas=useMemo(()=>faenasOrdenadas.filter(f=>{
+    if(filtrosBuqueTabla.length>0&&!filtrosBuqueTabla.includes(f.buque)) return false;
+    if(filtrosTerminalTabla.length>0&&!filtrosTerminalTabla.includes(f.terminal)) return false;
+    if(fechaDesdeTabla&&f.terminoOp<fechaDesdeTabla) return false;
+    if(fechaHastaTabla&&f.terminoOp>fechaHastaTabla+"T23:59:59") return false;
+    return true;
+  }),[faenasOrdenadas,filtrosBuqueTabla,filtrosTerminalTabla,fechaDesdeTabla,fechaHastaTabla]);
+
+  // Promedio mensual de Disponibilidad/Utilización por buque — equivalente a
+  // la hoja "Prom. Disp. mensual" del Excel, extendido a 2 buques y a
+  // Utilización (el original solo traía un promedio combinado, sin buque,
+  // solo de Disponibilidad).
+  const promediosMensuales=useMemo(()=>{
+    const grupos={};
+    faenas.forEach(f=>{
+      const k=`${f.anio}-${String(f.mes).padStart(2,"0")}`;
+      if(!grupos[k]) grupos[k]={mesKey:k,ESPERANZA:{d:0,u:0,n:0},DALKA:{d:0,u:0,n:0}};
+      const g=grupos[k][f.buque];
+      if(g){g.d+=f.disponibilidadTecnica;g.u+=f.utilizacion;g.n++;}
+    });
+    return Object.values(grupos).sort((a,b)=>a.mesKey.localeCompare(b.mesKey)).map(g=>({
+      mesKey:g.mesKey,
+      dispEsperanza:g.ESPERANZA.n>0?g.ESPERANZA.d/g.ESPERANZA.n:null,
+      dispDalka:g.DALKA.n>0?g.DALKA.d/g.DALKA.n:null,
+      utilEsperanza:g.ESPERANZA.n>0?g.ESPERANZA.u/g.ESPERANZA.n:null,
+      utilDalka:g.DALKA.n>0?g.DALKA.u/g.DALKA.n:null,
+    }));
+  },[faenas]);
+  const serieDisponibilidadMensual=useMemo(()=>promediosMensuales.map(d=>({mesKey:d.mesKey,ESPERANZA:d.dispEsperanza,DALKA:d.dispDalka})),[promediosMensuales]);
+  const serieUtilizacionMensual=useMemo(()=>promediosMensuales.map(d=>({mesKey:d.mesKey,ESPERANZA:d.utilEsperanza,DALKA:d.utilDalka})),[promediosMensuales]);
 
   // Recalcula indisponibilidadHH/disponibilidadTecnica/utilizacion de una o más
   // Faenas a partir del arreglo de Detenciones actualizado, y guarda mantek_faena.
@@ -15832,12 +15904,44 @@ function DisponibilidadUtilizacion({user,data}){
         </div>
       </div>
 
+      <div className="grid md:grid-cols-2 gap-5">
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+          <h2 className="font-bold text-gray-800 text-sm mb-3">Promedio mensual de Disponibilidad Técnica por buque</h2>
+          <PromedioMensualChart datos={serieDisponibilidadMensual}/>
+          <div className="flex items-center gap-4 text-[10px] text-gray-500 mt-1">
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:BUQUE_COLOR.ESPERANZA}}/>Esperanza</span>
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:BUQUE_COLOR.DALKA}}/>Dalka</span>
+          </div>
+        </div>
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+          <h2 className="font-bold text-gray-800 text-sm mb-3">Promedio mensual de Utilización por buque</h2>
+          <PromedioMensualChart datos={serieUtilizacionMensual}/>
+          <div className="flex items-center gap-4 text-[10px] text-gray-500 mt-1">
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:BUQUE_COLOR.ESPERANZA}}/>Esperanza</span>
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:BUQUE_COLOR.DALKA}}/>Dalka</span>
+          </div>
+        </div>
+      </div>
+
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 overflow-x-auto">
-        <h2 className="font-bold text-gray-800 text-sm mb-3">Faenas registradas ({faenas.length})</h2>
+        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+          <h2 className="font-bold text-gray-800 text-sm">Faenas registradas ({faenasFiltradas.length}/{faenas.length})</h2>
+          <div className="flex flex-wrap gap-2 items-center">
+            <MultiSelectFiltro label="Buque" opciones={["ESPERANZA","DALKA"]} seleccionados={filtrosBuqueTabla} onChange={setFiltrosBuqueTabla}/>
+            <MultiSelectFiltro label="Terminal" opciones={["PMC","NAT","UCO"]} seleccionados={filtrosTerminalTabla} onChange={setFiltrosTerminalTabla}/>
+            <input type="date" value={fechaDesdeTabla} onChange={e=>setFechaDesdeTabla(e.target.value)} className="px-2 py-1.5 rounded-lg border border-gray-200 text-xs"/>
+            <span className="text-gray-400 text-xs">a</span>
+            <input type="date" value={fechaHastaTabla} onChange={e=>setFechaHastaTabla(e.target.value)} className="px-2 py-1.5 rounded-lg border border-gray-200 text-xs"/>
+            {(filtrosBuqueTabla.length>0||filtrosTerminalTabla.length>0||fechaDesdeTabla||fechaHastaTabla)&&(
+              <button onClick={()=>{setFiltrosBuqueTabla([]);setFiltrosTerminalTabla([]);setFechaDesdeTabla("");setFechaHastaTabla("");}}
+                className="text-xs text-gray-400 hover:text-red-500">Limpiar filtros</button>
+            )}
+          </div>
+        </div>
         {loadingFaenas?(
           <p className="text-gray-400 text-sm">Cargando…</p>
-        ):faenasOrdenadas.length===0?(
-          <p className="text-gray-400 text-xs italic">Todavía no hay faenas registradas.</p>
+        ):faenasFiltradas.length===0?(
+          <p className="text-gray-400 text-xs italic">{faenas.length===0?"Todavía no hay faenas registradas.":"Ninguna faena coincide con los filtros."}</p>
         ):(
           <table className="w-full text-xs">
             <thead>
@@ -15854,16 +15958,16 @@ function DisponibilidadUtilizacion({user,data}){
               </tr>
             </thead>
             <tbody>
-              {faenasOrdenadas.map(f=>(
+              {faenasFiltradas.map(f=>(
                 <tr key={f.id} className="border-b border-gray-50">
                   <td className="py-2 pr-3 text-gray-600">{f.terminoOp?new Date(f.terminoOp).toLocaleString("es-CL"):"—"}</td>
                   <td className="py-2 pr-3 font-semibold text-gray-700">{f.buque}</td>
                   <td className="py-2 pr-3 text-gray-600">{f.terminal}</td>
                   <td className="py-2 pr-3 font-mono text-gray-700">{f.numeroFaena}</td>
                   <td className="py-2 pr-3 text-gray-600">{f.tractosOp}/{f.tractosUtilizados}</td>
-                  <td className="py-2 pr-3 font-semibold text-gray-800">{fmtPct(f.disponibilidadTecnica)}</td>
-                  <td className="py-2 pr-3 font-semibold text-gray-800">{fmtPct(f.utilizacion)}</td>
-                  <td className="py-2 pr-3 font-semibold text-gray-800">{fmtPct(f.cumplimiento)}</td>
+                  <td className="py-2 pr-3"><span className={`font-semibold px-1.5 py-0.5 rounded ${semaforoClass(f.disponibilidadTecnica)}`}>{fmtPct(f.disponibilidadTecnica)}</span></td>
+                  <td className="py-2 pr-3"><span className={`font-semibold px-1.5 py-0.5 rounded ${semaforoClass(f.utilizacion)}`}>{fmtPct(f.utilizacion)}</span></td>
+                  <td className="py-2 pr-3"><span className={`font-semibold px-1.5 py-0.5 rounded ${semaforoClass(f.cumplimiento)}`}>{fmtPct(f.cumplimiento)}</span></td>
                   <td className="py-2 flex items-center gap-2">
                     <button onClick={()=>editarFaena(f)} className="text-gray-400 hover:text-blue-600"><Edit2 size={13}/></button>
                     <button onClick={()=>eliminarFaena(f.id)} className="text-gray-300 hover:text-red-500"><X size={13}/></button>
@@ -15992,7 +16096,7 @@ function DisponibilidadUtilizacion({user,data}){
       </div>
 
       <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-xs text-amber-700">
-        La migración histórica (180 faenas + 144 detenciones desde el Excel original) y el dashboard con filtros, semáforos de color y gráfico mensual de promedios se agregan en los próximos bloques.
+        La migración histórica corre con <code className="bg-amber-100 px-1 rounded">node scripts/migrate-faena-detenciones.mjs Registro_Detenciones_Tractos.xlsx --write</code> (dry-run sin <code className="bg-amber-100 px-1 rounded">--write</code>). Al migrar, revisar el log de detenciones sin faena coincidente y de faenas duplicadas — quedan listadas para reasignar o fusionar a mano desde esta misma pantalla.
       </div>
     </div>
   );
