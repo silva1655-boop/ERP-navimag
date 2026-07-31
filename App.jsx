@@ -13826,28 +13826,39 @@ const fmtCompactCLP=(v)=>{
   return s+"$"+Math.round(a);
 };
 
+// Series: real (sin filtrar), filtrado (con filtros en vivo), presupuesto,
+// proyectado (pronóstico, arranca del último punto filtrado). Cada una se
+// puede activar/desactivar clickeando su etiqueta en la leyenda.
+const GASTOS_LINE_SERIES=[
+  {key:"real",label:"Real (sin filtrar)",color:"#9CA3AF",dash:null},
+  {key:"filtrado",label:"Real filtrado",color:"#2563eb",dash:null},
+  {key:"presupuesto",label:"Presupuesto",color:"#64748b",dash:"4,3"},
+  {key:"proyectado",label:"Proyección",color:"#60a5fa",dash:"5,4"},
+];
 function GastosLineChart({series,height=240,width=700}){
   const [hoverIdx,setHoverIdx]=useState(null);
+  const [visibles,setVisibles]=useState({real:false,filtrado:true,presupuesto:true,proyectado:true});
   if(!series||series.length<2) return(
     <div className="flex items-center justify-center h-32 text-gray-300 text-xs">Sin datos suficientes</div>
   );
   const hayPresupuesto=series.some(s=>s.presupuesto>0);
-  const max=Math.max(...series.flatMap(s=>[s.real,hayPresupuesto?s.presupuesto:0]),1);
+  const hayProyeccion=series.some(s=>s.proyectado!=null);
+  const activas=GASTOS_LINE_SERIES.filter(s=>visibles[s.key]&&(s.key!=="presupuesto"||hayPresupuesto)&&(s.key!=="proyectado"||hayProyeccion));
+  const max=Math.max(...series.flatMap(s=>GASTOS_LINE_SERIES.map(cfg=>visibles[cfg.key]?(s[cfg.key]||0):0)),1);
   const W=width,H=height;
   const pad={t:28,b:26,l:56,r:16};
   const cW=W-pad.l-pad.r,cH=H-pad.t-pad.b;
   const xAt=i=>pad.l+(i/(series.length-1||1))*cW;
   const yAt=v=>pad.t+cH-(Math.max(v,0)/max)*cH;
-  const pathSegment=(startIdx,endIdx,key)=>series.slice(startIdx,endIdx+1)
-    .map((s,i)=>`${i===0?"M":"L"}${xAt(startIdx+i).toFixed(1)},${yAt(s[key]).toFixed(1)}`).join(" ");
-  const pathFor=key=>pathSegment(0,series.length-1,key);
-  // Si hay meses proyectados, la línea real se parte en un tramo sólido
-  // (datos reales) y uno punteado (proyección) que arranca del último real.
-  const primerProyIdx=series.findIndex(s=>s.proyectado);
-  const finConexion=primerProyIdx<=0?0:primerProyIdx-1;
-  const pathRealSolido=primerProyIdx===-1?pathFor("real"):pathSegment(0,finConexion,"real");
-  const pathRealProyectado=primerProyIdx===-1?null:pathSegment(finConexion,series.length-1,"real");
-  const areaD=pathFor("real")+` L${xAt(series.length-1).toFixed(1)},${(pad.t+cH).toFixed(1)} L${xAt(0).toFixed(1)},${(pad.t+cH).toFixed(1)} Z`;
+  // Cada serie puede tener huecos (null) — se saltan al armar el path en vez
+  // de graficarlos como 0, para que "proyectado" no arranque desde el piso.
+  const pathFor=key=>{
+    const pts=series.map((s,i)=>({i,v:s[key]})).filter(p=>p.v!=null);
+    if(pts.length<2) return "";
+    return pts.map((p,idx)=>`${idx===0?"M":"L"}${xAt(p.i).toFixed(1)},${yAt(p.v).toFixed(1)}`).join(" ");
+  };
+  const serieBase=visibles.filtrado?"filtrado":visibles.real?"real":null;
+  const areaD=serieBase?pathFor(serieBase)+` L${xAt(series.length-1).toFixed(1)},${(pad.t+cH).toFixed(1)} L${xAt(0).toFixed(1)},${(pad.t+cH).toFixed(1)} Z`:null;
 
   // Grilla horizontal: 4 líneas a valores redondos entre 0 y max
   const gridlines=Array.from({length:4},(_,i)=>{
@@ -13855,8 +13866,10 @@ function GastosLineChart({series,height=240,width=700}){
     return{v,y:yAt(v)};
   });
 
-  const ultimoReal=primerProyIdx===-1?series[series.length-1]:series[finConexion];
-  const ultimoProyectado=primerProyIdx!==-1?series[series.length-1]:null;
+  const ultimoPunto=key=>{
+    for(let i=series.length-1;i>=0;i--) if(series[i][key]!=null) return series[i];
+    return null;
+  };
 
   const handleHover=(e)=>{
     const rect=e.currentTarget.getBoundingClientRect();
@@ -13888,70 +13901,69 @@ function GastosLineChart({series,height=240,width=700}){
           </g>
         ))}
 
-        {/* Línea divisoria real / proyección */}
-        {primerProyIdx>0&&(
-          <g>
-            <line x1={xAt(finConexion)} x2={xAt(finConexion)} y1={pad.t} y2={pad.t+cH} stroke="#CBD5E1" strokeWidth="1" strokeDasharray="2,2"/>
-            <text x={xAt(finConexion)} y={pad.t-8} textAnchor="middle" fontSize="8" fill="#B0B7C0">último real</text>
-          </g>
-        )}
-
-        <path d={areaD} fill="url(#gastosAreaFill)"/>
-        {hayPresupuesto&&<path d={pathFor("presupuesto")} fill="none" stroke="#94a3b8" strokeWidth="2" strokeDasharray="4,3"/>}
-        <path d={pathRealSolido} fill="none" stroke="#2563eb" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
-        {pathRealProyectado&&<path d={pathRealProyectado} fill="none" stroke="#60a5fa" strokeWidth="2.5" strokeDasharray="5,4" strokeLinecap="round"/>}
-
-        {series.map((s,i)=>(
-          <circle key={i} cx={xAt(i)} cy={yAt(s.real)} r={s.proyectado?2.5:3.5}
-            fill={s.proyectado?"#60a5fa":"white"} stroke={s.proyectado?"#60a5fa":"#2563eb"} strokeWidth="2">
-            <title>{s.mes}{s.proyectado?" (proyectado)":""} · {fmtCompactCLP(s.real)}{hayPresupuesto?` · Presupuesto: ${fmtCompactCLP(s.presupuesto)}`:""}</title>
-          </circle>
+        {areaD&&<path d={areaD} fill="url(#gastosAreaFill)"/>}
+        {activas.map(cfg=>(
+          <path key={cfg.key} d={pathFor(cfg.key)} fill="none" stroke={cfg.color}
+            strokeWidth={cfg.key==="filtrado"||cfg.key==="real"&&!visibles.filtrado?2.5:2}
+            strokeDasharray={cfg.dash||undefined} strokeLinecap="round" strokeLinejoin="round"/>
         ))}
 
-        {/* Valor destacado al final de lo real y al final de la proyección */}
-        {ultimoReal&&(
-          <text x={xAt(series.indexOf(ultimoReal))} y={yAt(ultimoReal.real)-10} textAnchor="middle" fontSize="9.5" fontWeight="700" fill="#1d4ed8">
-            {fmtCompactCLP(ultimoReal.real)}
-          </text>
-        )}
-        {ultimoProyectado&&(
-          <text x={Math.min(xAt(series.length-1),W-pad.r-4)} y={yAt(ultimoProyectado.real)-10} textAnchor="end" fontSize="9.5" fontWeight="700" fill="#60a5fa">
-            {fmtCompactCLP(ultimoProyectado.real)}
-          </text>
-        )}
+        {activas.map(cfg=>series.map((s,i)=>{
+          if(s[cfg.key]==null) return null;
+          return(
+            <circle key={`${cfg.key}-${i}`} cx={xAt(i)} cy={yAt(s[cfg.key])} r={cfg.key==="proyectado"?2.5:3}
+              fill={cfg.key==="filtrado"?"white":cfg.color} stroke={cfg.color} strokeWidth="2">
+              <title>{cfg.label} · {s.mes}: {fmtCompactCLP(s[cfg.key])}</title>
+            </circle>
+          );
+        }))}
 
-        {series.map((s,i)=>(<text key={i} x={xAt(i)} y={H-6} textAnchor="middle" fontSize="9" fill={s.proyectado?"#c4cad3":"#9CA3AF"}>{s.mes.slice(5)}</text>))}
+        {/* Valor destacado al final de cada serie activa */}
+        {activas.map(cfg=>{
+          const p=ultimoPunto(cfg.key);
+          if(!p) return null;
+          return(
+            <text key={cfg.key} x={xAt(series.indexOf(p))} y={yAt(p[cfg.key])-9} textAnchor="middle" fontSize="9" fontWeight="700" fill={cfg.color}>
+              {fmtCompactCLP(p[cfg.key])}
+            </text>
+          );
+        })}
+
+        {series.map((s,i)=>(<text key={i} x={xAt(i)} y={H-6} textAnchor="middle" fontSize="9" fill={s.proyectado!=null&&s.filtrado==null?"#c4cad3":"#9CA3AF"}>{s.mes.slice(5)}</text>))}
 
         {/* Overlay interactivo — crosshair + tooltip al pasar el mouse */}
         <rect x={pad.l} y={pad.t} width={cW} height={cH} fill="transparent"
           onMouseMove={handleHover} onMouseLeave={()=>setHoverIdx(null)} style={{cursor:"crosshair"}}/>
         {hoverIdx!=null&&(()=>{
           const s=series[hoverIdx];
-          const boxW=118,boxH=hayPresupuesto?48:34;
+          const boxW=130,boxH=16+activas.length*12;
           let boxX=xAt(hoverIdx)+10;
           if(boxX+boxW>W-4) boxX=xAt(hoverIdx)-boxW-10;
-          const boxY=Math.max(pad.t+2,Math.min(yAt(Math.max(s.real,s.presupuesto))-boxH-8,pad.t+cH-boxH));
+          const valoresVisibles=activas.map(cfg=>s[cfg.key]).filter(v=>v!=null);
+          const boxY=Math.max(pad.t+2,Math.min(yAt(Math.max(...valoresVisibles,0))-boxH-8,pad.t+cH-boxH));
           return(
             <g style={{pointerEvents:"none"}}>
               <line x1={xAt(hoverIdx)} x2={xAt(hoverIdx)} y1={pad.t} y2={pad.t+cH} stroke="#94a3b8" strokeWidth="1" strokeDasharray="3,2"/>
-              <circle cx={xAt(hoverIdx)} cy={yAt(s.real)} r="5" fill={s.proyectado?"#60a5fa":"#2563eb"} stroke="white" strokeWidth="2"/>
-              {hayPresupuesto&&<circle cx={xAt(hoverIdx)} cy={yAt(s.presupuesto)} r="4" fill="#94a3b8" stroke="white" strokeWidth="2"/>}
+              {activas.map(cfg=>s[cfg.key]!=null&&(
+                <circle key={cfg.key} cx={xAt(hoverIdx)} cy={yAt(s[cfg.key])} r="4" fill={cfg.color} stroke="white" strokeWidth="1.5"/>
+              ))}
               <rect x={boxX} y={boxY} width={boxW} height={boxH} rx="6" fill="white" stroke="#E5E7EB" strokeWidth="1"/>
-              <text x={boxX+8} y={boxY+15} fontSize="9.5" fontWeight="700" fill="#111827">{s.mes}{s.proyectado?" (proy.)":""}</text>
-              <text x={boxX+8} y={boxY+28} fontSize="9.5" fill="#2563eb">Real: {fmtCompactCLP(s.real)}</text>
-              {hayPresupuesto&&<text x={boxX+8} y={boxY+40} fontSize="9.5" fill="#94a3b8">Presup.: {fmtCompactCLP(s.presupuesto)}</text>}
+              <text x={boxX+8} y={boxY+13} fontSize="9.5" fontWeight="700" fill="#111827">{s.mes}</text>
+              {activas.map((cfg,idx)=>s[cfg.key]!=null&&(
+                <text key={cfg.key} x={boxX+8} y={boxY+13+(idx+1)*12} fontSize="9.5" fill={cfg.color}>{cfg.label}: {fmtCompactCLP(s[cfg.key])}</text>
+              ))}
             </g>
           );
         })()}
       </svg>
-      <div className="flex items-center gap-4 mt-1.5 justify-center flex-wrap">
-        <span className="flex items-center gap-1.5 text-xs text-gray-500"><span className="w-3 h-0.5 bg-blue-600 inline-block rounded"/>Real acumulado</span>
-        {hayPresupuesto?(
-          <span className="flex items-center gap-1.5 text-xs text-gray-500"><span className="w-3 h-0.5 inline-block" style={{borderTop:"2px dashed #94a3b8"}}/>Presupuesto acumulado</span>
-        ):(
-          <span className="text-xs text-gray-300 italic">Sin presupuesto cargado</span>
-        )}
-        {primerProyIdx!==-1&&<span className="flex items-center gap-1.5 text-xs text-blue-400"><span className="w-3 h-0.5 inline-block" style={{borderTop:"2px dashed #60a5fa"}}/>Proyección</span>}
+      <div className="flex items-center gap-3 mt-1.5 justify-center flex-wrap">
+        {GASTOS_LINE_SERIES.filter(cfg=>cfg.key!=="presupuesto"||hayPresupuesto).filter(cfg=>cfg.key!=="proyectado"||hayProyeccion).map(cfg=>(
+          <button key={cfg.key} type="button" onClick={()=>setVisibles(v=>({...v,[cfg.key]:!v[cfg.key]}))}
+            className={`flex items-center gap-1.5 text-xs px-1.5 py-0.5 rounded transition ${visibles[cfg.key]?"text-gray-600":"text-gray-300"}`}>
+            <span className="w-3 h-0.5 inline-block rounded" style={{background:visibles[cfg.key]?cfg.color:"#E5E7EB"}}/>
+            {cfg.label}
+          </button>
+        ))}
       </div>
     </div>
   );
@@ -14055,20 +14067,26 @@ function DonutChart({items,size=132,strokeWidth=20,centerLabel="Total",centerVal
 }
 
 // Gráfico mensual combinado: barras real/presupuesto + línea de % ejecución
+// % Ejecución = gasto real filtrado del mes ÷ presupuesto del mes. Vive en un
+// eje propio a la derecha (0-120%, independiente de la escala de $ de las
+// barras) con una línea de referencia marcada en 100% ("gastado = presupuestado"),
+// para que no se confunda con la escala de las barras a la izquierda.
 function GastoMensualChart({serie,onClickMes,mesSeleccionado,height=260,width=760}){
   if(!serie||serie.length===0) return(
     <div className="flex items-center justify-center h-32 text-gray-300 text-xs">Sin meses en el rango seleccionado.</div>
   );
   const W=width,H=height;
-  const pad={t:24,b:26,l:52,r:44};
+  const pad={t:24,b:26,l:52,r:46};
   const cW=W-pad.l-pad.r,cH=H-pad.t-pad.b;
   const n=serie.length;
   const bandW=cW/n;
   const maxVal=Math.max(...serie.flatMap(m=>[m.real,m.presupuesto]),1);
   const yAt=v=>pad.t+cH-(Math.max(v,0)/maxVal)*cH;
   const xCentro=i=>pad.l+bandW*i+bandW/2;
-  const yPct=pct=>pad.t+cH-(Math.max(0,Math.min(pct??0,120))/120)*cH;
+  const PCT_MAX=120;
+  const yPct=pct=>pad.t+cH-(Math.max(0,Math.min(pct??0,PCT_MAX))/PCT_MAX)*cH;
   const gridlines=Array.from({length:4},(_,i)=>({v:(maxVal/3)*i,y:yAt((maxVal/3)*i)}));
+  const pctTicks=[0,50,100].map(v=>({v,y:yPct(v)}));
   const pctPath=serie.filter(m=>m.pct!=null).map((m,i,arr)=>{
     const idx=serie.indexOf(m);
     return`${i===0?"M":"L"}${xCentro(idx).toFixed(1)},${yPct(m.pct).toFixed(1)}`;
@@ -14081,6 +14099,11 @@ function GastoMensualChart({serie,onClickMes,mesSeleccionado,height=260,width=76
           <text x={pad.l-8} y={g.y+3} textAnchor="end" fontSize="9" fill="#B0B7C0">{fmtCompactCLP(g.v)}</text>
         </g>
       ))}
+      {/* Eje derecho: escala 0-120% del % Ejecución, con 100% resaltado como referencia */}
+      {pctTicks.map(t=>(
+        <text key={t.v} x={W-pad.r+6} y={t.y+3} fontSize="9" fill={t.v===100?"#16a34a":"#B0B7C0"} fontWeight={t.v===100?"700":"400"}>{t.v}%</text>
+      ))}
+      <line x1={pad.l} x2={W-pad.r} y1={yPct(100)} y2={yPct(100)} stroke="#16a34a" strokeWidth="1" strokeDasharray="3,3" opacity="0.4"/>
       {serie.map((m,i)=>{
         const barW=Math.min(bandW*0.22,22);
         const xReal=xCentro(i)-barW-2;
@@ -14099,7 +14122,9 @@ function GastoMensualChart({serie,onClickMes,mesSeleccionado,height=260,width=76
         const idx=serie.indexOf(m);
         return(
           <g key={i}>
-            <circle cx={xCentro(idx)} cy={yPct(m.pct)} r="3" fill="white" stroke="#16a34a" strokeWidth="2"/>
+            <circle cx={xCentro(idx)} cy={yPct(m.pct)} r="3" fill="white" stroke="#16a34a" strokeWidth="2">
+              <title>% Ejecución {m.mes}: gastado {fmtCompactCLP(m.real)} de {fmtCompactCLP(m.presupuesto)} presupuestado ({m.pct}%)</title>
+            </circle>
             <text x={xCentro(idx)} y={yPct(m.pct)-8} textAnchor="middle" fontSize="9" fontWeight="700" fill="#16a34a">{m.pct}%</text>
           </g>
         );
@@ -14223,19 +14248,6 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
     });
   },[todasTxns,reglasAplicables,activeModule,activeBarco]);
 
-  const gastoAgregado=useMemo(()=>{
-    const real=txnsAnotadas;
-    const filtrado=real.filter(t=>!t._reglaExcluida);
-    const filtradoSinPuntuales=filtrado.filter(t=>!t._reglaPuntual);
-    const sum=arr=>arr.reduce((s,t)=>s+(t.valor||0),0);
-    return{
-      real,filtrado,filtradoSinPuntuales,
-      totalReal:sum(real),totalFiltrado:sum(filtrado),totalFiltradoSinPuntuales:sum(filtradoSinPuntuales),
-      countExcluidas:filtrado.length<real.length?real.length-filtrado.length:0,
-      countPuntuales:filtrado.length-filtradoSinPuntuales.length,
-    };
-  },[txnsAnotadas]);
-
   // ── Filtros en vivo + series para los gráficos (Bloque 4) ──
   const centrosDisponibles=useMemo(()=>[...new Set(txnsAnotadas.map(t=>t.centroCoste).filter(Boolean))].sort(),[txnsAnotadas]);
   const categoriasDisponibles=useMemo(()=>[...new Set(txnsAnotadas.map(t=>t.descripClaseCoste).filter(Boolean))].sort(),[txnsAnotadas]);
@@ -14257,6 +14269,24 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
       return true;
     });
   },[txnsAnotadas,filtroMesDesde,filtroMesHasta,filtrosCentro,filtrosCategoria,filtrosUsuario]);
+
+  // "Real filtrado"/"Base de pronóstico" deben reflejar los filtros en vivo
+  // (mes, centro, categoría, usuario) — antes se calculaban solo sobre
+  // txnsAnotadas (todo el módulo) excluyendo por regla, sin aplicar ningún
+  // filtro elegido en pantalla, así que no coincidían con lo que el usuario
+  // veía filtrado en el resto del dashboard.
+  const gastoAgregado=useMemo(()=>{
+    const real=txnsAnotadas;
+    const filtrado=txnsFiltradas.filter(t=>!t._reglaExcluida);
+    const filtradoSinPuntuales=filtrado.filter(t=>!t._reglaPuntual);
+    const sum=arr=>arr.reduce((s,t)=>s+(t.valor||0),0);
+    return{
+      real,filtrado,filtradoSinPuntuales,
+      totalReal:sum(real),totalFiltrado:sum(filtrado),totalFiltradoSinPuntuales:sum(filtradoSinPuntuales),
+      countExcluidas:txnsFiltradas.length-filtrado.length,
+      countPuntuales:filtrado.length-filtradoSinPuntuales.length,
+    };
+  },[txnsAnotadas,txnsFiltradas]);
 
   const mesesEnRango=useMemo(()=>{
     return mesesIndex.filter(m=>(!filtroMesDesde||m>=filtroMesDesde)&&(!filtroMesHasta||m<=filtroMesHasta));
@@ -14383,28 +14413,40 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
   const serieAnualCompleta=useMemo(()=>{
     const mesesDelAnio=mesesIndex.filter(m=>m.startsWith(anioTrabajo+"-"));
     return mesesDelAnio.map(mes=>{
-      const rows=txnsAnotadas.filter(t=>t.mes===mes&&!t._reglaExcluida&&(incluirPuntuales||!t._reglaPuntual)
+      const rowsDelMes=txnsAnotadas.filter(t=>t.mes===mes);
+      const rowsFiltrado=rowsDelMes.filter(t=>!t._reglaExcluida&&(incluirPuntuales||!t._reglaPuntual)
         &&(filtrosCentro.length===0||filtrosCentro.includes(t.centroCoste))
         &&(filtrosCategoria.length===0||filtrosCategoria.includes(t.descripClaseCoste))
         &&(filtrosUsuario.length===0||filtrosUsuario.includes(t.usuario)));
-      return{mes,real:rows.reduce((s,t)=>s+(t.valor||0),0),presupuesto:presupuestoPorMes(mes,filtrosCategoria)};
+      return{
+        mes,
+        real:rowsDelMes.reduce((s,t)=>s+(t.valor||0),0),
+        filtrado:rowsFiltrado.reduce((s,t)=>s+(t.valor||0),0),
+        presupuesto:presupuestoPorMes(mes,filtrosCategoria),
+      };
     });
   },[mesesIndex,anioTrabajo,txnsAnotadas,incluirPuntuales,filtrosCentro,filtrosCategoria,filtrosUsuario,presupuesto]);
 
+  // real: total del mes sin ningún filtro (ni de regla ni en vivo) — igual
+  // que "Gasto real (sin filtrar)". filtrado: igual que el resto del
+  // dashboard (reglas + centro/categoría/usuario + incluirPuntuales).
+  // proyectado: continúa desde el acumulado FILTRADO (el pronóstico se
+  // calcula sobre esa base, no sobre el real bruto) — el punto de conexión
+  // queda en ambas series para que las líneas empalmen sin salto visual.
   const serieAcumulada=useMemo(()=>{
-    let accReal=0,accPres=0;
+    let accReal=0,accFiltrado=0,accPres=0;
     const base=serieAnualCompleta.map(m=>{
-      accReal+=m.real;accPres+=m.presupuesto;
-      return{mes:m.mes,real:accReal,presupuesto:accPres,proyectado:false};
+      accReal+=m.real;accFiltrado+=m.filtrado;accPres+=m.presupuesto;
+      return{mes:m.mes,real:accReal,filtrado:accFiltrado,presupuesto:accPres,proyectado:null};
     });
-    if(!metodoElegido) return base;
-    let k=0;
+    if(!metodoElegido||mesesFaltantesDelAnio.length===0) return base;
+    if(base.length>0) base[base.length-1]={...base[base.length-1],proyectado:base[base.length-1].filtrado};
+    let k=0,accProyectado=accFiltrado;
     const proyectados=mesesFaltantesDelAnio.map(mes=>{
       k++;
-      const valorMes=pronostico.valorParaMes(metodoElegido,k)||0;
-      accReal+=valorMes;
+      accProyectado+=pronostico.valorParaMes(metodoElegido,k)||0;
       accPres+=presupuestoPorMes(mes,filtrosCategoria);
-      return{mes,real:accReal,presupuesto:accPres,proyectado:true};
+      return{mes,real:null,filtrado:null,presupuesto:accPres,proyectado:accProyectado};
     });
     return[...base,...proyectados];
   },[serieAnualCompleta,metodoElegido,mesesFaltantesDelAnio,pronostico,filtrosCategoria]);
@@ -14990,12 +15032,12 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
           <div className="flex items-center gap-4 mt-1 justify-center flex-wrap">
             <span className="flex items-center gap-1.5 text-xs text-gray-500"><span className="w-2.5 h-2.5 rounded-sm bg-blue-500 inline-block"/>Real filtrado</span>
             <span className="flex items-center gap-1.5 text-xs text-gray-500"><span className="w-2.5 h-2.5 rounded-sm bg-gray-300 inline-block"/>Presupuesto</span>
-            <span className="flex items-center gap-1.5 text-xs text-gray-500"><span className="w-3 h-0.5 bg-emerald-600 inline-block rounded"/>% Ejecución</span>
+            <span className="flex items-center gap-1.5 text-xs text-gray-500"><span className="w-3 h-0.5 bg-emerald-600 inline-block rounded"/>% Ejecución (real ÷ presupuesto del mes, eje derecho)</span>
           </div>
         </div>
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
           <h2 className="font-bold text-gray-800 text-sm mb-1">Acumulado anual — real vs. presupuesto{metodoElegido?" vs. proyección":""}</h2>
-          <p className="text-gray-300 text-[10px] mb-2">Siempre muestra el año {anioTrabajo} completo, sin importar el filtro de rango de meses.</p>
+          <p className="text-gray-300 text-[10px] mb-2">Siempre muestra el año {anioTrabajo} completo, sin importar el filtro de rango de meses. Click en la leyenda para mostrar/ocultar cada serie.</p>
           <GastosLineChart series={serieAcumulada}/>
         </div>
       </div>
