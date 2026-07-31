@@ -15565,6 +15565,9 @@ function DisponibilidadUtilizacion({user,data}){
   const [nuevaDetencion,setNuevaDetencion]=useState(DETENCION_VACIA);
   const [editDetencionId,setEditDetencionId]=useState(null);
 
+  const [recalculandoTodas,setRecalculandoTodas]=useState(false);
+  const [recalcularTodasResult,setRecalcularTodasResult]=useState(null);
+
   const [filtrosBuqueTabla,setFiltrosBuqueTabla]=useState([]);
   const [filtrosTerminalTabla,setFiltrosTerminalTabla]=useState([]);
   const [fechaDesdeTabla,setFechaDesdeTabla]=useState("");
@@ -15823,6 +15826,28 @@ function DisponibilidadUtilizacion({user,data}){
   };
 
   const detencionesOrdenadas=useMemo(()=>[...detenciones].sort((a,b)=>new Date(b.inicio)-new Date(a.inicio)),[detenciones]);
+
+  // Red de seguridad para el recálculo cliente-side: si el navegador se cerró
+  // a mitad de camino entre guardar la Detención y recalcular su Faena (o dos
+  // admins editaron casi al mismo tiempo), esto vuelve a sumar indisponibilidadHH
+  // desde cero para TODAS las faenas y corrige solo las que quedaron desincronizadas.
+  const recalcularTodasLasFaenas=async()=>{
+    setRecalculandoTodas(true);
+    let cambios=0;
+    const faenasActualizadas=faenas.map(f=>{
+      const hh=detenciones.filter(d=>d.faenaId===f.id).reduce((s,d)=>s+(d.horasReparacion||0),0);
+      const derivados=calcularFaenaDerivados(f,targets,hh);
+      if(!derivados||Math.abs((f.indisponibilidadHH||0)-derivados.indisponibilidadHH)<0.001) return f;
+      cambios++;
+      return{...f,...derivados,recalculadoEn:new Date().toISOString()};
+    });
+    if(cambios>0){
+      setFaenas(faenasActualizadas);
+      await setDoc(doc(db,COLL_FAENA,"faenas"),{data:faenasActualizadas});
+    }
+    setRecalculandoTodas(false);
+    setRecalcularTodasResult({cambios,total:faenas.length});
+  };
 
   if(!canAccessDisponibilidad(user)) return null;
 
@@ -16148,6 +16173,24 @@ function DisponibilidadUtilizacion({user,data}){
               ))}
             </tbody>
           </table>
+        )}
+        {detenciones.length>0&&(
+          <div className="mt-3 pt-3 border-t border-gray-100">
+            <button onClick={recalcularTodasLasFaenas} disabled={recalculandoTodas}
+              className="text-xs px-3 py-2 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition disabled:opacity-50">
+              {recalculandoTodas?"Recalculando...":"🔄 Recalcular todas las Faenas"}
+            </button>
+            <p className="text-gray-300 text-[10px] mt-1">
+              Vuelve a sumar indisponibilidadHH desde cero para cada Faena a partir de sus Detenciones actuales. Úsalo si sospechás que una Faena quedó desincronizada (ej. se cerró la pestaña justo después de guardar una Detención, antes de que terminara el recálculo).
+            </p>
+            {recalcularTodasResult!=null&&(
+              <p className="text-emerald-700 text-xs mt-2">
+                {recalcularTodasResult.cambios===0
+                  ?`✅ Las ${recalcularTodasResult.total} faena(s) ya estaban sincronizadas — no hizo falta corregir nada.`
+                  :`✅ ${recalcularTodasResult.cambios} de ${recalcularTodasResult.total} faena(s) tenían indisponibilidadHH desactualizado — ya se corrigieron.`}
+              </p>
+            )}
+          </div>
         )}
       </div>
 
