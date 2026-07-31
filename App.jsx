@@ -411,6 +411,10 @@ const COLL_GASTOS_TXN="mantek_gastos_transacciones";
 const COLL_GASTOS_CONFIG_CENTROS="mantek_config_centros_coste";
 const COLL_GASTOS_REGLAS="mantek_gastos_reglas_filtro";
 const COLL_GASTOS_PRESUPUESTO="mantek_gastos_presupuesto";
+// Mapeo orden SAP -> equipo del ERP, para poder atribuir gasto a un equipo
+// específico (el SAP export no trae ningún ID de equipo). Empieza vacío;
+// el admin lo va completando a medida que aparecen órdenes nuevas.
+const COLL_GASTOS_CONFIG_EQUIPOS="mantek_gastos_config_equipos";
 // Acceso exclusivo por usuario (no existe rol "admin" en Taller/Marítimo hoy;
 // decisión explícita: allowlist fija en vez de crear un rol nuevo o gatear por
 // "supervisor", que ya lo tiene cualquier supervisor operativo)
@@ -13918,7 +13922,119 @@ function MultiSelectFiltro({label,opciones,seleccionados,onChange,placeholder="T
   );
 }
 
-function GastosPresupuesto({user,activeModule,activeBarco}){
+// Anillo simple de progreso (ej. % ejecución vs pronóstico)
+function DonutRing({pct,size=56,strokeWidth=7}){
+  const r=(size-strokeWidth)/2;
+  const c=2*Math.PI*r;
+  const color=pct==null?"#CBD5E1":pct<90?"#16a34a":pct<=110?"#D97706":"#DC2626";
+  const dash=Math.max(0,Math.min(pct||0,100))/100*c;
+  return(
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="flex-shrink-0">
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="#EEF1F4" strokeWidth={strokeWidth}/>
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={color} strokeWidth={strokeWidth}
+        strokeDasharray={`${dash} ${c-dash}`} strokeLinecap="round" transform={`rotate(-90 ${size/2} ${size/2})`}/>
+    </svg>
+  );
+}
+
+// Dona de distribución (categoría / centro de costo) + leyenda con % y monto
+const DONUT_COLORS=["#2563eb","#16a34a","#D97706","#7C3AED","#DC2626","#0891B2","#DB2777","#65A30D"];
+function DonutChart({items,size=132,strokeWidth=20,centerLabel="Total",centerValue}){
+  if(!items||items.length===0) return(
+    <div className="flex items-center justify-center h-32 text-gray-300 text-xs">Sin datos</div>
+  );
+  const total=items.reduce((s,d)=>s+d.valor,0)||1;
+  const r=(size-strokeWidth)/2;
+  const c=2*Math.PI*r;
+  let acc=0;
+  return(
+    <div className="flex items-center gap-4">
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="flex-shrink-0">
+        {items.map((d,i)=>{
+          const frac=d.valor/total;
+          const dash=frac*c;
+          const dashOffset=-acc*c;
+          acc+=frac;
+          return(
+            <circle key={i} cx={size/2} cy={size/2} r={r} fill="none" stroke={DONUT_COLORS[i%DONUT_COLORS.length]} strokeWidth={strokeWidth}
+              strokeDasharray={`${dash} ${c-dash}`} strokeDashoffset={dashOffset} transform={`rotate(-90 ${size/2} ${size/2})`}>
+              <title>{d.nombre}: {fmtCompactCLP(d.valor)} ({d.pct}%)</title>
+            </circle>
+          );
+        })}
+        <text x={size/2} y={size/2-6} textAnchor="middle" fontSize="9" fill="#9CA3AF">{centerLabel}</text>
+        <text x={size/2} y={size/2+10} textAnchor="middle" fontSize="12" fontWeight="700" fill="#111827">{centerValue||fmtCompactCLP(total)}</text>
+      </svg>
+      <div className="space-y-1.5 flex-1 min-w-0">
+        {items.slice(0,6).map((d,i)=>(
+          <div key={i} className="flex items-center gap-2 text-xs">
+            <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{background:DONUT_COLORS[i%DONUT_COLORS.length]}}/>
+            <span className="text-gray-600 truncate flex-1" title={d.nombre}>{d.nombre}</span>
+            <span className="text-gray-400 flex-shrink-0">{fmtCompactCLP(d.valor)}</span>
+            <span className="text-gray-800 font-semibold w-10 text-right flex-shrink-0">{d.pct}%</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Gráfico mensual combinado: barras real/presupuesto + línea de % ejecución
+function GastoMensualChart({serie,onClickMes,mesSeleccionado,height=260,width=760}){
+  if(!serie||serie.length===0) return(
+    <div className="flex items-center justify-center h-32 text-gray-300 text-xs">Sin meses en el rango seleccionado.</div>
+  );
+  const W=width,H=height;
+  const pad={t:24,b:26,l:52,r:44};
+  const cW=W-pad.l-pad.r,cH=H-pad.t-pad.b;
+  const n=serie.length;
+  const bandW=cW/n;
+  const maxVal=Math.max(...serie.flatMap(m=>[m.real,m.presupuesto]),1);
+  const yAt=v=>pad.t+cH-(Math.max(v,0)/maxVal)*cH;
+  const xCentro=i=>pad.l+bandW*i+bandW/2;
+  const yPct=pct=>pad.t+cH-(Math.max(0,Math.min(pct??0,120))/120)*cH;
+  const gridlines=Array.from({length:4},(_,i)=>({v:(maxVal/3)*i,y:yAt((maxVal/3)*i)}));
+  const pctPath=serie.filter(m=>m.pct!=null).map((m,i,arr)=>{
+    const idx=serie.indexOf(m);
+    return`${i===0?"M":"L"}${xCentro(idx).toFixed(1)},${yPct(m.pct).toFixed(1)}`;
+  }).join(" ");
+  return(
+    <svg width="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{display:"block",height:`${H}px`}}>
+      {gridlines.map((g,i)=>(
+        <g key={i}>
+          <line x1={pad.l} x2={W-pad.r} y1={g.y} y2={g.y} stroke="#F1F3F5" strokeWidth="1"/>
+          <text x={pad.l-8} y={g.y+3} textAnchor="end" fontSize="9" fill="#B0B7C0">{fmtCompactCLP(g.v)}</text>
+        </g>
+      ))}
+      {serie.map((m,i)=>{
+        const barW=Math.min(bandW*0.22,22);
+        const xReal=xCentro(i)-barW-2;
+        const xPres=xCentro(i)+2;
+        return(
+          <g key={m.mes} style={{cursor:onClickMes?"pointer":"default"}} onClick={()=>onClickMes&&onClickMes(m.mes)}>
+            {mesSeleccionado===m.mes&&<rect x={pad.l+bandW*i} y={pad.t} width={bandW} height={cH} fill="#EFF6FF"/>}
+            <rect x={xReal} y={yAt(m.real)} width={barW} height={Math.max(pad.t+cH-yAt(m.real),m.real>0?2:0)} rx="2" fill="#2563eb"/>
+            <rect x={xPres} y={yAt(m.presupuesto)} width={barW} height={Math.max(pad.t+cH-yAt(m.presupuesto),m.presupuesto>0?2:0)} rx="2" fill="#D9DEE4"/>
+            <text x={xCentro(i)} y={H-8} textAnchor="middle" fontSize="9.5" fill="#9CA3AF">{m.mes.slice(5)}</text>
+          </g>
+        );
+      })}
+      <path d={pctPath} fill="none" stroke="#16a34a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+      {serie.filter(m=>m.pct!=null).map((m,i)=>{
+        const idx=serie.indexOf(m);
+        return(
+          <g key={i}>
+            <circle cx={xCentro(idx)} cy={yPct(m.pct)} r="3" fill="white" stroke="#16a34a" strokeWidth="2"/>
+            <text x={xCentro(idx)} y={yPct(m.pct)-8} textAnchor="middle" fontSize="9" fontWeight="700" fill="#16a34a">{m.pct}%</text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+function GastosPresupuesto({user,data,activeModule,activeBarco}){
+  const equip=data?.equip||[];
   const [configCentros,setConfigCentros]=useState([]);
   const [mesesIndex,setMesesIndex]=useState([]);
   const [txnsPorMes,setTxnsPorMes]=useState({});
@@ -13944,7 +14060,13 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
   const [mesDetalle,setMesDetalle]=useState(null);
   const [reclasificando,setReclasificando]=useState(false);
   const [reclasificarResult,setReclasificarResult]=useState(null);
+  const [configEquiposOrden,setConfigEquiposOrden]=useState([]);
+  const [nuevoMapeoEquipo,setNuevoMapeoEquipo]=useState({orden:"",equipoId:""});
+  const [importandoPresupuesto,setImportandoPresupuesto]=useState(false);
+  const [mostrarFiltros,setMostrarFiltros]=useState(false);
+  const [verTodasTxns,setVerTodasTxns]=useState(false);
   const fileInputRef=useRef(null);
+  const presupuestoFileRef=useRef(null);
   const vesselIdActual=activeModule==="maritimo"?(activeBarco||null):null;
 
   useEffect(()=>{
@@ -13962,7 +14084,10 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
       setPresupuesto(snap.exists()?(snap.data().data||[]):[]);
       setMetodosPronostico(snap.exists()?(snap.data().metodosPronostico||[]):[]);
     });
-    return()=>{unsub1();unsub2();unsub3();unsub4();};
+    const unsub5=onSnapshot(doc(db,COLL_GASTOS_CONFIG_EQUIPOS,"config"),snap=>{
+      setConfigEquiposOrden(snap.exists()?(snap.data().data||[]):[]);
+    });
+    return()=>{unsub1();unsub2();unsub3();unsub4();unsub5();};
   },[]);
 
   // Rango de meses por defecto: todo lo cargado, hasta que el usuario lo acote
@@ -14040,6 +14165,9 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
   const centrosDisponibles=useMemo(()=>[...new Set(txnsAnotadas.map(t=>t.centroCoste).filter(Boolean))].sort(),[txnsAnotadas]);
   const categoriasDisponibles=useMemo(()=>[...new Set(txnsAnotadas.map(t=>t.descripClaseCoste).filter(Boolean))].sort(),[txnsAnotadas]);
   const usuariosDisponibles=useMemo(()=>[...new Set(txnsAnotadas.map(t=>t.usuario).filter(Boolean))].sort(),[txnsAnotadas]);
+  const aniosDisponibles=useMemo(()=>[...new Set(mesesIndex.map(m=>m.slice(0,4)))].sort(),[mesesIndex]);
+  const anioSeleccionado=filtroMesDesde?filtroMesDesde.slice(0,4):(aniosDisponibles[aniosDisponibles.length-1]||String(new Date().getFullYear()));
+  const cambiarAnio=(anio)=>{setFiltroMesDesde(`${anio}-01`);setFiltroMesHasta(`${anio}-12`);};
 
   // Etiqueta compacta de una selección múltiple, para usar en títulos
   const etiquetaSel=(arr,todos="TOTAL")=>arr.length===0?todos:arr.length===1?arr[0]:`${arr.length} seleccionados`;
@@ -14210,6 +14338,15 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
     if(!mesDetalle) return[];
     return txnsFiltradas.filter(t=>t.mes===mesDetalle).sort((a,b)=>(b.valor||0)-(a.valor||0));
   },[txnsFiltradas,mesDetalle]);
+
+  // Por defecto muestra el detalle del último mes con datos (no vacío al entrar)
+  useEffect(()=>{
+    if(!mesDetalle&&mesesEnRango.length>0) setMesDetalle(mesesEnRango[mesesEnRango.length-1]);
+  },[mesesEnRango]);
+
+  const txnsRecientes=useMemo(()=>{
+    return[...txnsFiltradas].sort((a,b)=>(b.fechaContabilizacion||"").localeCompare(a.fechaContabilizacion||"")).slice(0,50);
+  },[txnsFiltradas]);
 
   const desviacionCls=(pct)=>{
     if(pct==null) return "text-gray-400 bg-gray-50 border-gray-200";
@@ -14487,114 +14624,308 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
 
   const fmtCLP=(n)=>"$"+Math.round(n||0).toLocaleString("es-CL");
 
+  // ── Mapeo orden SAP -> equipo (para "Top 5 equipos por gasto") ──
+  const saveConfigEquiposOrden=async(updated)=>{
+    setConfigEquiposOrden(updated);
+    await setDoc(doc(db,COLL_GASTOS_CONFIG_EQUIPOS,"config"),{data:updated});
+  };
+  const agregarMapeoEquipo=()=>{
+    if(!nuevoMapeoEquipo.orden.trim()||!nuevoMapeoEquipo.equipoId) return;
+    const orden=nuevoMapeoEquipo.orden.trim();
+    const updated=[...configEquiposOrden.filter(c=>c.orden!==orden),{orden,equipoId:nuevoMapeoEquipo.equipoId}];
+    saveConfigEquiposOrden(updated);
+    setNuevoMapeoEquipo({orden:"",equipoId:""});
+  };
+  const eliminarMapeoEquipo=(orden)=>{
+    saveConfigEquiposOrden(configEquiposOrden.filter(c=>c.orden!==orden));
+  };
+
+  const ordenesSinMapear=useMemo(()=>{
+    const mapeadas=new Set(configEquiposOrden.map(c=>c.orden));
+    return[...new Set(txnsFiltradas.filter(t=>!t._reglaExcluida&&t.orden&&!mapeadas.has(t.orden)).map(t=>t.orden))].slice(0,20);
+  },[txnsFiltradas,configEquiposOrden]);
+
+  const top5Equipos=useMemo(()=>{
+    const porEquipo={};
+    txnsFiltradas.filter(t=>!t._reglaExcluida).forEach(t=>{
+      const map=configEquiposOrden.find(c=>c.orden===t.orden);
+      if(!map) return;
+      const eq=equip.find(e=>e.id===map.equipoId);
+      if(!eq) return;
+      if(!porEquipo[eq.id]) porEquipo[eq.id]={eq,total:0};
+      porEquipo[eq.id].total+=(t.valor||0);
+    });
+    const lista=Object.values(porEquipo).sort((a,b)=>b.total-a.total).slice(0,5);
+    const totalGeneral=Object.values(porEquipo).reduce((s,x)=>s+x.total,0)||1;
+    return lista.map(x=>({...x,pct:Math.round((x.total/totalGeneral)*1000)/10}));
+  },[txnsFiltradas,configEquiposOrden,equip]);
+
+  // ── Distribución por categoría / por centro (sobre lo filtrado) ──
+  const distribucionCategoria=useMemo(()=>{
+    const porCat={};
+    txnsFiltradas.filter(t=>!t._reglaExcluida).forEach(t=>{
+      const cat=t.descripClaseCoste||"(sin categoría)";
+      porCat[cat]=(porCat[cat]||0)+(t.valor||0);
+    });
+    const total=Object.values(porCat).reduce((s,v)=>s+v,0)||1;
+    return Object.entries(porCat).sort((a,b)=>b[1]-a[1]).map(([nombre,valor])=>({nombre,valor,pct:Math.round((valor/total)*1000)/10}));
+  },[txnsFiltradas]);
+
+  const distribucionCentro=useMemo(()=>{
+    const porCentro={};
+    txnsFiltradas.filter(t=>!t._reglaExcluida).forEach(t=>{
+      const c=t.centroCoste||"(sin centro)";
+      porCentro[c]=(porCentro[c]||0)+(t.valor||0);
+    });
+    const total=Object.values(porCentro).reduce((s,v)=>s+v,0)||1;
+    return Object.entries(porCentro).sort((a,b)=>b[1]-a[1]).map(([nombre,valor])=>({nombre,valor,pct:Math.round((valor/total)*1000)/10}));
+  },[txnsFiltradas]);
+
+  // ── Alertas y desviaciones (heurísticas simples sobre lo ya calculado) ──
+  const alertas=useMemo(()=>{
+    const items=[];
+    serieMensual.forEach(m=>{
+      if(m.presupuesto>0&&m.pct!=null&&m.pct>110){
+        items.push({tipo:"error",texto:`${m.mes} supera presupuesto en ${m.pct-100}%`,detalle:`Real: ${fmtCLP(m.real)} vs Presupuesto: ${fmtCLP(m.presupuesto)}`});
+      }
+    });
+    if(serieMensual.length>=2){
+      const prev=serieMensual[serieMensual.length-2],last=serieMensual[serieMensual.length-1];
+      if(prev.real>0){
+        const delta=Math.round(((last.real-prev.real)/prev.real)*100);
+        if(delta>15) items.push({tipo:"warning",texto:`Aumento de +${delta}% vs mes anterior`,detalle:`${prev.mes} → ${last.mes}`});
+      }
+    }
+    if(distribucionCategoria.length>0){
+      const top=distribucionCategoria[0];
+      items.push({tipo:"info",texto:`${top.nombre} concentra el ${top.pct}% del gasto filtrado`,detalle:fmtCLP(top.valor)});
+    }
+    const conDatos=serieMensual.filter(m=>m.real>0);
+    if(conDatos.length>1){
+      const promedio=conDatos.reduce((s,m)=>s+m.real,0)/conDatos.length;
+      const mejor=conDatos.reduce((min,m)=>m.real<min.real?m:min,conDatos[0]);
+      if(promedio>0){
+        const pctMenor=Math.round((1-mejor.real/promedio)*100);
+        if(pctMenor>5) items.push({tipo:"success",texto:`${mejor.mes} fue el mejor mes`,detalle:`Gasto ${pctMenor}% menor al promedio mensual`});
+      }
+    }
+    return items.slice(0,6);
+  },[serieMensual,distribucionCategoria]);
+
+  const ALERTA_ESTILO={
+    error:{icon:"🔴",cls:"bg-red-50 border-red-100 text-red-700"},
+    warning:{icon:"🟠",cls:"bg-amber-50 border-amber-100 text-amber-700"},
+    info:{icon:"🔵",cls:"bg-blue-50 border-blue-100 text-blue-700"},
+    success:{icon:"🟢",cls:"bg-emerald-50 border-emerald-100 text-emerald-700"},
+  };
+
+  // ── Exportar CSV de las transacciones filtradas ──
+  const exportarCSV=()=>{
+    const headers=["Fecha","Documento","Centro de costo","Categoría","Descripción material","Texto pedido","Usuario","Monto","Estado"];
+    const csvRows=[headers.join(";")];
+    txnsFiltradas.forEach(t=>{
+      const estado=t._reglaExcluida?`Excluida (${t._reglaExcluida})`:t._reglaPuntual?`Puntual (${t._reglaPuntual})`:"Normal";
+      csvRows.push([
+        t.fechaContabilizacion?t.fechaContabilizacion.slice(0,10):"",
+        t.documentoCabecera||"",
+        t.centroCoste||"",
+        t.descripClaseCoste||"",
+        (t.descripcionMaterial||"").replace(/;/g," "),
+        (t.textoPedido||"").replace(/;/g," "),
+        t.usuario||"",
+        String(t.valor||0).replace(".",","),
+        estado,
+      ].join(";"));
+    });
+    const csvContent="﻿"+csvRows.join("\n");
+    const blob=new Blob([csvContent],{type:"text/csv;charset=utf-8;"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    a.href=url;
+    a.download=`gastos_${activeModule}_${filtroMesDesde||"todo"}_${filtroMesHasta||"todo"}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  // ── Cargar presupuesto desde Excel (Categoria, Ene, Feb, ... Dic) ──
+  const handleImportPresupuesto=async(e)=>{
+    const file=e.target.files?.[0];
+    if(!file) return;
+    setImportandoPresupuesto(true);
+    try{
+      const buf=await file.arrayBuffer();
+      const wb=XLSX.read(buf,{type:"array"});
+      const ws=wb.Sheets[wb.SheetNames[0]];
+      const rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:true,defval:""});
+      if(rows.length<2){alert("Archivo vacío o sin filas de datos.");setImportandoPresupuesto(false);return;}
+      const header=rows[0].map(h=>normHeaderGasto(h));
+      const mesesAbrev=["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
+      const anio=parseInt(presupuestoAnioForm.anio)||new Date().getFullYear();
+      let updated=[...presupuesto];
+      let cuantos=0;
+      rows.slice(1).forEach(row=>{
+        if(!row||row.every(c=>c==null||c==="")) return;
+        const categoria=String(row[0]||"").trim();
+        if(!categoria) return;
+        header.forEach((h,idx)=>{
+          if(idx===0) return;
+          const mesIdx=mesesAbrev.findIndex(m=>h.startsWith(m));
+          if(mesIdx===-1) return;
+          const monto=parseFloat(row[idx]);
+          if(row[idx]===""||isNaN(monto)) return;
+          const mes=`${anio}-${String(mesIdx+1).padStart(2,"0")}`;
+          const entry={modulo:activeModule,vesselId:vesselIdActual,categoria,anio,mes,montoPresupuestado:monto,notas:"",actualizadoPor:user.name||user.username||"",actualizadoEn:new Date().toISOString()};
+          const idxExist=updated.findIndex(p=>p.modulo===entry.modulo&&(p.vesselId||null)===(entry.vesselId||null)&&p.categoria===entry.categoria&&p.anio===entry.anio&&(p.mes||null)===entry.mes);
+          if(idxExist>=0) updated[idxExist]=entry; else updated.push(entry);
+          cuantos++;
+        });
+      });
+      if(cuantos===0){
+        alert("No se reconoció ninguna columna de mes. La primera fila debe tener: Categoría, Ene, Feb, ... Dic.");
+      }else{
+        savePresupuesto(updated);
+        setPresupuestoAnioMsg(`✅ ${cuantos} valores importados desde archivo.`);
+        setTimeout(()=>setPresupuestoAnioMsg(""),4000);
+      }
+    }catch(err){
+      console.error("Import presupuesto:",err);
+      alert("Error al procesar el archivo: "+err.message);
+    }
+    setImportandoPresupuesto(false);
+    if(presupuestoFileRef.current) presupuestoFileRef.current.value="";
+  };
+
   if(!canAccessGastos(user)) return null;
 
   return(
     <div className="p-4 lg:p-6 space-y-5">
-      <div>
-        <h1 className="text-xl font-bold text-gray-900">Gastos y Presupuesto</h1>
-        <p className="text-gray-400 text-sm mt-0.5">
-          {activeModule==="maritimo"?`Marítimo${activeBarco?" — "+activeBarco:""}`:"Taller"} · Acceso restringido
-        </p>
-      </div>
-
-      <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-700">
-        Módulo completo (8 de 8 bloques): colecciones + import, reglas de filtro, dashboard con gráficos, presupuesto manual, motor de pronóstico.
-      </div>
-
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
-        <h2 className="font-bold text-gray-800 text-sm mb-3">Gasto agregado — {activeModule==="maritimo"?"Marítimo":"Taller"} (todos los meses cargados)</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div className="rounded-xl p-3 bg-gray-50 border border-gray-200">
-            <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Gasto real (sin filtrar)</p>
-            <p className="text-lg font-bold text-gray-800">{fmtCLP(gastoAgregado.totalReal)}</p>
-            <p className="text-[10px] text-gray-400">{gastoAgregado.real.length} filas</p>
-          </div>
-          <div className="rounded-xl p-3 bg-blue-50 border border-blue-200">
-            <p className="text-[10px] text-blue-500 font-semibold uppercase tracking-wide">Real filtrado</p>
-            <p className="text-lg font-bold text-blue-700">{fmtCLP(gastoAgregado.totalFiltrado)}</p>
-            <p className="text-[10px] text-blue-400">{gastoAgregado.countExcluidas} filas excluidas por regla</p>
-          </div>
-          <div className="rounded-xl p-3 bg-emerald-50 border border-emerald-200">
-            <p className="text-[10px] text-emerald-600 font-semibold uppercase tracking-wide">Base de pronóstico (sin puntuales)</p>
-            <p className="text-lg font-bold text-emerald-700">{fmtCLP(gastoAgregado.totalFiltradoSinPuntuales)}</p>
-            <p className="text-[10px] text-emerald-500">{gastoAgregado.countPuntuales} filas marcadas puntuales</p>
-          </div>
+      {/* ── Header ── */}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-gray-900">Gastos y Presupuesto</h1>
+          <p className="text-gray-400 text-sm mt-0.5">{activeModule==="maritimo"?`Marítimo${activeBarco?" · "+activeBarco:""}`:"Taller"}</p>
         </div>
-      </div>
-
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
-        <h2 className="font-bold text-gray-800 text-sm mb-3">Filtros</h2>
-        <div className="flex flex-wrap gap-2 items-end">
-          <div>
-            <label className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide block mb-1">Mes desde</label>
-            <select value={filtroMesDesde} onChange={e=>setFiltroMesDesde(e.target.value)} className="px-2.5 py-2 rounded-lg border border-gray-200 text-xs">
-              {mesesIndex.map(m=><option key={m} value={m}>{m}</option>)}
+        <div className="flex items-center gap-2 flex-wrap">
+          {aniosDisponibles.length>0&&(
+            <select value={anioSeleccionado} onChange={e=>cambiarAnio(e.target.value)} className="px-2.5 py-2 rounded-lg border border-gray-200 text-xs bg-white">
+              {aniosDisponibles.map(a=><option key={a} value={a}>{a}</option>)}
             </select>
+          )}
+          <div className="px-2.5 py-2 rounded-lg border border-gray-200 text-xs bg-white text-gray-500 flex items-center gap-1.5">
+            <Calendar size={12}/>{filtroMesDesde||"—"} · {filtroMesHasta||"—"}
           </div>
-          <div>
-            <label className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide block mb-1">Mes hasta</label>
-            <select value={filtroMesHasta} onChange={e=>setFiltroMesHasta(e.target.value)} className="px-2.5 py-2 rounded-lg border border-gray-200 text-xs">
-              {mesesIndex.map(m=><option key={m} value={m}>{m}</option>)}
-            </select>
-          </div>
-          <MultiSelectFiltro label="Centro de costo" opciones={centrosDisponibles} seleccionados={filtrosCentro} onChange={setFiltrosCentro}/>
-          <MultiSelectFiltro label="Categoría" opciones={categoriasDisponibles} seleccionados={filtrosCategoria} onChange={setFiltrosCategoria}/>
-          <MultiSelectFiltro label="Usuario (SAP)" opciones={usuariosDisponibles} seleccionados={filtrosUsuario} onChange={setFiltrosUsuario}/>
-          <label className="flex items-center gap-1.5 text-xs text-gray-600 px-2.5 py-2">
-            <input type="checkbox" checked={incluirPuntuales} onChange={e=>setIncluirPuntuales(e.target.checked)}/>
-            Incluir eventos puntuales
-          </label>
-        </div>
-        {(filtrosCentro.length>0||filtrosCategoria.length>0||filtrosUsuario.length>0)&&(
-          <button onClick={()=>{setFiltrosCentro([]);setFiltrosCategoria([]);setFiltrosUsuario([]);}}
-            className="mt-2 text-[10px] text-red-500 hover:underline font-semibold">
-            Limpiar todos los filtros
+          <button onClick={()=>setMostrarFiltros(s=>!s)}
+            className={`px-2.5 py-2 rounded-lg border text-xs font-semibold flex items-center gap-1.5 transition ${mostrarFiltros||filtrosCentro.length>0||filtrosCategoria.length>0||filtrosUsuario.length>0?"border-blue-300 bg-blue-50 text-blue-700":"border-gray-200 bg-white text-gray-600 hover:bg-gray-50"}`}>
+            <Filter size={12}/>Filtros
+            {(filtrosCentro.length+filtrosCategoria.length+filtrosUsuario.length)>0&&(
+              <span className="bg-blue-600 text-white text-[9px] px-1.5 py-0.5 rounded-full font-bold">{filtrosCentro.length+filtrosCategoria.length+filtrosUsuario.length}</span>
+            )}
           </button>
-        )}
+          <button onClick={exportarCSV} className="px-3 py-2 rounded-lg text-white text-xs font-semibold flex items-center gap-1.5" style={{background:NV.blue}}>
+            <Download size={12}/>Exportar
+          </button>
+        </div>
       </div>
 
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
-        <h2 className="font-bold text-gray-800 text-sm mb-3">Gasto mensual — presupuesto vs. real filtrado</h2>
-        {serieMensual.length===0?(
-          <p className="text-gray-400 text-xs italic">Sin meses en el rango seleccionado.</p>
-        ):(
-          <div className="flex items-end gap-3 overflow-x-auto pb-2" style={{minHeight:"200px"}}>
+      {/* ── Panel de filtros (colapsable) ── */}
+      {mostrarFiltros&&(
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+          <div className="flex flex-wrap gap-2 items-end">
+            <div>
+              <label className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide block mb-1">Mes desde</label>
+              <select value={filtroMesDesde} onChange={e=>setFiltroMesDesde(e.target.value)} className="px-2.5 py-2 rounded-lg border border-gray-200 text-xs">
+                {mesesIndex.map(m=><option key={m} value={m}>{m}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide block mb-1">Mes hasta</label>
+              <select value={filtroMesHasta} onChange={e=>setFiltroMesHasta(e.target.value)} className="px-2.5 py-2 rounded-lg border border-gray-200 text-xs">
+                {mesesIndex.map(m=><option key={m} value={m}>{m}</option>)}
+              </select>
+            </div>
+            <MultiSelectFiltro label="Centro de costo" opciones={centrosDisponibles} seleccionados={filtrosCentro} onChange={setFiltrosCentro}/>
+            <MultiSelectFiltro label="Categoría" opciones={categoriasDisponibles} seleccionados={filtrosCategoria} onChange={setFiltrosCategoria}/>
+            <MultiSelectFiltro label="Usuario (SAP)" opciones={usuariosDisponibles} seleccionados={filtrosUsuario} onChange={setFiltrosUsuario}/>
+            <label className="flex items-center gap-1.5 text-xs text-gray-600 px-2.5 py-2">
+              <input type="checkbox" checked={incluirPuntuales} onChange={e=>setIncluirPuntuales(e.target.checked)}/>
+              Incluir eventos puntuales
+            </label>
+          </div>
+          {(filtrosCentro.length>0||filtrosCategoria.length>0||filtrosUsuario.length>0)&&(
+            <button onClick={()=>{setFiltrosCentro([]);setFiltrosCategoria([]);setFiltrosUsuario([]);}}
+              className="mt-2 text-[10px] text-red-500 hover:underline font-semibold">
+              Limpiar todos los filtros
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* ── KPIs ── */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0"><FileText size={14} className="text-gray-500"/></div>
+            <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Gasto real (sin filtrar)</p>
+          </div>
+          <p className="text-xl font-bold text-gray-900">{fmtCLP(gastoAgregado.totalReal)}</p>
+          <div className="mt-1"><MiniLineChart data={serieMensual.map(m=>({mes:m.mes,valor:m.real}))} color="#6B7280" positiveIsUp={false} height={36} width={180}/></div>
+        </div>
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center flex-shrink-0"><Filter size={14} className="text-blue-500"/></div>
+            <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Real filtrado</p>
+          </div>
+          <p className="text-xl font-bold text-blue-700">{fmtCLP(gastoAgregado.totalFiltrado)}</p>
+          <p className="text-[10px] text-gray-400 mt-1">{gastoAgregado.countExcluidas} filas excluidas por regla</p>
+        </div>
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center flex-shrink-0"><TrendingUp size={14} className="text-emerald-600"/></div>
+            <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">Base de pronóstico</p>
+          </div>
+          <p className="text-xl font-bold text-emerald-700">{fmtCLP(gastoAgregado.totalFiltradoSinPuntuales)}</p>
+          <p className="text-[10px] text-gray-400 mt-1">{gastoAgregado.countPuntuales} filas marcadas puntuales</p>
+        </div>
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4 flex items-center gap-3">
+          <DonutRing pct={serieMensual.length>0?serieMensual[serieMensual.length-1].pct:null}/>
+          <div>
+            <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">% Ejecución vs. presupuesto</p>
             {(()=>{
-              const maxVal=Math.max(...serieMensual.flatMap(m=>[m.real,m.presupuesto]),1);
-              return serieMensual.map(m=>{
-                const delta=m.real-m.presupuesto;
-                return(
-                <button key={m.mes} onClick={()=>setMesDetalle(m.mes)}
-                  className={`flex flex-col items-center flex-shrink-0 w-20 rounded-lg py-1.5 transition border ${mesDetalle===m.mes?"bg-blue-50 border-blue-200":"border-transparent hover:bg-gray-50 hover:border-gray-200"}`}>
-                  <span className={`text-[9px] px-1.5 py-0.5 rounded-full border font-bold mb-1 ${desviacionCls(m.pct)}`}>
-                    {m.pct==null?"—":m.pct+"%"}
-                  </span>
-                  <span className="text-[9px] font-bold text-blue-600">{fmtCompactCLP(m.real)}</span>
-                  {m.presupuesto>0&&<span className="text-[8px] text-gray-400">{fmtCompactCLP(m.presupuesto)}</span>}
-                  <div className="flex items-end gap-1 h-24 mt-1">
-                    <div className="w-3.5 rounded-t bg-blue-500 transition-all hover:bg-blue-600" style={{height:`${Math.max((m.real/maxVal)*96,m.real>0?4:0)}px`}} title={`Real: ${fmtCLP(m.real)}`}/>
-                    <div className="w-3.5 rounded-t bg-gray-300 transition-all hover:bg-gray-400" style={{height:`${Math.max((m.presupuesto/maxVal)*96,m.presupuesto>0?4:0)}px`}} title={`Presupuesto: ${fmtCLP(m.presupuesto)}`}/>
-                  </div>
-                  <span className="text-[9px] font-mono text-gray-500 mt-1">{m.mes.slice(5)}</span>
-                  {m.presupuesto>0&&(
-                    <span className={`text-[8px] font-semibold ${delta>0?"text-red-500":"text-emerald-600"}`}>
-                      {delta>0?"+":""}{fmtCompactCLP(delta)}
-                    </span>
-                  )}
-                </button>
+              const ultimo=serieMensual[serieMensual.length-1];
+              if(!ultimo||ultimo.pct==null) return <p className="text-sm text-gray-400 mt-1">Sin presupuesto</p>;
+              return(
+                <>
+                  <p className="text-xl font-bold text-gray-900">{ultimo.pct}%</p>
+                  <p className="text-[10px] text-gray-400">{ultimo.pct>100?`${ultimo.pct-100}% por encima`:`${100-ultimo.pct}% por debajo`} · {ultimo.mes}</p>
+                </>
               );
-              });
             })()}
           </div>
-        )}
-        <div className="flex items-center gap-4 mt-2 justify-center">
-          <span className="flex items-center gap-1.5 text-xs text-gray-500"><span className="w-2.5 h-2.5 rounded-sm bg-blue-500 inline-block"/>Real filtrado</span>
-          <span className="flex items-center gap-1.5 text-xs text-gray-500"><span className="w-2.5 h-2.5 rounded-sm bg-gray-300 inline-block"/>Presupuesto</span>
         </div>
-        <p className="text-gray-300 text-[10px] mt-1 text-center">Click en un mes para ver el detalle de transacciones abajo.</p>
       </div>
 
+      {/* ── Gasto mensual + Acumulado anual ── */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+          <h2 className="font-bold text-gray-800 text-sm mb-1">Gasto mensual — presupuesto vs. real filtrado</h2>
+          <p className="text-gray-300 text-[10px] mb-2">Click en un mes para ver el detalle de transacciones abajo.</p>
+          <GastoMensualChart serie={serieMensual} onClickMes={setMesDetalle} mesSeleccionado={mesDetalle}/>
+          <div className="flex items-center gap-4 mt-1 justify-center flex-wrap">
+            <span className="flex items-center gap-1.5 text-xs text-gray-500"><span className="w-2.5 h-2.5 rounded-sm bg-blue-500 inline-block"/>Real filtrado</span>
+            <span className="flex items-center gap-1.5 text-xs text-gray-500"><span className="w-2.5 h-2.5 rounded-sm bg-gray-300 inline-block"/>Presupuesto</span>
+            <span className="flex items-center gap-1.5 text-xs text-gray-500"><span className="w-3 h-0.5 bg-emerald-600 inline-block rounded"/>% Ejecución</span>
+          </div>
+        </div>
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+          <h2 className="font-bold text-gray-800 text-sm mb-1">Acumulado anual — real vs. presupuesto{metodoElegido?" vs. proyección":""}</h2>
+          <p className="text-gray-300 text-[10px] mb-2">Siempre muestra el año {anioTrabajo} completo, sin importar el filtro de rango de meses.</p>
+          <GastosLineChart series={serieAcumulada}/>
+        </div>
+      </div>
+
+      {/* ── Pronóstico ── */}
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
         <h2 className="font-bold text-gray-800 text-sm mb-3">
           Pronóstico {anioTrabajo} — {etiquetaSel(filtrosCategoria)}
@@ -14629,60 +14960,166 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
         )}
       </div>
 
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
-        <h2 className="font-bold text-gray-800 text-sm mb-1">Acumulado anual — real vs. presupuesto{metodoElegido?" vs. proyección":""}</h2>
-        <p className="text-gray-300 text-[10px] mb-3">Siempre muestra el año {anioTrabajo} completo, sin importar el filtro de rango de meses.</p>
-        <GastosLineChart series={serieAcumulada}/>
-      </div>
-
-      {mesDetalle&&(
+      {/* ── Distribución + Top 5 equipos + Alertas ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-4 gap-4">
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="font-bold text-gray-800 text-sm">Detalle — {mesDetalle}{filtrosCategoria.length>0?` · ${etiquetaSel(filtrosCategoria)}`:""}</h2>
-            <button onClick={()=>setMesDetalle(null)} className="text-gray-300 hover:text-red-500"><X size={14}/></button>
-          </div>
-          {txnsDetalle.length===0?(
-            <p className="text-gray-400 text-xs italic">Sin transacciones para este mes con los filtros actuales.</p>
+          <h2 className="font-bold text-gray-800 text-sm mb-3">Distribución del gasto por categoría</h2>
+          <DonutChart items={distribucionCategoria}/>
+        </div>
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+          <h2 className="font-bold text-gray-800 text-sm mb-3">Distribución por centro de costo</h2>
+          <DonutChart items={distribucionCentro}/>
+        </div>
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+          <h2 className="font-bold text-gray-800 text-sm mb-3">Top 5 equipos por gasto</h2>
+          {top5Equipos.length===0?(
+            <div className="text-center py-6">
+              <p className="text-gray-300 text-xs italic">Sin equipos mapeados todavía.</p>
+              <p className="text-gray-300 text-[10px] mt-1">Configura el mapeo orden → equipo más abajo.</p>
+            </div>
           ):(
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead><tr className="text-gray-400 border-b border-gray-100">
-                  <th className="text-left py-1.5 font-medium">Categoría</th>
-                  <th className="text-left py-1.5 font-medium">Material / Pedido</th>
-                  <th className="text-left py-1.5 font-medium">Centro</th>
-                  <th className="text-left py-1.5 font-medium">Usuario</th>
-                  <th className="text-right py-1.5 font-medium">Valor</th>
-                  <th className="text-left py-1.5 font-medium">Estado</th>
-                </tr></thead>
-                <tbody>
-                  {txnsDetalle.map((t,i)=>(
-                    <tr key={i} className="border-b border-gray-50 last:border-0">
-                      <td className="py-1.5">{t.descripClaseCoste}</td>
-                      <td className="py-1.5">
-                        {t.descripcionMaterial&&<p className="text-gray-700">{t.descripcionMaterial}</p>}
-                        {t.textoPedido&&<p className="text-gray-400 text-[10px]">{t.textoPedido}</p>}
-                        {!t.descripcionMaterial&&!t.textoPedido&&<span className="text-gray-300">—</span>}
-                      </td>
-                      <td className="py-1.5 font-mono text-gray-500">{t.centroCoste}</td>
-                      <td className="py-1.5 text-gray-500">{t.usuario}</td>
-                      <td className="py-1.5 text-right font-semibold">{fmtCLP(t.valor)}</td>
-                      <td className="py-1.5">
-                        {t._reglaExcluida?(
-                          <span className="px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 font-semibold">Excluida — {t._reglaExcluida}</span>
-                        ):t._reglaPuntual?(
-                          <span className="px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-semibold">Puntual — {t._reglaPuntual}</span>
-                        ):(
-                          <span className="text-gray-400">Normal</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="space-y-2.5">
+              {top5Equipos.map(x=>(
+                <div key={x.eq.id}>
+                  <div className="flex items-center justify-between text-xs mb-1">
+                    <span className="font-semibold text-gray-700 truncate">{x.eq.code} · {x.eq.name}</span>
+                    <span className="text-gray-400 flex-shrink-0 ml-2">{fmtCompactCLP(x.total)} · {x.pct}%</span>
+                  </div>
+                  <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                    <div className="h-full bg-blue-500 rounded-full" style={{width:`${Math.max(x.pct,2)}%`}}/>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>
-      )}
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+          <h2 className="font-bold text-gray-800 text-sm mb-3">Alertas y desviaciones</h2>
+          {alertas.length===0?(
+            <p className="text-gray-300 text-xs italic text-center py-6">Sin alertas por ahora.</p>
+          ):(
+            <div className="space-y-2">
+              {alertas.map((a,i)=>(
+                <div key={i} className={`rounded-lg border px-2.5 py-2 text-xs ${ALERTA_ESTILO[a.tipo].cls}`}>
+                  <p className="font-semibold flex items-center gap-1.5">{ALERTA_ESTILO[a.tipo].icon} {a.texto}</p>
+                  <p className="text-[10px] opacity-80 mt-0.5">{a.detalle}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Detalle de transacciones + Carga rápida de presupuesto ── */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-bold text-gray-800 text-sm">
+              {verTodasTxns?"Todas las transacciones filtradas":`Detalle de transacciones${mesDetalle?` (${mesDetalle})`:""}`}
+            </h2>
+            <button onClick={()=>setVerTodasTxns(v=>!v)} className="text-xs text-blue-600 hover:underline font-semibold flex-shrink-0">
+              {verTodasTxns?"← Ver por mes":"Ver todas →"}
+            </button>
+          </div>
+          {(()=>{
+            const filas=verTodasTxns?txnsRecientes:txnsDetalle;
+            if(filas.length===0) return <p className="text-gray-400 text-xs italic">Sin transacciones con los filtros actuales.</p>;
+            return(
+              <div className="overflow-x-auto max-h-96 overflow-y-auto">
+                <table className="w-full text-xs">
+                  <thead><tr className="text-gray-400 border-b border-gray-100 sticky top-0 bg-white">
+                    <th className="text-left py-1.5 font-medium">Fecha</th>
+                    <th className="text-left py-1.5 font-medium">Documento</th>
+                    <th className="text-left py-1.5 font-medium">Centro</th>
+                    <th className="text-left py-1.5 font-medium">Categoría</th>
+                    <th className="text-left py-1.5 font-medium">Descripción</th>
+                    <th className="text-right py-1.5 font-medium">Monto</th>
+                    <th className="text-left py-1.5 font-medium">Estado</th>
+                  </tr></thead>
+                  <tbody>
+                    {filas.map((t,i)=>(
+                      <tr key={i} className="border-b border-gray-50 last:border-0">
+                        <td className="py-1.5 font-mono text-gray-500 whitespace-nowrap">{t.fechaContabilizacion?t.fechaContabilizacion.slice(0,10):"—"}</td>
+                        <td className="py-1.5 font-mono text-blue-600">{t.documentoCabecera||"—"}</td>
+                        <td className="py-1.5 font-mono text-gray-500">{t.centroCoste}</td>
+                        <td className="py-1.5">{t.descripClaseCoste}</td>
+                        <td className="py-1.5 text-gray-600 truncate max-w-[160px]" title={`${t.descripcionMaterial||""} ${t.textoPedido||""}`}>
+                          {t.descripcionMaterial||t.textoPedido||t.denominacionObjeto||"—"}
+                        </td>
+                        <td className="py-1.5 text-right font-semibold">{fmtCLP(t.valor)}</td>
+                        <td className="py-1.5">
+                          {t._reglaExcluida?(
+                            <span className="px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 font-semibold">Excluida</span>
+                          ):t._reglaPuntual?(
+                            <span className="px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-semibold">Puntual</span>
+                          ):(
+                            <span className="text-gray-400">Normal</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })()}
+        </div>
+
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+          <div className="flex items-center justify-between mb-1">
+            <h2 className="font-bold text-gray-800 text-sm">Carga rápida — presupuesto {presupuestoAnioForm.anio}</h2>
+            <label className="text-xs text-blue-600 hover:underline font-semibold cursor-pointer flex items-center gap-1">
+              <Upload size={11}/>{importandoPresupuesto?"Cargando...":"Cargar desde archivo"}
+              <input ref={presupuestoFileRef} type="file" accept=".xlsx,.xls" onChange={handleImportPresupuesto} disabled={importandoPresupuesto} className="hidden"/>
+            </label>
+          </div>
+          <p className="text-gray-400 text-xs mb-3">Ingresa o edita los valores mensuales del presupuesto. Archivo esperado: columnas Categoría, Ene, Feb, ... Dic.</p>
+          <div className="flex flex-wrap gap-2 mb-3">
+            <select value={presupuestoAnioForm.categoria} onChange={e=>setPresupuestoAnioForm(f=>({...f,categoria:e.target.value}))}
+              className="px-2.5 py-2 rounded-lg border border-gray-200 text-xs">
+              <option value="TOTAL">TOTAL (presupuesto global)</option>
+              {categoriasDisponibles.map(c=><option key={c} value={c}>{c}</option>)}
+            </select>
+            <input type="number" value={presupuestoAnioForm.anio} onChange={e=>setPresupuestoAnioForm(f=>({...f,anio:e.target.value}))}
+              placeholder="Año" className="px-2.5 py-2 rounded-lg border border-gray-200 text-xs w-24"/>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead><tr className="text-gray-400 border-b border-gray-100">
+                <th className="text-left py-1.5 font-medium">Concepto</th>
+                {["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"].map(m=><th key={m} className="text-right py-1.5 font-medium px-1">{m}</th>)}
+                <th className="text-right py-1.5 font-medium">Total anual</th>
+              </tr></thead>
+              <tbody>
+                <tr>
+                  <td className="py-1.5 font-semibold text-gray-700 whitespace-nowrap">{presupuestoAnioForm.categoria}</td>
+                  {presupuestoAnioForm.montos.map((v,idx)=>(
+                    <td key={idx} className="px-1 py-1">
+                      <input type="number" value={v}
+                        onChange={e=>setPresupuestoAnioForm(f=>({...f,montos:f.montos.map((vv,i)=>i===idx?e.target.value:vv)}))}
+                        placeholder="0" className="w-16 px-1.5 py-1 rounded border border-gray-200 text-xs text-right"/>
+                    </td>
+                  ))}
+                  <td className="py-1.5 text-right font-bold text-gray-800">
+                    {fmtCompactCLP(presupuestoAnioForm.montos.reduce((s,v)=>s+(parseFloat(v)||0),0))}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div className="flex items-center gap-3 mt-3">
+            <button onClick={guardarPresupuestoAnio} className="px-3 py-2 rounded-lg text-white text-xs font-semibold" style={{background:NV.blue}}>
+              ✓ Guardar cambios
+            </button>
+            {presupuestoAnioMsg&&<span className="text-emerald-700 text-xs font-semibold">{presupuestoAnioMsg}</span>}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Configuración avanzada ── */}
+      <div className="pt-2">
+        <h2 className="text-gray-400 text-xs font-bold uppercase tracking-wide mb-3">Configuración avanzada</h2>
+      </div>
 
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
         <h2 className="font-bold text-gray-800 text-sm mb-3">Reglas de filtro</h2>
@@ -14738,35 +15175,6 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
         )}
       </div>
 
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
-        <h2 className="font-bold text-gray-800 text-sm mb-1">Carga rápida — presupuesto {presupuestoAnioForm.anio} mes a mes</h2>
-        <p className="text-gray-400 text-xs mb-3">Completa los meses que tengas y guarda todo de una vez — para hacer match contra el real del año en curso.</p>
-        <div className="flex flex-wrap gap-2 mb-3">
-          <select value={presupuestoAnioForm.categoria} onChange={e=>setPresupuestoAnioForm(f=>({...f,categoria:e.target.value}))}
-            className="px-2.5 py-2 rounded-lg border border-gray-200 text-xs">
-            <option value="TOTAL">TOTAL (presupuesto global)</option>
-            {categoriasDisponibles.map(c=><option key={c} value={c}>{c}</option>)}
-          </select>
-          <input type="number" value={presupuestoAnioForm.anio} onChange={e=>setPresupuestoAnioForm(f=>({...f,anio:e.target.value}))}
-            placeholder="Año" className="px-2.5 py-2 rounded-lg border border-gray-200 text-xs w-24"/>
-        </div>
-        <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-3">
-          {["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"].map((label,idx)=>(
-            <div key={idx}>
-              <label className="text-[9px] text-gray-400 font-semibold block mb-0.5">{label}</label>
-              <input type="number" value={presupuestoAnioForm.montos[idx]}
-                onChange={e=>setPresupuestoAnioForm(f=>({...f,montos:f.montos.map((v,i)=>i===idx?e.target.value:v)}))}
-                placeholder="0" className="w-full px-2 py-1.5 rounded-lg border border-gray-200 text-xs"/>
-            </div>
-          ))}
-        </div>
-        <div className="flex items-center gap-3">
-          <button onClick={guardarPresupuestoAnio} className="px-3 py-2 rounded-lg text-white text-xs font-semibold" style={{background:NV.blue}}>
-            Guardar los 12 meses
-          </button>
-          {presupuestoAnioMsg&&<span className="text-emerald-700 text-xs font-semibold">{presupuestoAnioMsg}</span>}
-        </div>
-      </div>
 
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
         <h2 className="font-bold text-gray-800 text-sm mb-3">Presupuesto individual — {activeModule==="maritimo"?`Marítimo${activeBarco?" · "+activeBarco:""}`:"Taller"}</h2>
@@ -14877,6 +15285,45 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
             {reclasificarResult!=null&&(
               <p className="text-emerald-700 text-xs mt-2">✅ {reclasificarResult} fila(s) reclasificadas.</p>
             )}
+          </div>
+        )}
+      </div>
+
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+        <h2 className="font-bold text-gray-800 text-sm mb-3">Configuración Equipo ↔ Orden (para "Top 5 equipos por gasto")</h2>
+        <p className="text-gray-400 text-xs mb-3">El SAP export no trae ningún ID de equipo — mapea cada número de orden a un equipo del ERP para que su gasto se atribuya correctamente. Empieza vacío.</p>
+        <div className="flex flex-wrap gap-2 mb-3">
+          <input value={nuevoMapeoEquipo.orden} onChange={e=>setNuevoMapeoEquipo(f=>({...f,orden:e.target.value}))}
+            placeholder="N° de orden (ej: 4500123)" className="px-3 py-2 rounded-lg border border-gray-200 text-sm flex-1 min-w-[160px]"/>
+          <select value={nuevoMapeoEquipo.equipoId} onChange={e=>setNuevoMapeoEquipo(f=>({...f,equipoId:e.target.value}))}
+            className="px-3 py-2 rounded-lg border border-gray-200 text-sm min-w-[200px]">
+            <option value="">Seleccionar equipo...</option>
+            {equip.map(e=><option key={e.id} value={e.id}>{e.code} — {e.name}</option>)}
+          </select>
+          <button onClick={agregarMapeoEquipo} className="px-3 py-2 rounded-lg text-white text-sm font-semibold" style={{background:NV.blue}}>
+            + Agregar
+          </button>
+        </div>
+        {configEquiposOrden.length===0?(
+          <p className="text-gray-400 text-xs italic">Sin órdenes mapeadas — "Top 5 equipos por gasto" no mostrará datos hasta que se agreguen aquí.</p>
+        ):(
+          <div className="space-y-1.5">
+            {configEquiposOrden.map(c=>{
+              const eq=equip.find(e=>e.id===c.equipoId);
+              return(
+                <div key={c.orden} className="flex items-center gap-3 text-sm bg-gray-50 rounded-lg px-3 py-2">
+                  <span className="font-mono font-bold text-gray-700">{c.orden}</span>
+                  <span className="text-gray-500">→ {eq?`${eq.code} — ${eq.name}`:"(equipo no encontrado)"}</span>
+                  <button onClick={()=>eliminarMapeoEquipo(c.orden)} className="ml-auto text-gray-300 hover:text-red-500"><X size={14}/></button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {ordenesSinMapear.length>0&&(
+          <div className="mt-3 pt-3 border-t border-gray-100">
+            <p className="text-amber-600 text-xs font-semibold mb-1">⚠️ Órdenes sin mapear en lo filtrado (primeras {ordenesSinMapear.length}):</p>
+            <p className="text-gray-500 text-xs font-mono">{ordenesSinMapear.join(", ")}</p>
           </div>
         )}
       </div>
@@ -28443,7 +28890,7 @@ voyages:       <VoyagesPage   user={user} data={data} setData={setData}/>,
 accesos:       <AccessLog     data={data}/>,
 repuestos:     <RepuestosPage user={user} data={data} setData={setData} saveData={saveData}/>,
 config_reportes:<ConfigReportes user={user}/>,
-gastos:        <GastosPresupuesto user={user} activeModule={activeModule} activeBarco={activeBarco}/>,
+gastos:        <GastosPresupuesto user={user} data={data} activeModule={activeModule} activeBarco={activeBarco}/>,
 };
 
 return(
