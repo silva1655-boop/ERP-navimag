@@ -15443,8 +15443,10 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
 // siguientes agregan Faena, Detenciones (+ recálculo en el cliente),
 // migración histórica y el dashboard completo.
 const FAENA_VACIA={buque:"ESPERANZA",terminal:"PMC",numeroFaena:"",inicioOp:"",terminoOp:"",tractosOp:"",tractosUtilizados:"",capacidadOperadores:""};
+const DETENCION_VACIA={buque:"ESPERANZA",faenaId:"",inicio:"",fin:"",equipo:"",componente:"",modoFalla:"",tipo:"DM",novedades:"",familiaEquipo:"KALMAR",clasificacion:"MECANICA"};
 
-function DisponibilidadUtilizacion({user}){
+function DisponibilidadUtilizacion({user,data}){
+  const equip=data?.equip||[];
   const [targets,setTargets]=useState([]);
   const [loading,setLoading]=useState(true);
   const [nuevoTarget,setNuevoTarget]=useState({buque:"ESPERANZA",terminal:"PMC",target:""});
@@ -15455,6 +15457,11 @@ function DisponibilidadUtilizacion({user}){
   const [loadingFaenas,setLoadingFaenas]=useState(true);
   const [nuevaFaena,setNuevaFaena]=useState(FAENA_VACIA);
   const [editFaenaId,setEditFaenaId]=useState(null);
+
+  const [detenciones,setDetenciones]=useState([]);
+  const [loadingDetenciones,setLoadingDetenciones]=useState(true);
+  const [nuevaDetencion,setNuevaDetencion]=useState(DETENCION_VACIA);
+  const [editDetencionId,setEditDetencionId]=useState(null);
 
   useEffect(()=>{
     const unsub=onSnapshot(doc(db,COLL_FAENA_TARGETS,"config"),snap=>{
@@ -15468,6 +15475,14 @@ function DisponibilidadUtilizacion({user}){
     const unsub=onSnapshot(doc(db,COLL_FAENA,"faenas"),snap=>{
       setFaenas(snap.exists()?(snap.data().data||[]):[]);
       setLoadingFaenas(false);
+    });
+    return()=>unsub();
+  },[]);
+
+  useEffect(()=>{
+    const unsub=onSnapshot(doc(db,COLL_DETENCIONES,"detenciones"),snap=>{
+      setDetenciones(snap.exists()?(snap.data().data||[]):[]);
+      setLoadingDetenciones(false);
     });
     return()=>unsub();
   },[]);
@@ -15565,7 +15580,11 @@ function DisponibilidadUtilizacion({user}){
   };
   const cancelarEdicionFaena=()=>{setEditFaenaId(null);setNuevaFaena(FAENA_VACIA);};
   const eliminarFaena=(id)=>{
-    if(!window.confirm("¿Eliminar esta faena? Si tiene detenciones asociadas quedarán huérfanas.")) return;
+    const huerfanas=detenciones.filter(d=>d.faenaId===id).length;
+    const msg=huerfanas>0
+      ?`¿Eliminar esta faena? Tiene ${huerfanas} detención(es) asociada(s) que quedarán huérfanas (no se borran, pero perderán su referencia).`
+      :"¿Eliminar esta faena?";
+    if(!window.confirm(msg)) return;
     saveFaenas(faenas.filter(x=>x.id!==id));
     if(editFaenaId===id) cancelarEdicionFaena();
   };
@@ -15573,6 +15592,98 @@ function DisponibilidadUtilizacion({user}){
   const faenasOrdenadas=useMemo(()=>[...faenas].sort((a,b)=>new Date(b.terminoOp)-new Date(a.terminoOp)),[faenas]);
   const fmtPct=v=>`${Math.round((v||0)*100)}%`;
   const fmtH=v=>`${(Math.round((v||0)*10)/10).toLocaleString("es-CL")} h`;
+
+  // Recalcula indisponibilidadHH/disponibilidadTecnica/utilizacion de una o más
+  // Faenas a partir del arreglo de Detenciones actualizado, y guarda mantek_faena.
+  // Reemplaza el on-write de Cloud Function del spec por recálculo en el cliente
+  // (este repo no tiene infraestructura de Firebase Functions).
+  const recalcularFaenas=async(faenaIds,detencionesActuales)=>{
+    let faenasActualizadas=faenas;
+    let huboCambios=false;
+    faenaIds.forEach(fid=>{
+      const faena=faenasActualizadas.find(f=>f.id===fid);
+      if(!faena) return;
+      const nuevaIndisp=detencionesActuales.filter(x=>x.faenaId===fid).reduce((s,x)=>s+(x.horasReparacion||0),0);
+      const derivados=calcularFaenaDerivados(faena,targets,nuevaIndisp);
+      if(!derivados) return;
+      faenasActualizadas=faenasActualizadas.map(f=>f.id===fid?{...f,...derivados,recalculadoEn:new Date().toISOString()}:f);
+      huboCambios=true;
+    });
+    if(huboCambios){
+      setFaenas(faenasActualizadas);
+      await setDoc(doc(db,COLL_FAENA,"faenas"),{data:faenasActualizadas});
+    }
+  };
+
+  const faenasDelBuqueSel=useMemo(
+    ()=>faenas.filter(f=>f.buque===nuevaDetencion.buque).sort((a,b)=>new Date(b.terminoOp)-new Date(a.terminoOp)),
+    [faenas,nuevaDetencion.buque]
+  );
+  const horasReparacionPreview=(nuevaDetencion.inicio&&nuevaDetencion.fin&&new Date(nuevaDetencion.fin)>new Date(nuevaDetencion.inicio))
+    ?(new Date(nuevaDetencion.fin)-new Date(nuevaDetencion.inicio))/3600000 : null;
+  const previewImpactoFaena=useMemo(()=>{
+    if(!nuevaDetencion.faenaId||horasReparacionPreview==null) return null;
+    const faena=faenas.find(f=>f.id===nuevaDetencion.faenaId);
+    if(!faena) return null;
+    const otrasHoras=detenciones.filter(x=>x.faenaId===nuevaDetencion.faenaId&&x.id!==editDetencionId).reduce((s,x)=>s+(x.horasReparacion||0),0);
+    const antes=calcularFaenaDerivados(faena,targets,faena.indisponibilidadHH||0);
+    const despues=calcularFaenaDerivados(faena,targets,otrasHoras+horasReparacionPreview);
+    if(!antes||!despues) return null;
+    return{faena,antes,despues};
+  },[nuevaDetencion.faenaId,horasReparacionPreview,faenas,detenciones,editDetencionId,targets]);
+
+  const guardarDetencion=async()=>{
+    const d=nuevaDetencion;
+    if(!d.faenaId){alert("Selecciona la faena asociada.");return;}
+    if(!d.inicio||!d.fin){alert("Ingresa inicio y fin de la detención.");return;}
+    if(new Date(d.fin)<=new Date(d.inicio)){alert("El fin debe ser posterior al inicio.");return;}
+    const faenaRef=faenas.find(f=>f.id===d.faenaId);
+    const horasReparacion=(new Date(d.fin)-new Date(d.inicio))/3600000;
+    const ahora=new Date().toISOString();
+    const campos={
+      fecha:d.inicio,buque:d.buque,faenaId:d.faenaId,numeroFaena:faenaRef?faenaRef.numeroFaena:"",
+      inicio:d.inicio,fin:d.fin,horasReparacion,
+      equipo:d.equipo.trim(),componente:d.componente.trim(),modoFalla:d.modoFalla.trim(),
+      tipo:d.tipo,novedades:d.novedades.trim(),familiaEquipo:d.familiaEquipo,clasificacion:d.clasificacion,
+    };
+    let detencionesActualizadas;
+    let faenaIdAnterior=null;
+    if(editDetencionId){
+      const existente=detenciones.find(x=>x.id===editDetencionId);
+      faenaIdAnterior=existente?.faenaId||null;
+      detencionesActualizadas=detenciones.map(x=>x.id===editDetencionId?{...x,...campos}:x);
+    }else{
+      detencionesActualizadas=[...detenciones,{id:uid(),...campos,creadoPor:user.name||user.username||"",creadoEn:ahora}];
+    }
+    setDetenciones(detencionesActualizadas);
+    await setDoc(doc(db,COLL_DETENCIONES,"detenciones"),{data:detencionesActualizadas});
+    const idsARecalcular=new Set([d.faenaId]);
+    if(faenaIdAnterior&&faenaIdAnterior!==d.faenaId) idsARecalcular.add(faenaIdAnterior);
+    await recalcularFaenas([...idsARecalcular],detencionesActualizadas);
+    setNuevaDetencion(DETENCION_VACIA);
+    setEditDetencionId(null);
+  };
+
+  const editarDetencion=(d)=>{
+    setEditDetencionId(d.id);
+    setNuevaDetencion({
+      buque:d.buque,faenaId:d.faenaId,inicio:d.inicio,fin:d.fin,
+      equipo:d.equipo,componente:d.componente,modoFalla:d.modoFalla,
+      tipo:d.tipo,novedades:d.novedades,familiaEquipo:d.familiaEquipo,clasificacion:d.clasificacion,
+    });
+  };
+  const cancelarEdicionDetencion=()=>{setEditDetencionId(null);setNuevaDetencion(DETENCION_VACIA);};
+  const eliminarDetencion=async(id)=>{
+    if(!window.confirm("¿Eliminar esta detención? Esto recalcula la disponibilidad de la faena asociada.")) return;
+    const existente=detenciones.find(x=>x.id===id);
+    const detencionesActualizadas=detenciones.filter(x=>x.id!==id);
+    setDetenciones(detencionesActualizadas);
+    await setDoc(doc(db,COLL_DETENCIONES,"detenciones"),{data:detencionesActualizadas});
+    if(existente) await recalcularFaenas([existente.faenaId],detencionesActualizadas);
+    if(editDetencionId===id) cancelarEdicionDetencion();
+  };
+
+  const detencionesOrdenadas=useMemo(()=>[...detenciones].sort((a,b)=>new Date(b.inicio)-new Date(a.inicio)),[detenciones]);
 
   if(!canAccessDisponibilidad(user)) return null;
 
@@ -15753,8 +15864,123 @@ function DisponibilidadUtilizacion({user}){
         )}
       </div>
 
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+        <h2 className="font-bold text-gray-800 text-sm mb-3">{editDetencionId?"Editar Detención":"Nueva Detención"}</h2>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
+          <select value={nuevaDetencion.buque}
+            onChange={e=>setNuevaDetencion(f=>({...f,buque:e.target.value,faenaId:""}))}
+            className="px-3 py-2 rounded-lg border border-gray-200 text-sm">
+            <option value="ESPERANZA">Esperanza</option>
+            <option value="DALKA">Dalka</option>
+          </select>
+          <select value={nuevaDetencion.faenaId} onChange={e=>setNuevaDetencion(f=>({...f,faenaId:e.target.value}))}
+            className="px-3 py-2 rounded-lg border border-gray-200 text-sm col-span-2 md:col-span-1">
+            <option value="">Selecciona la faena…</option>
+            {faenasDelBuqueSel.map(f=>(
+              <option key={f.id} value={f.id}>{f.numeroFaena} · {f.terminal} · {f.terminoOp?new Date(f.terminoOp).toLocaleDateString("es-CL"):"—"}</option>
+            ))}
+          </select>
+          <select value={nuevaDetencion.familiaEquipo} onChange={e=>setNuevaDetencion(f=>({...f,familiaEquipo:e.target.value}))}
+            className="px-3 py-2 rounded-lg border border-gray-200 text-sm">
+            <option value="KALMAR">Kalmar</option>
+            <option value="TERBERG">Terberg</option>
+            <option value="MOL">MOL</option>
+            <option value="LIFTEC">Liftec</option>
+          </select>
+          <input value={nuevaDetencion.equipo} onChange={e=>setNuevaDetencion(f=>({...f,equipo:e.target.value}))}
+            list="dispo-equipos-list" placeholder="Equipo (ej: M4, K75)" className="px-3 py-2 rounded-lg border border-gray-200 text-sm"/>
+          <datalist id="dispo-equipos-list">
+            {equip.map(e=>(<option key={e.id} value={e.code||e.name}>{e.name}</option>))}
+          </datalist>
+          <input value={nuevaDetencion.componente} onChange={e=>setNuevaDetencion(f=>({...f,componente:e.target.value}))}
+            placeholder="Componente" className="px-3 py-2 rounded-lg border border-gray-200 text-sm"/>
+          <input value={nuevaDetencion.modoFalla} onChange={e=>setNuevaDetencion(f=>({...f,modoFalla:e.target.value}))}
+            placeholder="Modo de falla" className="px-3 py-2 rounded-lg border border-gray-200 text-sm"/>
+          <select value={nuevaDetencion.tipo} onChange={e=>setNuevaDetencion(f=>({...f,tipo:e.target.value}))}
+            className="px-3 py-2 rounded-lg border border-gray-200 text-sm">
+            {["DM","DE","DO","DMP","DGP","DI","DD"].map(t=>(<option key={t} value={t}>{t}</option>))}
+          </select>
+          <select value={nuevaDetencion.clasificacion} onChange={e=>setNuevaDetencion(f=>({...f,clasificacion:e.target.value}))}
+            className="px-3 py-2 rounded-lg border border-gray-200 text-sm">
+            <option value="MECANICA">Mecánica</option>
+            <option value="ELECTRICA">Eléctrica</option>
+            <option value="OPERACIONAL">Operacional</option>
+          </select>
+          <label className="text-xs text-gray-500">
+            Inicio
+            <input type="datetime-local" value={nuevaDetencion.inicio} onChange={e=>setNuevaDetencion(f=>({...f,inicio:e.target.value}))}
+              className="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 text-sm"/>
+          </label>
+          <label className="text-xs text-gray-500">
+            Fin
+            <input type="datetime-local" value={nuevaDetencion.fin} onChange={e=>setNuevaDetencion(f=>({...f,fin:e.target.value}))}
+              className="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 text-sm"/>
+          </label>
+          <textarea value={nuevaDetencion.novedades} onChange={e=>setNuevaDetencion(f=>({...f,novedades:e.target.value}))}
+            placeholder="Novedades" rows={1} className="px-3 py-2 rounded-lg border border-gray-200 text-sm col-span-2 md:col-span-4"/>
+        </div>
+
+        {horasReparacionPreview!=null&&(
+          <p className="text-sm text-gray-600 mb-2">Horas de reparación: <span className="font-bold text-gray-800">{fmtH(horasReparacionPreview)}</span></p>
+        )}
+        {previewImpactoFaena&&(
+          <div className="bg-gray-50 rounded-xl p-3 mb-3 text-xs text-gray-600">
+            Impacto en faena <b>{previewImpactoFaena.faena.numeroFaena}</b>: Disponibilidad Técnica {fmtPct(previewImpactoFaena.antes.disponibilidadTecnica)} → <b>{fmtPct(previewImpactoFaena.despues.disponibilidadTecnica)}</b>
+            {" · "}Utilización {fmtPct(previewImpactoFaena.antes.utilizacion)} → <b>{fmtPct(previewImpactoFaena.despues.utilizacion)}</b>
+          </div>
+        )}
+
+        <div className="flex gap-2">
+          <button onClick={guardarDetencion} className="px-3 py-2 rounded-lg text-white text-sm font-semibold" style={{background:NV.blue}}>
+            {editDetencionId?"Guardar cambios":"+ Agregar Detención"}
+          </button>
+          {editDetencionId&&(
+            <button onClick={cancelarEdicionDetencion} className="px-3 py-2 rounded-lg border border-gray-200 text-gray-600 text-sm">Cancelar</button>
+          )}
+        </div>
+      </div>
+
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 overflow-x-auto">
+        <h2 className="font-bold text-gray-800 text-sm mb-3">Detenciones registradas ({detenciones.length})</h2>
+        {loadingDetenciones?(
+          <p className="text-gray-400 text-sm">Cargando…</p>
+        ):detencionesOrdenadas.length===0?(
+          <p className="text-gray-400 text-xs italic">Todavía no hay detenciones registradas.</p>
+        ):(
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-gray-400 text-left border-b border-gray-100">
+                <th className="pb-2 pr-3">Inicio</th>
+                <th className="pb-2 pr-3">Faena</th>
+                <th className="pb-2 pr-3">Equipo</th>
+                <th className="pb-2 pr-3">Componente</th>
+                <th className="pb-2 pr-3">Tipo</th>
+                <th className="pb-2 pr-3">Hs. reparación</th>
+                <th className="pb-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {detencionesOrdenadas.map(d=>(
+                <tr key={d.id} className="border-b border-gray-50">
+                  <td className="py-2 pr-3 text-gray-600">{d.inicio?new Date(d.inicio).toLocaleString("es-CL"):"—"}</td>
+                  <td className="py-2 pr-3 font-mono text-gray-700">{d.numeroFaena}</td>
+                  <td className="py-2 pr-3 text-gray-700">{d.equipo} <span className="text-gray-400">({d.familiaEquipo})</span></td>
+                  <td className="py-2 pr-3 text-gray-600">{d.componente}</td>
+                  <td className="py-2 pr-3 text-gray-600">{d.tipo}</td>
+                  <td className="py-2 pr-3 font-semibold text-gray-800">{fmtH(d.horasReparacion)}</td>
+                  <td className="py-2 flex items-center gap-2">
+                    <button onClick={()=>editarDetencion(d)} className="text-gray-400 hover:text-blue-600"><Edit2 size={13}/></button>
+                    <button onClick={()=>eliminarDetencion(d.id)} className="text-gray-300 hover:text-red-500"><X size={13}/></button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
       <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-xs text-amber-700">
-        El formulario de Detenciones (con recálculo de indisponibilidad en el cliente), la migración histórica y el dashboard con filtros/semáforos/gráfico mensual se agregan en los próximos bloques. Por ahora <b>indisponibilidadHH siempre es 0</b> — Disponibilidad Técnica no descuenta reparaciones todavía.
+        La migración histórica (180 faenas + 144 detenciones desde el Excel original) y el dashboard con filtros, semáforos de color y gráfico mensual de promedios se agregan en los próximos bloques.
       </div>
     </div>
   );
@@ -29263,7 +29489,7 @@ accesos:       <AccessLog     data={data}/>,
 repuestos:     <RepuestosPage user={user} data={data} setData={setData} saveData={saveData}/>,
 config_reportes:<ConfigReportes user={user}/>,
 gastos:        <GastosPresupuesto user={user} data={data} activeModule={activeModule} activeBarco={activeBarco}/>,
-disponibilidad:<DisponibilidadUtilizacion user={user}/>,
+disponibilidad:<DisponibilidadUtilizacion user={user} data={data}/>,
 };
 
 return(
