@@ -13738,6 +13738,7 @@ const fmtCompactCLP=(v)=>{
 };
 
 function GastosLineChart({series,height=240,width=700}){
+  const [hoverIdx,setHoverIdx]=useState(null);
   if(!series||series.length<2) return(
     <div className="flex items-center justify-center h-32 text-gray-300 text-xs">Sin datos suficientes</div>
   );
@@ -13767,6 +13768,18 @@ function GastosLineChart({series,height=240,width=700}){
 
   const ultimoReal=primerProyIdx===-1?series[series.length-1]:series[finConexion];
   const ultimoProyectado=primerProyIdx!==-1?series[series.length-1]:null;
+
+  const handleHover=(e)=>{
+    const rect=e.currentTarget.getBoundingClientRect();
+    // El rect interactivo cubre de pad.l a pad.l+cW en unidades del viewBox.
+    const relX=pad.l+(e.clientX-rect.left)/rect.width*cW;
+    let closest=0,minDist=Infinity;
+    series.forEach((s,i)=>{
+      const d=Math.abs(xAt(i)-relX);
+      if(d<minDist){minDist=d;closest=i;}
+    });
+    setHoverIdx(closest);
+  };
 
   return(
     <div>
@@ -13819,6 +13832,28 @@ function GastosLineChart({series,height=240,width=700}){
         )}
 
         {series.map((s,i)=>(<text key={i} x={xAt(i)} y={H-6} textAnchor="middle" fontSize="9" fill={s.proyectado?"#c4cad3":"#9CA3AF"}>{s.mes.slice(5)}</text>))}
+
+        {/* Overlay interactivo — crosshair + tooltip al pasar el mouse */}
+        <rect x={pad.l} y={pad.t} width={cW} height={cH} fill="transparent"
+          onMouseMove={handleHover} onMouseLeave={()=>setHoverIdx(null)} style={{cursor:"crosshair"}}/>
+        {hoverIdx!=null&&(()=>{
+          const s=series[hoverIdx];
+          const boxW=118,boxH=hayPresupuesto?48:34;
+          let boxX=xAt(hoverIdx)+10;
+          if(boxX+boxW>W-4) boxX=xAt(hoverIdx)-boxW-10;
+          const boxY=Math.max(pad.t+2,Math.min(yAt(Math.max(s.real,s.presupuesto))-boxH-8,pad.t+cH-boxH));
+          return(
+            <g style={{pointerEvents:"none"}}>
+              <line x1={xAt(hoverIdx)} x2={xAt(hoverIdx)} y1={pad.t} y2={pad.t+cH} stroke="#94a3b8" strokeWidth="1" strokeDasharray="3,2"/>
+              <circle cx={xAt(hoverIdx)} cy={yAt(s.real)} r="5" fill={s.proyectado?"#60a5fa":"#2563eb"} stroke="white" strokeWidth="2"/>
+              {hayPresupuesto&&<circle cx={xAt(hoverIdx)} cy={yAt(s.presupuesto)} r="4" fill="#94a3b8" stroke="white" strokeWidth="2"/>}
+              <rect x={boxX} y={boxY} width={boxW} height={boxH} rx="6" fill="white" stroke="#E5E7EB" strokeWidth="1"/>
+              <text x={boxX+8} y={boxY+15} fontSize="9.5" fontWeight="700" fill="#111827">{s.mes}{s.proyectado?" (proy.)":""}</text>
+              <text x={boxX+8} y={boxY+28} fontSize="9.5" fill="#2563eb">Real: {fmtCompactCLP(s.real)}</text>
+              {hayPresupuesto&&<text x={boxX+8} y={boxY+40} fontSize="9.5" fill="#94a3b8">Presup.: {fmtCompactCLP(s.presupuesto)}</text>}
+            </g>
+          );
+        })()}
       </svg>
       <div className="flex items-center gap-4 mt-1.5 justify-center flex-wrap">
         <span className="flex items-center gap-1.5 text-xs text-gray-500"><span className="w-3 h-0.5 bg-blue-600 inline-block rounded"/>Real acumulado</span>
@@ -13845,6 +13880,8 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
   const [nuevaRegla,setNuevaRegla]=useState({nombre:"",modulo:"ambos",campo:"claseCoste",operador:"contiene",valores:"",accion:"excluir",activo:true});
   const [presupuesto,setPresupuesto]=useState([]);
   const [nuevoPresupuesto,setNuevoPresupuesto]=useState({categoria:"TOTAL",anio:String(new Date().getFullYear()),mes:"",montoPresupuestado:"",notas:""});
+  const [presupuestoAnioForm,setPresupuestoAnioForm]=useState({categoria:"TOTAL",anio:String(new Date().getFullYear()),montos:Array(12).fill("")});
+  const [presupuestoAnioMsg,setPresupuestoAnioMsg]=useState("");
   const [presupuestoEditId,setPresupuestoEditId]=useState(null);
   const [presupuestoEditForm,setPresupuestoEditForm]=useState(null);
   const [metodosPronostico,setMetodosPronostico]=useState([]);
@@ -14189,6 +14226,38 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
     setNuevoPresupuesto({categoria:"TOTAL",anio:String(new Date().getFullYear()),mes:"",montoPresupuestado:"",notas:""});
   };
 
+  // Carga rápida: los 12 meses del año en curso de una sola vez, para poder
+  // hacer match contra el real sin cargar mes por mes en el formulario de arriba.
+  const guardarPresupuestoAnio=()=>{
+    const anio=parseInt(presupuestoAnioForm.anio);
+    if(isNaN(anio)||!presupuestoAnioForm.categoria) return;
+    let updated=[...presupuesto];
+    let cuantos=0;
+    presupuestoAnioForm.montos.forEach((val,idx)=>{
+      const monto=parseFloat(val);
+      if(val===""||isNaN(monto)) return; // deja los meses vacíos sin tocar
+      const mes=`${anio}-${String(idx+1).padStart(2,"0")}`;
+      const entry={
+        modulo:activeModule,
+        vesselId:vesselIdActual,
+        categoria:presupuestoAnioForm.categoria,
+        anio,
+        mes,
+        montoPresupuestado:monto,
+        notas:"",
+        actualizadoPor:user.name||user.username||"",
+        actualizadoEn:new Date().toISOString(),
+      };
+      const idxExist=updated.findIndex(p=>p.modulo===entry.modulo&&(p.vesselId||null)===(entry.vesselId||null)&&p.categoria===entry.categoria&&p.anio===entry.anio&&(p.mes||null)===entry.mes);
+      if(idxExist>=0) updated[idxExist]=entry; else updated.push(entry);
+      cuantos++;
+    });
+    if(cuantos===0){setPresupuestoAnioMsg("Completa al menos un mes.");return;}
+    savePresupuesto(updated);
+    setPresupuestoAnioMsg(`✅ ${cuantos} mes(es) guardados.`);
+    setTimeout(()=>setPresupuestoAnioMsg(""),4000);
+  };
+
   const claveDePresupuesto=(e)=>JSON.stringify([e.categoria,e.anio,e.mes||null]);
   const abrirEdicionPresupuesto=(entry)=>{
     const clave=claveDePresupuesto(entry);
@@ -14439,22 +14508,32 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
         {serieMensual.length===0?(
           <p className="text-gray-400 text-xs italic">Sin meses en el rango seleccionado.</p>
         ):(
-          <div className="flex items-end gap-3 overflow-x-auto pb-2" style={{minHeight:"160px"}}>
+          <div className="flex items-end gap-3 overflow-x-auto pb-2" style={{minHeight:"200px"}}>
             {(()=>{
               const maxVal=Math.max(...serieMensual.flatMap(m=>[m.real,m.presupuesto]),1);
-              return serieMensual.map(m=>(
+              return serieMensual.map(m=>{
+                const delta=m.real-m.presupuesto;
+                return(
                 <button key={m.mes} onClick={()=>setMesDetalle(m.mes)}
-                  className={`flex flex-col items-center flex-shrink-0 w-16 rounded-lg py-1.5 transition ${mesDetalle===m.mes?"bg-blue-50":"hover:bg-gray-50"}`}>
+                  className={`flex flex-col items-center flex-shrink-0 w-20 rounded-lg py-1.5 transition border ${mesDetalle===m.mes?"bg-blue-50 border-blue-200":"border-transparent hover:bg-gray-50 hover:border-gray-200"}`}>
                   <span className={`text-[9px] px-1.5 py-0.5 rounded-full border font-bold mb-1 ${desviacionCls(m.pct)}`}>
                     {m.pct==null?"—":m.pct+"%"}
                   </span>
-                  <div className="flex items-end gap-1 h-24">
-                    <div className="w-3 rounded-t bg-blue-500" style={{height:`${Math.max((m.real/maxVal)*96,m.real>0?4:0)}px`}} title={`Real: ${fmtCLP(m.real)}`}/>
-                    <div className="w-3 rounded-t bg-gray-300" style={{height:`${Math.max((m.presupuesto/maxVal)*96,m.presupuesto>0?4:0)}px`}} title={`Presupuesto: ${fmtCLP(m.presupuesto)}`}/>
+                  <span className="text-[9px] font-bold text-blue-600">{fmtCompactCLP(m.real)}</span>
+                  {m.presupuesto>0&&<span className="text-[8px] text-gray-400">{fmtCompactCLP(m.presupuesto)}</span>}
+                  <div className="flex items-end gap-1 h-24 mt-1">
+                    <div className="w-3.5 rounded-t bg-blue-500 transition-all hover:bg-blue-600" style={{height:`${Math.max((m.real/maxVal)*96,m.real>0?4:0)}px`}} title={`Real: ${fmtCLP(m.real)}`}/>
+                    <div className="w-3.5 rounded-t bg-gray-300 transition-all hover:bg-gray-400" style={{height:`${Math.max((m.presupuesto/maxVal)*96,m.presupuesto>0?4:0)}px`}} title={`Presupuesto: ${fmtCLP(m.presupuesto)}`}/>
                   </div>
                   <span className="text-[9px] font-mono text-gray-500 mt-1">{m.mes.slice(5)}</span>
+                  {m.presupuesto>0&&(
+                    <span className={`text-[8px] font-semibold ${delta>0?"text-red-500":"text-emerald-600"}`}>
+                      {delta>0?"+":""}{fmtCompactCLP(delta)}
+                    </span>
+                  )}
                 </button>
-              ));
+              );
+              });
             })()}
           </div>
         )}
@@ -14462,6 +14541,7 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
           <span className="flex items-center gap-1.5 text-xs text-gray-500"><span className="w-2.5 h-2.5 rounded-sm bg-blue-500 inline-block"/>Real filtrado</span>
           <span className="flex items-center gap-1.5 text-xs text-gray-500"><span className="w-2.5 h-2.5 rounded-sm bg-gray-300 inline-block"/>Presupuesto</span>
         </div>
+        <p className="text-gray-300 text-[10px] mt-1 text-center">Click en un mes para ver el detalle de transacciones abajo.</p>
       </div>
 
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
@@ -14602,7 +14682,37 @@ function GastosPresupuesto({user,activeModule,activeBarco}){
       </div>
 
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
-        <h2 className="font-bold text-gray-800 text-sm mb-3">Presupuesto — {activeModule==="maritimo"?`Marítimo${activeBarco?" · "+activeBarco:""}`:"Taller"}</h2>
+        <h2 className="font-bold text-gray-800 text-sm mb-1">Carga rápida — presupuesto {presupuestoAnioForm.anio} mes a mes</h2>
+        <p className="text-gray-400 text-xs mb-3">Completa los meses que tengas y guarda todo de una vez — para hacer match contra el real del año en curso.</p>
+        <div className="flex flex-wrap gap-2 mb-3">
+          <select value={presupuestoAnioForm.categoria} onChange={e=>setPresupuestoAnioForm(f=>({...f,categoria:e.target.value}))}
+            className="px-2.5 py-2 rounded-lg border border-gray-200 text-xs">
+            <option value="TOTAL">TOTAL (presupuesto global)</option>
+            {categoriasDisponibles.map(c=><option key={c} value={c}>{c}</option>)}
+          </select>
+          <input type="number" value={presupuestoAnioForm.anio} onChange={e=>setPresupuestoAnioForm(f=>({...f,anio:e.target.value}))}
+            placeholder="Año" className="px-2.5 py-2 rounded-lg border border-gray-200 text-xs w-24"/>
+        </div>
+        <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-3">
+          {["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"].map((label,idx)=>(
+            <div key={idx}>
+              <label className="text-[9px] text-gray-400 font-semibold block mb-0.5">{label}</label>
+              <input type="number" value={presupuestoAnioForm.montos[idx]}
+                onChange={e=>setPresupuestoAnioForm(f=>({...f,montos:f.montos.map((v,i)=>i===idx?e.target.value:v)}))}
+                placeholder="0" className="w-full px-2 py-1.5 rounded-lg border border-gray-200 text-xs"/>
+            </div>
+          ))}
+        </div>
+        <div className="flex items-center gap-3">
+          <button onClick={guardarPresupuestoAnio} className="px-3 py-2 rounded-lg text-white text-xs font-semibold" style={{background:NV.blue}}>
+            Guardar los 12 meses
+          </button>
+          {presupuestoAnioMsg&&<span className="text-emerald-700 text-xs font-semibold">{presupuestoAnioMsg}</span>}
+        </div>
+      </div>
+
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+        <h2 className="font-bold text-gray-800 text-sm mb-3">Presupuesto individual — {activeModule==="maritimo"?`Marítimo${activeBarco?" · "+activeBarco:""}`:"Taller"}</h2>
         <div className="grid grid-cols-2 sm:grid-cols-6 gap-2 mb-3">
           <select value={nuevoPresupuesto.categoria} onChange={e=>setNuevoPresupuesto(f=>({...f,categoria:e.target.value}))}
             className="px-2.5 py-2 rounded-lg border border-gray-200 text-xs col-span-2">
