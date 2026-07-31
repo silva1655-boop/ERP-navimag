@@ -421,6 +421,19 @@ const COLL_GASTOS_CONFIG_EQUIPOS="mantek_gastos_config_equipos";
 const GASTOS_PRESUPUESTO_ALLOWLIST=["csilva","jimunoz"];
 const canAccessGastos=(user)=>GASTOS_PRESUPUESTO_ALLOWLIST.includes((user?.username||"").toLowerCase().trim());
 
+// ─── DISPONIBILIDAD Y UTILIZACIÓN (Faena / Detenciones) ──────────────────────
+// Mide disponibilidad/utilización de los tractos de Taller (Kalmar, Terberg,
+// MOL, Liftec) por buque+terminal. Reemplaza Registro_Detenciones_Tractos.xlsx.
+// El equipo es de Taller; "buque" es un atributo descriptivo de cada Faena
+// (target y disponibilidad se miden por buque+terminal), no significa que
+// el módulo viva en Marítimo.
+const COLL_FAENA_TARGETS="mantek_config_targets";
+const COLL_FAENA="mantek_faena";
+const COLL_DETENCIONES="mantek_detenciones";
+// Mismo allowlist fijo que Gastos y Presupuesto (no existe un rol "admin"
+// alcanzable hoy vía mantek-auth); decisión explícita: reusar el mismo set.
+const canAccessDisponibilidad=canAccessGastos;
+
 /*
  * ── CONFIGURACIÓN EMAILJS SGN ──────────────────────────────
  * 1. Ve a https://emailjs.com → Login
@@ -1585,10 +1598,11 @@ const getUserPerms=(u)=>{
   const base=(u?.permisos&&Object.keys(u.permisos).length>0)
     ?{...(ROLE_DEFAULT_PERMS[u?.role]||{}),...u.permisos}
     :(ROLE_DEFAULT_PERMS[u?.role]||{});
-  // gastos no es un permiso por rol — es una allowlist fija de usuarios,
-  // así que siempre se resuelve desde canAccessGastos, nunca desde
-  // ROLE_DEFAULT_PERMS ni desde los permisos editables por usuario.
-  return {...base, gastos:canAccessGastos(u)};
+  // gastos/disponibilidad no son permisos por rol — son allowlists fijas de
+  // usuarios, así que siempre se resuelven desde canAccessGastos/
+  // canAccessDisponibilidad, nunca desde ROLE_DEFAULT_PERMS ni desde los
+  // permisos editables por usuario.
+  return {...base, gastos:canAccessGastos(u), disponibilidad:canAccessDisponibilidad(u)};
 };
 
 const SGN_ROLE_PERMS={
@@ -1649,6 +1663,7 @@ const NAV_CATEGORIAS={
       {key:"dashboard_checklist",label:"Dashboard Checklist"},
       {key:"config_reportes",    label:"Config. Reportes"},
       {key:"gastos",             label:"Gastos y Presupuesto"},
+      {key:"disponibilidad",     label:"Disponibilidad y Utilización"},
     ],
   },
 };
@@ -15388,6 +15403,143 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
   );
 }
 
+// ─── DISPONIBILIDAD Y UTILIZACIÓN (Faena / Detenciones) ──────────────────────
+// Bloque 1 del spec: mantek_config_targets + CRUD admin-only. Los bloques
+// siguientes agregan Faena, Detenciones (+ recálculo en el cliente),
+// migración histórica y el dashboard completo.
+function DisponibilidadUtilizacion({user}){
+  const [targets,setTargets]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [nuevoTarget,setNuevoTarget]=useState({buque:"ESPERANZA",terminal:"PMC",target:""});
+  const [editId,setEditId]=useState(null);
+  const [editForm,setEditForm]=useState(null);
+
+  useEffect(()=>{
+    const unsub=onSnapshot(doc(db,COLL_FAENA_TARGETS,"config"),snap=>{
+      setTargets(snap.exists()?(snap.data().data||[]):[]);
+      setLoading(false);
+    });
+    return()=>unsub();
+  },[]);
+
+  const saveTargets=async(updated)=>{
+    setTargets(updated);
+    await setDoc(doc(db,COLL_FAENA_TARGETS,"config"),{data:updated});
+  };
+
+  const cargarValoresPorDefecto=()=>{
+    const ahora=new Date().toISOString();
+    const quien=user.name||user.username||"";
+    const seed=[
+      {id:uid(),buque:"ESPERANZA",terminal:"PMC",target:8,actualizadoPor:quien,actualizadoEn:ahora},
+      {id:uid(),buque:"ESPERANZA",terminal:"NAT",target:6,actualizadoPor:quien,actualizadoEn:ahora},
+      {id:uid(),buque:"DALKA",terminal:"PMC",target:6,actualizadoPor:quien,actualizadoEn:ahora},
+      {id:uid(),buque:"DALKA",terminal:"UCO",target:3,actualizadoPor:quien,actualizadoEn:ahora},
+    ];
+    saveTargets(seed);
+  };
+
+  const agregarTarget=()=>{
+    const val=parseFloat(nuevoTarget.target);
+    if(!val||val<=0) return;
+    if(targets.some(t=>t.buque===nuevoTarget.buque&&t.terminal===nuevoTarget.terminal)){
+      alert(`Ya existe un target para ${nuevoTarget.buque} · ${nuevoTarget.terminal}. Editalo desde la tabla.`);
+      return;
+    }
+    const updated=[...targets,{
+      id:uid(),buque:nuevoTarget.buque,terminal:nuevoTarget.terminal,target:val,
+      actualizadoPor:user.name||user.username||"",actualizadoEn:new Date().toISOString(),
+    }];
+    saveTargets(updated);
+    setNuevoTarget({buque:"ESPERANZA",terminal:"PMC",target:""});
+  };
+
+  const abrirEdicion=(t)=>{setEditId(t.id);setEditForm({...t});};
+  const guardarEdicion=()=>{
+    const val=parseFloat(editForm.target);
+    if(!val||val<=0) return;
+    const updated=targets.map(t=>t.id===editId?{...t,target:val,actualizadoPor:user.name||user.username||"",actualizadoEn:new Date().toISOString()}:t);
+    saveTargets(updated);
+    setEditId(null);setEditForm(null);
+  };
+  const eliminarTarget=(id)=>{
+    if(!window.confirm("¿Eliminar este target?")) return;
+    saveTargets(targets.filter(t=>t.id!==id));
+  };
+
+  if(!canAccessDisponibilidad(user)) return null;
+
+  return(
+    <div className="p-5 space-y-5 max-w-4xl">
+      <div>
+        <h1 className="text-lg font-bold text-gray-800">Disponibilidad y Utilización</h1>
+        <p className="text-gray-400 text-sm">Faena y Detenciones de tractos (Kalmar, Terberg, MOL, Liftec) — reemplaza Registro_Detenciones_Tractos.xlsx.</p>
+      </div>
+
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+        <h2 className="font-bold text-gray-800 text-sm mb-3">Configuración de Targets (buque · terminal)</h2>
+        <div className="flex flex-wrap gap-2 mb-3">
+          <select value={nuevoTarget.buque} onChange={e=>setNuevoTarget(f=>({...f,buque:e.target.value}))}
+            className="px-3 py-2 rounded-lg border border-gray-200 text-sm">
+            <option value="ESPERANZA">Esperanza</option>
+            <option value="DALKA">Dalka</option>
+          </select>
+          <select value={nuevoTarget.terminal} onChange={e=>setNuevoTarget(f=>({...f,terminal:e.target.value}))}
+            className="px-3 py-2 rounded-lg border border-gray-200 text-sm">
+            <option value="PMC">PMC</option>
+            <option value="NAT">NAT</option>
+            <option value="UCO">UCO</option>
+          </select>
+          <input value={nuevoTarget.target} onChange={e=>setNuevoTarget(f=>({...f,target:e.target.value}))}
+            type="number" min="1" placeholder="Target (tractos)" className="px-3 py-2 rounded-lg border border-gray-200 text-sm w-40"/>
+          <button onClick={agregarTarget} className="px-3 py-2 rounded-lg text-white text-sm font-semibold" style={{background:NV.blue}}>
+            + Agregar
+          </button>
+        </div>
+
+        {loading?(
+          <p className="text-gray-400 text-sm">Cargando…</p>
+        ):targets.length===0?(
+          <div className="text-sm">
+            <p className="text-gray-400 text-xs italic mb-2">Sin targets configurados todavía — sin esto no se puede calcular disponibilidad ni utilización de ninguna Faena.</p>
+            <button onClick={cargarValoresPorDefecto} className="text-xs px-3 py-2 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition">
+              Cargar valores por defecto (Esperanza-PMC=8, Esperanza-NAT=6, Dalka-PMC=6, Dalka-UCO=3)
+            </button>
+          </div>
+        ):(
+          <div className="space-y-1.5">
+            {targets.map(t=>(
+              <div key={t.id} className="flex items-center gap-3 text-sm bg-gray-50 rounded-lg px-3 py-2">
+                {editId===t.id?(
+                  <>
+                    <span className="font-semibold text-gray-700 w-28">{t.buque} · {t.terminal}</span>
+                    <input value={editForm.target} onChange={e=>setEditForm(f=>({...f,target:e.target.value}))}
+                      type="number" min="1" className="px-2 py-1 rounded border border-gray-200 text-sm w-24"/>
+                    <button onClick={guardarEdicion} className="text-blue-600 hover:text-blue-700 text-xs font-semibold">Guardar</button>
+                    <button onClick={()=>{setEditId(null);setEditForm(null);}} className="text-gray-400 hover:text-gray-600 text-xs">Cancelar</button>
+                  </>
+                ):(
+                  <>
+                    <span className="font-semibold text-gray-700 w-28">{t.buque} · {t.terminal}</span>
+                    <span className="font-bold text-gray-800">{t.target} tractos</span>
+                    <span className="text-gray-400 text-xs ml-auto">{t.actualizadoPor?`${t.actualizadoPor} · `:""}{t.actualizadoEn?new Date(t.actualizadoEn).toLocaleDateString("es-CL"):""}</span>
+                    <button onClick={()=>abrirEdicion(t)} className="text-gray-400 hover:text-blue-600"><Edit2 size={13}/></button>
+                    <button onClick={()=>eliminarTarget(t.id)} className="text-gray-300 hover:text-red-500"><X size={13}/></button>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-xs text-amber-700">
+        Los formularios de Faena y Detenciones, y el dashboard de disponibilidad/utilización, se agregan en los próximos bloques.
+      </div>
+    </div>
+  );
+}
+
 // ─── CONFIG REPORTES ─────────────────────────────────────────────────────────
 function ConfigReportes({user}){
   const COLL_SUP="mantek_maritimo_v1";
@@ -28891,6 +29043,7 @@ accesos:       <AccessLog     data={data}/>,
 repuestos:     <RepuestosPage user={user} data={data} setData={setData} saveData={saveData}/>,
 config_reportes:<ConfigReportes user={user}/>,
 gastos:        <GastosPresupuesto user={user} data={data} activeModule={activeModule} activeBarco={activeBarco}/>,
+disponibilidad:<DisponibilidadUtilizacion user={user}/>,
 };
 
 return(
