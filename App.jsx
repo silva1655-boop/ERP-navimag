@@ -14270,47 +14270,45 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
   },[todasTxns,reglasAplicables,activeModule,activeBarco]);
 
   // ═══ DEBUG TEMPORAL — bug "consumo mensual negativo NI15328" ═══════════════
-  // Quitar este bloque completo una vez identificado el paso donde se rompe.
-  // Abrí la consola del navegador (F12) en esta pestaña y buscá "DEBUG NI15328".
+  // Confirmado: el dato YA está negativo en todasTxns (antes de módulo/reglas),
+  // así que el problema está en lo guardado en Firestore, no en la agregación.
+  // Esta segunda pasada busca duplicados de importación (misma fila cargada
+  // más de una vez con distinto hash por algún cambio de formato/valor) y
+  // muestra el detalle completo de las filas negativas sin recortar.
+  // Quitar este bloque completo una vez identificado el problema.
   useEffect(()=>{
     if(todasTxns.length===0) return;
     const MES_DEBUG="2026-01", CENTRO_DEBUG="NI15328";
     const sum=arr=>arr.reduce((s,t)=>s+(t.valor||0),0);
 
-    const crudoTodoElModulo=todasTxns.filter(t=>t.mes===MES_DEBUG&&t.centroCoste===CENTRO_DEBUG);
-    const crudoTrasFiltroModulo=todasTxns.filter(t=>t.mes===MES_DEBUG&&t.centroCoste===CENTRO_DEBUG
-      &&(activeModule==="maritimo"?(t.modulo==="maritimo"&&(!activeBarco||t.vesselId===activeBarco)):t.modulo==="taller"));
-    const sinCentroDelMes=todasTxns.filter(t=>t.mes===MES_DEBUG&&!t.centroCoste);
-    const cfgNI=configCentros.find(c=>c.centroCoste===CENTRO_DEBUG);
+    const crudo=todasTxns.filter(t=>t.mes===MES_DEBUG&&t.centroCoste===CENTRO_DEBUG);
+    const positivas=crudo.filter(t=>t.valor>0);
+    const negativas=crudo.filter(t=>t.valor<0);
 
-    console.log(`\n═══ DEBUG NI15328 — ${MES_DEBUG} ═══`);
-    console.log(`0. Config de centro para "${CENTRO_DEBUG}":`, cfgNI||"⚠ NO ESTÁ MAPEADO en Configuración de Centros de Costo");
-    console.log(`0b. Filas SIN centro asignado en ${MES_DEBUG}:`,sinCentroDelMes.length,"filas — suma:",sum(sinCentroDelMes));
-    console.log(`1. Crudo, TODAS las filas de ${CENTRO_DEBUG} (sin filtrar por módulo ni reglas):`,crudoTodoElModulo.length,"filas — suma:",sum(crudoTodoElModulo));
-    console.log(`1b. Crudo, tras filtro de módulo activo (activeModule="${activeModule}", activeBarco="${activeBarco}") — esto es lo que entra a txnsAnotadas:`,crudoTrasFiltroModulo.length,"filas — suma:",sum(crudoTrasFiltroModulo));
-    if(crudoTodoElModulo.length!==crudoTrasFiltroModulo.length){
-      console.log(`   ⚠ ${crudoTodoElModulo.length-crudoTrasFiltroModulo.length} fila(s) de ${CENTRO_DEBUG} quedaron FUERA por el filtro de módulo (modulo/vesselId no coincide con la vista activa).`);
-    }
-    console.log(`   Filas con valor NEGATIVO en el crudo de ${CENTRO_DEBUG}:`,crudoTodoElModulo.filter(t=>t.valor<0).map(t=>({valor:t.valor,claseCoste:t.claseCoste,descripClaseCoste:t.descripClaseCoste,documentoCabecera:t.documentoCabecera,usuario:t.usuario,hashDedupe:t.hashDedupe})));
+    console.log(`\n═══ DEBUG NI15328 — ${MES_DEBUG} (paso 2) ═══`);
+    console.log(`Total filas: ${crudo.length} — suma: ${sum(crudo)}`);
+    console.log(`  Positivas: ${positivas.length} filas — suma: ${sum(positivas)}`);
+    console.log(`  Negativas: ${negativas.length} filas — suma: ${sum(negativas)}`);
 
-    const anotadoNI=txnsAnotadas.filter(t=>t.mes===MES_DEBUG&&t.centroCoste===CENTRO_DEBUG);
-    console.log(`2. Tras anotar reglas (antes de excluir), filas de ${CENTRO_DEBUG} en txnsAnotadas:`,anotadoNI.length,"— suma:",sum(anotadoNI));
-
-    // Efecto de CADA regla activa por separado, para ver cuál mueve el número
-    reglasAplicables.forEach(r=>{
-      const matchean=anotadoNI.filter(t=>aplicaRegla(t,r));
-      if(matchean.length>0){
-        console.log(`   Regla "${r.nombre}" (${r.accion}, campo=${r.campo}, operador=${r.operador}, valores=${JSON.stringify(r.valores)}) matchea ${matchean.length} fila(s) de ${CENTRO_DEBUG} — suma de esas filas:`,sum(matchean));
-      }
+    // ¿Hay documentoCabecera repetido? (posible fila duplicada por reimportación
+    // con hash distinto — ej. si el valor se parseó distinto la 2da vez)
+    const porDoc=new Map();
+    crudo.forEach(t=>{
+      const k=t.documentoCabecera||"(sin documento)";
+      if(!porDoc.has(k)) porDoc.set(k,[]);
+      porDoc.get(k).push(t);
     });
+    const docsRepetidos=[...porDoc.entries()].filter(([,filas])=>filas.length>1);
+    console.log(`Documentos únicos: ${porDoc.size} de ${crudo.length} filas totales.`);
+    if(docsRepetidos.length>0){
+      console.log(`⚠ ${docsRepetidos.length} documento(s) aparecen MÁS DE UNA VEZ:`);
+      console.table(docsRepetidos.flatMap(([doc,filas])=>filas.map(f=>({documentoCabecera:doc,valor:f.valor,claseCoste:f.claseCoste,usuario:f.usuario,importedAt:f.importedAt,hashDedupe:f.hashDedupe}))));
+    }
 
-    const sinExcluir=anotadoNI.filter(t=>!t._reglaExcluida);
-    console.log(`2b. Tras excluir (accion="excluir"):`,sinExcluir.length,"filas — suma:",sum(sinExcluir));
-
-    const finalDashboard=anotadoNI.filter(t=>!t._reglaExcluida&&(incluirPuntuales||!t._reglaPuntual));
-    console.log(`3. Final tipo dashboard (excluir + incluirPuntuales=${incluirPuntuales}):`,finalDashboard.length,"filas — suma:",sum(finalDashboard));
-    console.log(`═══ FIN DEBUG NI15328 ═══\n`);
-  },[todasTxns,txnsAnotadas,reglasAplicables,configCentros,activeModule,activeBarco,incluirPuntuales]);
+    console.log("Detalle completo de filas NEGATIVAS (tabla):");
+    console.table(negativas.map(t=>({valor:t.valor,claseCoste:t.claseCoste,descripClaseCoste:t.descripClaseCoste,documentoCabecera:t.documentoCabecera,usuario:t.usuario,fechaContabilizacion:t.fechaContabilizacion,importedAt:t.importedAt,hashDedupe:t.hashDedupe})));
+    console.log(`═══ FIN DEBUG NI15328 (paso 2) ═══\n`);
+  },[todasTxns]);
   // ═══ FIN DEBUG TEMPORAL ═════════════════════════════════════════════════
 
   // ── Filtros en vivo + series para los gráficos (Bloque 4) ──
