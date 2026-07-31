@@ -76,6 +76,27 @@ function uid() {
   return "m" + Math.random().toString(36).slice(2, 10);
 }
 
+// Normaliza espacios/mayúsculas antes de comparar números de faena — el Excel
+// mezcla épocas con distinto criterio de captura ("191 S", "6150", "236 N").
+function normEspacios(s) {
+  return String(s || "").trim().toUpperCase().replace(/\s+/g, " ");
+}
+
+// Fallback cuando no hay match exacto: separa "NUMERO" + sufijo opcional
+// (una letra). El Excel usa el sufijo "N" consistentemente para el terminal
+// NAT/UCO, mientras que "S" y la ausencia de sufijo son intercambiables y
+// siempre significan PMC (confirmado: en la hoja Faena, toda fila sin
+// sufijo es PMC, nunca NAT/UCO). Por eso "S" y "" comparten bucket, y "N"
+// va aparte — nunca se cruzan (una detención "235 S" jamás se asigna a la
+// faena "235 N", aunque compartan el mismo número base).
+function claveBucket(buque, numeroFaenaNorm) {
+  const m = numeroFaenaNorm.match(/^(\d+)\s*([A-Z])?$/);
+  if (!m) return null;
+  const base = m[1];
+  const bucket = m[2] === "N" ? "N" : "S";
+  return `${buque}|${base}|${bucket}`;
+}
+
 // ── Leer el Excel ────────────────────────────────────────────────────────────
 console.log(`Leyendo ${xlsxPath} ...`);
 const wb = XLSX.readFile(xlsxPath, { cellDates: true });
@@ -98,9 +119,9 @@ console.log(`Faena: ${faenaRows.length} filas con datos. Detenciones: ${detRows.
 // N Disponibilidad_Tecnica (ref.), P Utilizacion (ref.), U horas_descontables
 const faenasRaw = faenaRows.map((r, idx) => ({
   filaExcel: idx + 2,
-  buque: String(r[0]).trim(),
-  numeroFaena: String(r[1]).trim(),
-  terminal: String(r[2]).trim(),
+  buque: normEspacios(r[0]),
+  numeroFaena: normEspacios(r[1]),
+  terminal: normEspacios(r[2]),
   inicioOp: r[3] instanceof Date ? r[3] : new Date(r[3]),
   terminoOp: r[4] instanceof Date ? r[4] : new Date(r[4]),
   capacidadOperadores: parseFloat(r[8]) || 0,
@@ -126,8 +147,8 @@ const duplicados = [...clavesVistas.entries()].filter(([, v]) => v.length > 1);
 // K Modo de Falla, L Tipo, N Novedades, P Clasificación, Q Familia Equipo
 const detencionesRaw = detRows.map((r, idx) => ({
   filaExcel: idx + 2,
-  buque: String(r[3]).trim(),
-  numeroFaena: r[4] === "" || r[4] == null ? "" : String(r[4]).trim(),
+  buque: normEspacios(r[3]),
+  numeroFaena: r[4] === "" || r[4] == null ? "" : normEspacios(r[4]),
   inicio: r[5] instanceof Date ? r[5] : new Date(r[5]),
   fin: r[6] instanceof Date ? r[6] : new Date(r[6]),
   equipo: String(r[8] || "").trim(),
@@ -139,23 +160,44 @@ const detencionesRaw = detRows.map((r, idx) => ({
   familiaEquipo: String(r[16] || "").trim(),
 }));
 
-// ── Asignar ids + emparejar Detención -> Faena por (buque,numeroFaena) exacto
+// ── Asignar ids + emparejar Detención -> Faena por (buque,numeroFaena) exacto,
+// con fallback por bucket de sufijo S/N cuando no hay match exacto ─────────
 const faenas = faenasRaw.map(f => ({ ...f, id: uid() }));
 const indiceFaenas = new Map();
 faenas.forEach(f => {
   const k = f.buque + "|" + f.numeroFaena;
   if (!indiceFaenas.has(k)) indiceFaenas.set(k, f); // duplicados: se asigna a la primera ocurrencia
 });
+const indiceBucket = new Map();
+faenas.forEach(f => {
+  const k = claveBucket(f.buque, f.numeroFaena);
+  if (!k) return;
+  if (!indiceBucket.has(k)) indiceBucket.set(k, []);
+  indiceBucket.get(k).push(f);
+});
 
 const sinMatch = [];
+const autoResueltos = [];
 const detenciones = detencionesRaw.map(d => {
   let faenaId = null;
   if (!d.numeroFaena) {
     sinMatch.push({ ...d, motivo: "sin N° de faena/viaje" });
   } else {
-    const f = indiceFaenas.get(d.buque + "|" + d.numeroFaena);
-    if (f) faenaId = f.id;
-    else sinMatch.push({ ...d, motivo: "no hay Faena con ese buque+N°" });
+    const exacto = indiceFaenas.get(d.buque + "|" + d.numeroFaena);
+    if (exacto) {
+      faenaId = exacto.id;
+    } else {
+      const k = claveBucket(d.buque, d.numeroFaena);
+      const candidatos = k ? (indiceBucket.get(k) || []) : [];
+      if (candidatos.length === 1) {
+        faenaId = candidatos[0].id;
+        autoResueltos.push({ ...d, resuelto: candidatos[0].numeroFaena });
+      } else if (candidatos.length > 1) {
+        sinMatch.push({ ...d, motivo: `ambiguo: ${candidatos.length} faenas candidatas (${candidatos.map(x => x.numeroFaena).join(", ")})` });
+      } else {
+        sinMatch.push({ ...d, motivo: "no hay Faena con ese buque+N° (ni exacta ni por sufijo S/N)" });
+      }
+    }
   }
   const horasReparacion = (d.fin - d.inicio) / 3600000;
   return {
@@ -250,7 +292,14 @@ if (difsGrandes.length > 0) {
   });
 }
 
-console.log(`\n=== Detenciones sin faena coincidente: ${sinMatch.length}/${detenciones.length} ===`);
+if (autoResueltos.length > 0) {
+  console.log(`\n=== ${autoResueltos.length} detención(es) resueltas por normalización de sufijo S/N (sin match exacto, pero con un único candidato inequívoco) ===`);
+  autoResueltos.forEach(d => {
+    console.log(`  fila ${d.filaExcel} ${d.buque} N°"${d.numeroFaena}" -> asignada a Faena "${d.resuelto}"`);
+  });
+}
+
+console.log(`\n=== Detenciones sin faena coincidente (necesitan revisión manual): ${sinMatch.length}/${detenciones.length} ===`);
 sinMatch.forEach(d => {
   console.log(`  fila ${d.filaExcel} ${d.buque} N°"${d.numeroFaena || "(vacío)"}" — ${d.motivo}`);
 });
@@ -262,7 +311,7 @@ if (duplicados.length > 0) {
   });
 }
 
-console.log(`\nTotal a migrar: ${faenasFinal.length} faenas, ${detenciones.length} detenciones (${detenciones.length - sinMatch.length} con faena asignada).`);
+console.log(`\nTotal a migrar: ${faenasFinal.length} faenas, ${detenciones.length} detenciones (${detenciones.length - sinMatch.length} con faena asignada, de las cuales ${autoResueltos.length} se resolvieron por normalización de sufijo S/N).`);
 
 // ── Escritura a Firestore (solo con --write) ────────────────────────────────
 if (!doWrite) {
