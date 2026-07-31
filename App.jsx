@@ -684,6 +684,11 @@ if(missing.length>0)await setDoc(doc(db,coll,"taskTemplates"),{data:[...existing
 const fmt   = d => d ? new Date(d).toLocaleDateString("es-CL",{day:"2-digit",month:"2-digit",year:"numeric"}) : "—";
 const fmtDT = d => d ? new Date(d).toLocaleString("es-CL",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"}) : "—";
 const uid = () => Math.random().toString(36).slice(2,10);
+// Persistencia simple de filtros en localStorage (así sobreviven a navegar a
+// otra pestaña y volver, o a recargar la página) — cada módulo la usa con su
+// propio prefijo de key para no pisarse entre sí.
+const leerLSJson=(key,fallback)=>{try{const raw=localStorage.getItem(key);return raw!=null?JSON.parse(raw):fallback;}catch{return fallback;}};
+const guardarLSJson=(key,value)=>{try{localStorage.setItem(key,JSON.stringify(value));}catch{}};
 const addLog=(logs,action,userName,detail="")=>[
   ...(logs||[]),
   {ts:new Date().toISOString(),action,user:userName,detail}
@@ -14151,12 +14156,14 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
   const [presupuestoEditId,setPresupuestoEditId]=useState(null);
   const [presupuestoEditForm,setPresupuestoEditForm]=useState(null);
   const [metodosPronostico,setMetodosPronostico]=useState([]);
-  const [filtroMesDesde,setFiltroMesDesde]=useState("");
-  const [filtroMesHasta,setFiltroMesHasta]=useState("");
-  const [filtrosCentro,setFiltrosCentro]=useState([]);
-  const [filtrosCategoria,setFiltrosCategoria]=useState([]);
-  const [filtrosUsuario,setFiltrosUsuario]=useState([]);
-  const [incluirPuntuales,setIncluirPuntuales]=useState(true);
+  // Filtros persistidos en localStorage — antes se perdían al navegar a otra
+  // pestaña y volver (el componente se desmonta al cambiar de página).
+  const [filtroMesDesde,setFiltroMesDesde]=useState(()=>leerLSJson("mantek_gastos_filtro_mesDesde",""));
+  const [filtroMesHasta,setFiltroMesHasta]=useState(()=>leerLSJson("mantek_gastos_filtro_mesHasta",""));
+  const [filtrosCentro,setFiltrosCentro]=useState(()=>leerLSJson("mantek_gastos_filtro_centro",[]));
+  const [filtrosCategoria,setFiltrosCategoria]=useState(()=>leerLSJson("mantek_gastos_filtro_categoria",[]));
+  const [filtrosUsuario,setFiltrosUsuario]=useState(()=>leerLSJson("mantek_gastos_filtro_usuario",[]));
+  const [incluirPuntuales,setIncluirPuntuales]=useState(()=>leerLSJson("mantek_gastos_filtro_incluirPuntuales",true));
   const [mesDetalle,setMesDetalle]=useState(null);
   const [reclasificando,setReclasificando]=useState(false);
   const [reclasificarResult,setReclasificarResult]=useState(null);
@@ -14196,6 +14203,13 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
     setFiltroMesDesde(prev=>prev||mesesIndex[0]);
     setFiltroMesHasta(prev=>prev||mesesIndex[mesesIndex.length-1]);
   },[mesesIndex]);
+
+  useEffect(()=>{guardarLSJson("mantek_gastos_filtro_mesDesde",filtroMesDesde);},[filtroMesDesde]);
+  useEffect(()=>{guardarLSJson("mantek_gastos_filtro_mesHasta",filtroMesHasta);},[filtroMesHasta]);
+  useEffect(()=>{guardarLSJson("mantek_gastos_filtro_centro",filtrosCentro);},[filtrosCentro]);
+  useEffect(()=>{guardarLSJson("mantek_gastos_filtro_categoria",filtrosCategoria);},[filtrosCategoria]);
+  useEffect(()=>{guardarLSJson("mantek_gastos_filtro_usuario",filtrosUsuario);},[filtrosUsuario]);
+  useEffect(()=>{guardarLSJson("mantek_gastos_filtro_incluirPuntuales",incluirPuntuales);},[incluirPuntuales]);
 
   useEffect(()=>{
     if(mesesIndex.length===0) return;
@@ -15568,10 +15582,16 @@ function DisponibilidadUtilizacion({user,data}){
   const [recalculandoTodas,setRecalculandoTodas]=useState(false);
   const [recalcularTodasResult,setRecalcularTodasResult]=useState(null);
 
-  const [filtrosBuqueTabla,setFiltrosBuqueTabla]=useState([]);
-  const [filtrosTerminalTabla,setFiltrosTerminalTabla]=useState([]);
-  const [fechaDesdeTabla,setFechaDesdeTabla]=useState("");
-  const [fechaHastaTabla,setFechaHastaTabla]=useState("");
+  // Filtros persistidos en localStorage — antes se perdían al navegar a otra
+  // pestaña y volver (el componente se desmonta al cambiar de página).
+  const [filtrosBuqueTabla,setFiltrosBuqueTabla]=useState(()=>leerLSJson("mantek_dispo_filtro_buque",[]));
+  const [filtrosTerminalTabla,setFiltrosTerminalTabla]=useState(()=>leerLSJson("mantek_dispo_filtro_terminal",[]));
+  const [fechaDesdeTabla,setFechaDesdeTabla]=useState(()=>leerLSJson("mantek_dispo_filtro_fechaDesde",""));
+  const [fechaHastaTabla,setFechaHastaTabla]=useState(()=>leerLSJson("mantek_dispo_filtro_fechaHasta",""));
+  useEffect(()=>{guardarLSJson("mantek_dispo_filtro_buque",filtrosBuqueTabla);},[filtrosBuqueTabla]);
+  useEffect(()=>{guardarLSJson("mantek_dispo_filtro_terminal",filtrosTerminalTabla);},[filtrosTerminalTabla]);
+  useEffect(()=>{guardarLSJson("mantek_dispo_filtro_fechaDesde",fechaDesdeTabla);},[fechaDesdeTabla]);
+  useEffect(()=>{guardarLSJson("mantek_dispo_filtro_fechaHasta",fechaHastaTabla);},[fechaHastaTabla]);
 
   useEffect(()=>{
     const unsub=onSnapshot(doc(db,COLL_FAENA_TARGETS,"config"),snap=>{
