@@ -14822,6 +14822,44 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
     setReclasificarResult(total);
   };
 
+  // Historial de importaciones: agrupa todasTxns por importId (cada import
+  // de handleImport marca sus filas con importId/importedAt/importedBy) —
+  // permite ver y borrar una importación completa (ej. un archivo con datos
+  // corruptos) sin tener que identificar fila por fila cuáles eliminar.
+  const historialImportaciones=useMemo(()=>{
+    const porImport=new Map();
+    todasTxns.forEach(t=>{
+      if(!t.importId) return;
+      if(!porImport.has(t.importId)) porImport.set(t.importId,{
+        importId:t.importId,importedAt:t.importedAt,importedBy:t.importedBy,
+        filas:0,total:0,meses:new Set(),
+      });
+      const g=porImport.get(t.importId);
+      g.filas++;g.total+=(t.valor||0);g.meses.add(t.mes);
+    });
+    return[...porImport.values()]
+      .map(g=>({...g,meses:[...g.meses].sort()}))
+      .sort((a,b)=>(b.importedAt||"").localeCompare(a.importedAt||""));
+  },[todasTxns]);
+
+  const [eliminandoImportId,setEliminandoImportId]=useState(null);
+  const eliminarImportacion=async(importId,meses)=>{
+    if(!window.confirm(`¿Eliminar esta importación completa? Se borrarán todas las filas con este importId de ${meses.length} mes(es) (${meses.join(", ")}). No se puede deshacer — después podés volver a subir el archivo corregido.`)) return;
+    setEliminandoImportId(importId);
+    let totalBorradas=0;
+    for(const mes of meses){
+      const ref=doc(db,COLL_GASTOS_TXN,mes);
+      const snap=await getDoc(ref);
+      if(!snap.exists()) continue;
+      const rows=snap.data().data||[];
+      const restantes=rows.filter(t=>t.importId!==importId);
+      totalBorradas+=rows.length-restantes.length;
+      await setDoc(ref,{data:restantes});
+    }
+    setEliminandoImportId(null);
+    alert(`✅ ${totalBorradas} fila(s) eliminada(s) de esta importación. Ya podés volver a subir el archivo corregido.`);
+  };
+
   const fmtCLP=(n)=>"$"+Math.round(n||0).toLocaleString("es-CL");
 
   // ── Mapeo orden SAP -> equipo (para "Top 5 equipos por gasto") ──
@@ -15587,6 +15625,30 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
               )}
             </div>
           )
+        )}
+      </div>
+
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+        <h2 className="font-bold text-gray-800 text-sm mb-3">Historial de importaciones</h2>
+        <p className="text-gray-300 text-[10px] mb-3">Si un archivo se importó con datos corruptos (ej. filas de resumen mezcladas con transacciones), eliminá esa importación completa acá y volvé a subir el archivo corregido.</p>
+        {historialImportaciones.length===0?(
+          <p className="text-gray-400 text-xs italic">Sin importaciones registradas todavía.</p>
+        ):(
+          <div className="space-y-1.5">
+            {historialImportaciones.map(imp=>(
+              <div key={imp.importId} className="flex items-center gap-3 text-xs bg-gray-50 rounded-lg px-3 py-2 flex-wrap">
+                <span className="font-mono text-gray-400">{imp.importedAt?new Date(imp.importedAt).toLocaleString("es-CL"):"—"}</span>
+                <span className="text-gray-600">{imp.importedBy||"—"}</span>
+                <span className="text-gray-600">{imp.filas} fila(s)</span>
+                <span className="text-gray-500">meses: {imp.meses.join(", ")}</span>
+                <span className="font-semibold text-gray-800">{fmtCLP(imp.total)}</span>
+                <button onClick={()=>eliminarImportacion(imp.importId,imp.meses)} disabled={eliminandoImportId===imp.importId}
+                  className="ml-auto text-xs px-2.5 py-1 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 transition disabled:opacity-50 flex-shrink-0">
+                  {eliminandoImportId===imp.importId?"Eliminando...":"🗑 Eliminar importación"}
+                </button>
+              </div>
+            ))}
+          </div>
         )}
       </div>
 
