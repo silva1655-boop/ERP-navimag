@@ -14138,6 +14138,13 @@ function GastoMensualChart({serie,onClickMes,mesSeleccionado,height=260,width=76
   );
 }
 
+const TRIMESTRES_DEF=[
+  {label:"T1",meses:["01","02","03"]},
+  {label:"T2",meses:["04","05","06"]},
+  {label:"T3",meses:["07","08","09"]},
+  {label:"T4",meses:["10","11","12"]},
+];
+
 function GastosPresupuesto({user,data,activeModule,activeBarco}){
   const equip=data?.equip||[];
   const [configCentros,setConfigCentros]=useState([]);
@@ -14464,6 +14471,26 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
     });
     return[...base,...proyectados];
   },[serieAnualCompleta,metodoElegido,mesesFaltantesDelAnio,pronostico,filtrosCategoria]);
+
+  // Resumen trimestral: real filtrado vs. presupuesto por trimestre (T1-T4)
+  // y acumulado corrido entre trimestres, siempre sobre el año de trabajo
+  // completo (igual criterio que serieAnualCompleta). Var % usa la
+  // convención de gasto: (presupuesto-real)/presupuesto — negativo = gastado
+  // por encima de lo presupuestado (rojo), positivo = por debajo (verde).
+  const resumenTrimestral=useMemo(()=>{
+    let accReal=0,accPres=0;
+    return TRIMESTRES_DEF.map(t=>{
+      const mesesDelTrim=serieAnualCompleta.filter(m=>t.meses.includes(m.mes.slice(5)));
+      const realTrim=mesesDelTrim.reduce((s,m)=>s+m.filtrado,0);
+      const presTrim=mesesDelTrim.reduce((s,m)=>s+m.presupuesto,0);
+      accReal+=realTrim;accPres+=presTrim;
+      return{
+        trimestre:`${t.label} ${anioTrabajo}`,
+        realTrim,presTrim,varTrim:presTrim>0?((presTrim-realTrim)/presTrim)*100:null,
+        realAcum:accReal,presAcum:accPres,varAcum:accPres>0?((accPres-accReal)/accPres)*100:null,
+      };
+    });
+  },[serieAnualCompleta,anioTrabajo]);
 
   const txnsDetalle=useMemo(()=>{
     if(!mesDetalle) return[];
@@ -15054,6 +15081,46 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
           <p className="text-gray-300 text-[10px] mb-2">Siempre muestra el año {anioTrabajo} completo, sin importar el filtro de rango de meses. Click en la leyenda para mostrar/ocultar cada serie.</p>
           <GastosLineChart series={serieAcumulada}/>
         </div>
+      </div>
+
+      {/* ── Resumen Trimestral ── */}
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 overflow-x-auto">
+        <h2 className="font-bold text-gray-800 text-sm mb-1">Resumen Trimestral — Real filtrado vs. Presupuesto</h2>
+        <p className="text-gray-300 text-[10px] mb-3">Por trimestre y acumulado entre trimestres, año {anioTrabajo} completo. Var % = (Presupuesto − Real) ÷ Presupuesto — negativo es gasto por encima de lo presupuestado.</p>
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-gray-400 text-left">
+              <th rowSpan={2} className="pb-1.5 pr-3 align-bottom border-b border-gray-100">Período</th>
+              <th colSpan={3} className="pb-1 text-center border-b border-gray-100">Trimestre</th>
+              <th colSpan={3} className="pb-1 text-center border-b border-gray-100 border-l border-gray-100">Acumulado {anioTrabajo}</th>
+            </tr>
+            <tr className="text-gray-400 text-left">
+              <th className="pb-1.5 pr-3 border-b border-gray-100">Real</th>
+              <th className="pb-1.5 pr-3 border-b border-gray-100">Presupuesto</th>
+              <th className="pb-1.5 pr-3 border-b border-gray-100">Var %</th>
+              <th className="pb-1.5 pr-3 border-b border-gray-100 border-l border-gray-100">Real</th>
+              <th className="pb-1.5 pr-3 border-b border-gray-100">Presupuesto</th>
+              <th className="pb-1.5 pr-3 border-b border-gray-100">Var %</th>
+            </tr>
+          </thead>
+          <tbody>
+            {resumenTrimestral.map(r=>(
+              <tr key={r.trimestre} className="border-b border-gray-50">
+                <td className="py-2 pr-3 font-semibold text-gray-700">{r.trimestre}</td>
+                <td className="py-2 pr-3 text-gray-700">{fmtCLP(r.realTrim)}</td>
+                <td className="py-2 pr-3 text-gray-500">{fmtCLP(r.presTrim)}</td>
+                <td className={`py-2 pr-3 font-semibold ${r.varTrim==null?"text-gray-300":r.varTrim>=0?"text-emerald-600":"text-red-600"}`}>
+                  {r.varTrim==null?"—":`${r.varTrim>=0?"+":""}${r.varTrim.toFixed(1)}%`}
+                </td>
+                <td className="py-2 pr-3 text-gray-700 border-l border-gray-100">{fmtCLP(r.realAcum)}</td>
+                <td className="py-2 pr-3 text-gray-500">{fmtCLP(r.presAcum)}</td>
+                <td className={`py-2 pr-3 font-semibold ${r.varAcum==null?"text-gray-300":r.varAcum>=0?"text-emerald-600":"text-red-600"}`}>
+                  {r.varAcum==null?"—":`${r.varAcum>=0?"+":""}${r.varAcum.toFixed(1)}%`}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
 
       {/* ── Pronóstico ── */}
