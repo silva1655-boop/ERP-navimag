@@ -6077,7 +6077,10 @@ const isSelected=sel?.id===w.id;
 const origenLabel=w.source==="checklist"?"Checklist Pre-op":w.source==="plan"?"Plan Preventivo":w.type==="correctivo"&&!w.source?"Trabajo Fuera Prog.":"Solicitud";
 const isAssignedToMe=w.assignedTo===user.id||w.assignedTo===user.name||(w.assignedToName&&w.assignedToName===user.name);
 const canStart=(isAssignedToMe||role==="supervisor")&&["asignada","planificada","pendiente"].includes(w.status);
-const canReject=role==="supervisor"&&!["completada","cancelada"].includes(w.status);
+// Las OT de origen preventivo (plan PM) no se pueden rechazar: rechazarlas
+// no regenera un reemplazo (a diferencia del cierre normal), así que dejaría
+// el ciclo de mantención programada sin OT activa hasta el próximo reload.
+const canReject=role==="supervisor"&&w.type!=="preventiva"&&!["completada","cancelada"].includes(w.status);
 const sem=getSemaforo(w);
 // Fecha real de término de la intervención (NUNCA new Date()): prioridad
 // horaTerminoReal > fechaTermino > closedAt (solo si ya está completada).
@@ -6103,7 +6106,7 @@ const accionesCell=(
 title={canStart?"Iniciar trabajo":"No disponible"}
 className={`p-1.5 rounded-lg transition ${canStart?"hover:bg-emerald-50 text-emerald-500":"text-gray-200 cursor-not-allowed"}`}><Play size={14}/></button>
 <button onClick={()=>{if(canReject){setRejectTarget(w);setRejectReason("");}}} disabled={!canReject}
-title={canReject?"Rechazar OT":"No disponible"}
+title={canReject?"Rechazar OT":w.type==="preventiva"?"Las OT de plan preventivo no se pueden rechazar":"No disponible"}
 className={`p-1.5 rounded-lg transition ${canReject?"hover:bg-red-50 text-red-400":"text-gray-200 cursor-not-allowed"}`}><X size={14}/></button>
 </div>
 </td>
