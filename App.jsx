@@ -592,6 +592,41 @@ function getWeekKey(date) {
   return d.toISOString().slice(0,10);
 }
 
+// Número de semana ISO-8601 (1-53), usado por Faena/Disponibilidad y Utilización.
+function getISOWeek(date){
+  const d=new Date(Date.UTC(date.getFullYear(),date.getMonth(),date.getDate()));
+  const dayNum=(d.getUTCDay()+6)%7; // lunes=0 ... domingo=6
+  d.setUTCDate(d.getUTCDate()-dayNum+3); // jueves de esa semana
+  const firstThursday=new Date(Date.UTC(d.getUTCFullYear(),0,4));
+  const firstDayNum=(firstThursday.getUTCDay()+6)%7;
+  firstThursday.setUTCDate(firstThursday.getUTCDate()-firstDayNum+3);
+  return 1+Math.round((d-firstThursday)/(7*24*3600*1000));
+}
+
+// Campos derivados de una Faena (fórmulas del spec Disponibilidad y Utilización).
+// indisponibilidadHH es la suma de horasReparacion de las Detenciones asociadas
+// (bloque 2: siempre 0, todavía no existen Detenciones; bloque 3 la recalcula
+// en el cliente al guardar/editar/borrar una Detención).
+function calcularFaenaDerivados({buque,terminal,inicioOp,terminoOp,tractosOp,tractosUtilizados,capacidadOperadores},targets,indisponibilidadHH=0){
+  const targetRow=(targets||[]).find(t=>t.buque===buque&&t.terminal===terminal);
+  if(!targetRow||!inicioOp||!terminoOp) return null;
+  const target=targetRow.target;
+  const ini=new Date(inicioOp), fin=new Date(terminoOp);
+  if(isNaN(ini.getTime())||isNaN(fin.getTime())||fin<=ini) return null;
+  const horasOperacionBruta=(fin-ini)/3600000;
+  const horasDescontables=Math.max(0,(target-(parseFloat(capacidadOperadores)||0))*horasOperacionBruta);
+  const horasOperacion=horasOperacionBruta-horasDescontables;
+  const utilizacionEsperada=target*horasOperacion;
+  const disponibilidadTecnica=utilizacionEsperada>0?Math.max(0,Math.min(1,(horasOperacion-indisponibilidadHH)/utilizacionEsperada)):0;
+  const cumplimiento=target>0?Math.min(1,(parseFloat(tractosOp)||0)/target):0;
+  const utilizacion=horasOperacion>0?Math.max(0,Math.min(1,(horasOperacion-indisponibilidadHH-horasDescontables)/horasOperacion)):0;
+  return{
+    target,horasOperacionBruta,horasDescontables,horasOperacion,utilizacionEsperada,
+    indisponibilidadHH,disponibilidadTecnica,cumplimiento,utilizacion,
+    semana:getISOWeek(fin),mes:fin.getMonth()+1,anio:fin.getFullYear(),
+  };
+}
+
 async function initIfEmpty(coll, key, seed) {
 try { const s=await getDoc(doc(db,coll,key)); if(!s.exists()) await setDoc(doc(db,coll,key),{data:seed}); } catch(e) { console.error("Init:",e); }
 }
@@ -15407,6 +15442,8 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
 // Bloque 1 del spec: mantek_config_targets + CRUD admin-only. Los bloques
 // siguientes agregan Faena, Detenciones (+ recálculo en el cliente),
 // migración histórica y el dashboard completo.
+const FAENA_VACIA={buque:"ESPERANZA",terminal:"PMC",numeroFaena:"",inicioOp:"",terminoOp:"",tractosOp:"",tractosUtilizados:"",capacidadOperadores:""};
+
 function DisponibilidadUtilizacion({user}){
   const [targets,setTargets]=useState([]);
   const [loading,setLoading]=useState(true);
@@ -15414,10 +15451,23 @@ function DisponibilidadUtilizacion({user}){
   const [editId,setEditId]=useState(null);
   const [editForm,setEditForm]=useState(null);
 
+  const [faenas,setFaenas]=useState([]);
+  const [loadingFaenas,setLoadingFaenas]=useState(true);
+  const [nuevaFaena,setNuevaFaena]=useState(FAENA_VACIA);
+  const [editFaenaId,setEditFaenaId]=useState(null);
+
   useEffect(()=>{
     const unsub=onSnapshot(doc(db,COLL_FAENA_TARGETS,"config"),snap=>{
       setTargets(snap.exists()?(snap.data().data||[]):[]);
       setLoading(false);
+    });
+    return()=>unsub();
+  },[]);
+
+  useEffect(()=>{
+    const unsub=onSnapshot(doc(db,COLL_FAENA,"faenas"),snap=>{
+      setFaenas(snap.exists()?(snap.data().data||[]):[]);
+      setLoadingFaenas(false);
     });
     return()=>unsub();
   },[]);
@@ -15466,6 +15516,63 @@ function DisponibilidadUtilizacion({user}){
     if(!window.confirm("¿Eliminar este target?")) return;
     saveTargets(targets.filter(t=>t.id!==id));
   };
+
+  const saveFaenas=async(updated)=>{
+    setFaenas(updated);
+    await setDoc(doc(db,COLL_FAENA,"faenas"),{data:updated});
+  };
+
+  const indisponibilidadHHDeEdicion=editFaenaId?(faenas.find(x=>x.id===editFaenaId)?.indisponibilidadHH||0):0;
+  const previewFaena=useMemo(
+    ()=>calcularFaenaDerivados(nuevaFaena,targets,indisponibilidadHHDeEdicion),
+    [nuevaFaena,targets,indisponibilidadHHDeEdicion]
+  );
+  const targetFaenaActual=targets.find(t=>t.buque===nuevaFaena.buque&&t.terminal===nuevaFaena.terminal);
+
+  const guardarFaena=()=>{
+    const f=nuevaFaena;
+    if(!f.numeroFaena.trim()){alert("Ingresa el número de faena.");return;}
+    if(!f.inicioOp||!f.terminoOp){alert("Ingresa inicio y término de la operación.");return;}
+    if(new Date(f.terminoOp)<=new Date(f.inicioOp)){alert("El término de la operación debe ser posterior al inicio.");return;}
+    if(!targetFaenaActual){alert(`No hay target configurado para ${f.buque} · ${f.terminal}. Agrégalo arriba en "Configuración de Targets" antes de guardar esta faena.`);return;}
+    const derivados=calcularFaenaDerivados(f,targets,indisponibilidadHHDeEdicion);
+    if(!derivados){alert("No se pudo calcular la faena — revisa las fechas ingresadas.");return;}
+    const ahora=new Date().toISOString();
+    const base={
+      buque:f.buque,terminal:f.terminal,numeroFaena:f.numeroFaena.trim(),
+      inicioOp:f.inicioOp,terminoOp:f.terminoOp,
+      tractosOp:parseFloat(f.tractosOp)||0,tractosUtilizados:parseFloat(f.tractosUtilizados)||0,
+      capacidadOperadores:parseFloat(f.capacidadOperadores)||0,
+      ...derivados,recalculadoEn:ahora,
+    };
+    if(editFaenaId){
+      saveFaenas(faenas.map(x=>x.id===editFaenaId?{...x,...base}:x));
+    }else{
+      saveFaenas([...faenas,{id:uid(),...base,creadoPor:user.name||user.username||"",creadoEn:ahora}]);
+    }
+    setNuevaFaena(FAENA_VACIA);
+    setEditFaenaId(null);
+  };
+
+  const editarFaena=(f)=>{
+    setEditFaenaId(f.id);
+    setNuevaFaena({
+      buque:f.buque,terminal:f.terminal,numeroFaena:f.numeroFaena,
+      inicioOp:f.inicioOp,terminoOp:f.terminoOp,
+      tractosOp:String(f.tractosOp),tractosUtilizados:String(f.tractosUtilizados),
+      capacidadOperadores:String(f.capacidadOperadores),
+    });
+  };
+  const cancelarEdicionFaena=()=>{setEditFaenaId(null);setNuevaFaena(FAENA_VACIA);};
+  const eliminarFaena=(id)=>{
+    if(!window.confirm("¿Eliminar esta faena? Si tiene detenciones asociadas quedarán huérfanas.")) return;
+    saveFaenas(faenas.filter(x=>x.id!==id));
+    if(editFaenaId===id) cancelarEdicionFaena();
+  };
+
+  const faenasOrdenadas=useMemo(()=>[...faenas].sort((a,b)=>new Date(b.terminoOp)-new Date(a.terminoOp)),[faenas]);
+  const fmtPct=v=>`${Math.round((v||0)*100)}%`;
+  const fmtH=v=>`${(Math.round((v||0)*10)/10).toLocaleString("es-CL")} h`;
 
   if(!canAccessDisponibilidad(user)) return null;
 
@@ -15533,8 +15640,121 @@ function DisponibilidadUtilizacion({user}){
         )}
       </div>
 
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+        <h2 className="font-bold text-gray-800 text-sm mb-3">{editFaenaId?"Editar Faena":"Nueva Faena"}</h2>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
+          <select value={nuevaFaena.buque} onChange={e=>setNuevaFaena(f=>({...f,buque:e.target.value}))}
+            className="px-3 py-2 rounded-lg border border-gray-200 text-sm">
+            <option value="ESPERANZA">Esperanza</option>
+            <option value="DALKA">Dalka</option>
+          </select>
+          <select value={nuevaFaena.terminal} onChange={e=>setNuevaFaena(f=>({...f,terminal:e.target.value}))}
+            className="px-3 py-2 rounded-lg border border-gray-200 text-sm">
+            <option value="PMC">PMC</option>
+            <option value="NAT">NAT</option>
+            <option value="UCO">UCO</option>
+          </select>
+          <input value={nuevaFaena.numeroFaena} onChange={e=>setNuevaFaena(f=>({...f,numeroFaena:e.target.value}))}
+            placeholder="N° faena (ej: 6160 S)" className="px-3 py-2 rounded-lg border border-gray-200 text-sm col-span-2"/>
+          <label className="text-xs text-gray-500 col-span-2 md:col-span-1">
+            Inicio operación
+            <input type="datetime-local" value={nuevaFaena.inicioOp} onChange={e=>setNuevaFaena(f=>({...f,inicioOp:e.target.value}))}
+              className="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 text-sm"/>
+          </label>
+          <label className="text-xs text-gray-500 col-span-2 md:col-span-1">
+            Término operación
+            <input type="datetime-local" value={nuevaFaena.terminoOp} onChange={e=>setNuevaFaena(f=>({...f,terminoOp:e.target.value}))}
+              className="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 text-sm"/>
+          </label>
+          <label className="text-xs text-gray-500">
+            Tractos OP
+            <input type="number" min="0" value={nuevaFaena.tractosOp} onChange={e=>setNuevaFaena(f=>({...f,tractosOp:e.target.value}))}
+              className="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 text-sm"/>
+          </label>
+          <label className="text-xs text-gray-500">
+            Tractos utilizados
+            <input type="number" min="0" value={nuevaFaena.tractosUtilizados} onChange={e=>setNuevaFaena(f=>({...f,tractosUtilizados:e.target.value}))}
+              className="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 text-sm"/>
+          </label>
+          <label className="text-xs text-gray-500">
+            Capacidad operadores
+            <input type="number" min="0" value={nuevaFaena.capacidadOperadores} onChange={e=>setNuevaFaena(f=>({...f,capacidadOperadores:e.target.value}))}
+              className="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 text-sm"/>
+          </label>
+        </div>
+
+        {!targetFaenaActual&&(
+          <p className="text-red-500 text-xs mb-3">⚠ No hay target configurado para {nuevaFaena.buque} · {nuevaFaena.terminal}. Agrégalo arriba antes de guardar.</p>
+        )}
+
+        {previewFaena&&(
+          <div className="bg-gray-50 rounded-xl p-4 mb-3 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+            <div><p className="text-gray-400 text-[10px]">Target</p><p className="font-bold text-gray-800">{previewFaena.target} tractos</p></div>
+            <div><p className="text-gray-400 text-[10px]">Hs. operación bruta</p><p className="font-bold text-gray-800">{fmtH(previewFaena.horasOperacionBruta)}</p></div>
+            <div><p className="text-gray-400 text-[10px]">Hs. descontables</p><p className="font-bold text-gray-800">{fmtH(previewFaena.horasDescontables)}</p></div>
+            <div><p className="text-gray-400 text-[10px]">Hs. operación</p><p className="font-bold text-gray-800">{fmtH(previewFaena.horasOperacion)}</p></div>
+            <div><p className="text-gray-400 text-[10px]">Disponibilidad Técnica</p><p className="font-bold text-gray-800">{fmtPct(previewFaena.disponibilidadTecnica)}</p></div>
+            <div><p className="text-gray-400 text-[10px]">Utilización</p><p className="font-bold text-gray-800">{fmtPct(previewFaena.utilizacion)}</p></div>
+            <div><p className="text-gray-400 text-[10px]">Cumplimiento</p><p className="font-bold text-gray-800">{fmtPct(previewFaena.cumplimiento)}</p></div>
+            <div><p className="text-gray-400 text-[10px]">Semana / Mes / Año</p><p className="font-bold text-gray-800">S{previewFaena.semana} · {previewFaena.mes}/{previewFaena.anio}</p></div>
+          </div>
+        )}
+
+        <div className="flex gap-2">
+          <button onClick={guardarFaena} className="px-3 py-2 rounded-lg text-white text-sm font-semibold" style={{background:NV.blue}}>
+            {editFaenaId?"Guardar cambios":"+ Agregar Faena"}
+          </button>
+          {editFaenaId&&(
+            <button onClick={cancelarEdicionFaena} className="px-3 py-2 rounded-lg border border-gray-200 text-gray-600 text-sm">Cancelar</button>
+          )}
+        </div>
+      </div>
+
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 overflow-x-auto">
+        <h2 className="font-bold text-gray-800 text-sm mb-3">Faenas registradas ({faenas.length})</h2>
+        {loadingFaenas?(
+          <p className="text-gray-400 text-sm">Cargando…</p>
+        ):faenasOrdenadas.length===0?(
+          <p className="text-gray-400 text-xs italic">Todavía no hay faenas registradas.</p>
+        ):(
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-gray-400 text-left border-b border-gray-100">
+                <th className="pb-2 pr-3">Término op.</th>
+                <th className="pb-2 pr-3">Buque</th>
+                <th className="pb-2 pr-3">Terminal</th>
+                <th className="pb-2 pr-3">N° Faena</th>
+                <th className="pb-2 pr-3">Tractos OP/Util</th>
+                <th className="pb-2 pr-3">Disp. Técnica</th>
+                <th className="pb-2 pr-3">Utilización</th>
+                <th className="pb-2 pr-3">Cumplimiento</th>
+                <th className="pb-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {faenasOrdenadas.map(f=>(
+                <tr key={f.id} className="border-b border-gray-50">
+                  <td className="py-2 pr-3 text-gray-600">{f.terminoOp?new Date(f.terminoOp).toLocaleString("es-CL"):"—"}</td>
+                  <td className="py-2 pr-3 font-semibold text-gray-700">{f.buque}</td>
+                  <td className="py-2 pr-3 text-gray-600">{f.terminal}</td>
+                  <td className="py-2 pr-3 font-mono text-gray-700">{f.numeroFaena}</td>
+                  <td className="py-2 pr-3 text-gray-600">{f.tractosOp}/{f.tractosUtilizados}</td>
+                  <td className="py-2 pr-3 font-semibold text-gray-800">{fmtPct(f.disponibilidadTecnica)}</td>
+                  <td className="py-2 pr-3 font-semibold text-gray-800">{fmtPct(f.utilizacion)}</td>
+                  <td className="py-2 pr-3 font-semibold text-gray-800">{fmtPct(f.cumplimiento)}</td>
+                  <td className="py-2 flex items-center gap-2">
+                    <button onClick={()=>editarFaena(f)} className="text-gray-400 hover:text-blue-600"><Edit2 size={13}/></button>
+                    <button onClick={()=>eliminarFaena(f.id)} className="text-gray-300 hover:text-red-500"><X size={13}/></button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
       <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-xs text-amber-700">
-        Los formularios de Faena y Detenciones, y el dashboard de disponibilidad/utilización, se agregan en los próximos bloques.
+        El formulario de Detenciones (con recálculo de indisponibilidad en el cliente), la migración histórica y el dashboard con filtros/semáforos/gráfico mensual se agregan en los próximos bloques. Por ahora <b>indisponibilidadHH siempre es 0</b> — Disponibilidad Técnica no descuenta reparaciones todavía.
       </div>
     </div>
   );
