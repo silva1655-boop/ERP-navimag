@@ -8674,10 +8674,11 @@ const getAssignmentStatus=(assignment,template,equipment,wos)=>{
     const freq=parseFloat(assignment.frequency||template?.frequency)||0;
     const pct=parseFloat(assignment.pctAnticipacion||template?.pctAnticipacion)||20;
     const advanceDays=freq>0?Math.round(freq*pct/100):7;
-    const toleranceDays=freq>0?Math.round(freq*0.3):5;
     const daysLeft=Math.round((new Date(nextDueDate)-new Date(new Date().toISOString().slice(0,10)))/86400000);
-    if(daysLeft<-toleranceDays) return "vencido_critico";
-    if(daysLeft<0) return "vencido";
+    // "vencido" y "vencido_critico" se consolidan en un solo estado "critico"
+    // (Marítimo) — antes eran dos etiquetas de vencido separadas, ahora
+    // cualquier plan pasado de fecha es simplemente "Crítico".
+    if(daysLeft<0) return "critico";
     if(daysLeft<=advanceDays) return "proximo";
     return "vigente";
   }
@@ -8687,10 +8688,8 @@ const getAssignmentStatus=(assignment,template,equipment,wos)=>{
   if(isNaN(nextDue)||nextDue===0) return "sin_datos_horometro";
   if(openOT&&template?.requiresCompletion) return "bloqueado_ot_abierta";
   const advance=parseFloat(template?.advanceThresholdHours)||100;
-  const tolerance=parseFloat(template?.overdueToleranceHours)||50;
   const hoursLeft=nextDue-currentH;
-  if(hoursLeft<-tolerance) return "vencido_critico";
-  if(hoursLeft<0) return "vencido";
+  if(hoursLeft<0) return "critico";
   if(hoursLeft<=advance) return "proximo";
   return "vigente";
 };
@@ -8767,7 +8766,12 @@ const [showImport,setShowImport]=useState(false);
 const [importResult,setImportResult]=useState(null);
 const [importing,setImporting]=useState(false);
 const [editPlanTarget,setEditPlanTarget]=useState(null);
-const [editPlanForm,setEditPlanForm]=useState({frequency:"",estimatedHours:"",materialesAsociados:[]});
+const EDIT_PLAN_FORM_VACIO={frequency:"",estimatedHours:"",materialesAsociados:[],
+  nave:"",area:"",responsable:"",responsableLibre:"",actividadPlan:"",
+  tipoPlan:"Horometro",unidad:"HORAS",activo:true,criticidad:"Alta",
+  fechaUltima:"",lastHorometro:"",pctAnticipacion:20,
+  valorRepuesto:"",valorServicio:"",moneda:"USD",tasks:""};
+const [editPlanForm,setEditPlanForm]=useState(EDIT_PLAN_FORM_VACIO);
 const [selPlanesIds,setSelPlanesIds]=useState(new Set());
 const [showBulkEditPlan,setShowBulkEditPlan]=useState(false);
 const [bulkEditForm,setBulkEditForm]=useState({campo:"estimatedHours",modo:"fijar",valor:""});
@@ -8824,7 +8828,11 @@ const otCode=isMaritimo&&plan.code?nextPlanOTCode(plan.code,allWOs):nextOTCode(a
 // antes esta primera OT solo copiaba plan.technician crudo, sin pasar por
 // resolveResponsable, y no seteaba assignedToName/responsable/needsAssignment.
 const resp=resolveResponsable(plan.responsable||plan.responsablePlan||plan.technician||"",users);
-return {id:uid(),code:otCode,type:"preventiva",equipId:plan.equipId,planId:plan.id,title:plan.name,priority,status:"asignada",assignedTo:resp.userId||resp.userName,assignedToName:resp.userName,responsable:resp.userId||resp.userName,needsAssignment:!resp.found,createdAt:new Date().toISOString(),scheduledDate:"",estimatedHours:parseFloat(plan.estimatedHours)||0,actualHours:null,description:`OT automática. Tareas: ${Array.isArray(plan.tasks)?plan.tasks.join(", "):plan.tasks}`,observations:"",parts:[],materialesPlanificados:plan.materialesAsociados||[],source:"plan",urgenciaBacklog:"programable"};
+// scheduledDate: plan.nextDueDate ya viene calculado por addPlan para planes
+// por calendario (antes quedaba siempre "" — la primera OT de un plan nunca
+// mostraba fecha programada, a diferencia de las regeneradas post-cierre).
+// Para planes por horómetro no hay fecha de calendario, queda vacío como antes.
+return {id:uid(),code:otCode,type:"preventiva",equipId:plan.equipId,planId:plan.id,title:plan.name,priority,status:"asignada",assignedTo:resp.userId||resp.userName,assignedToName:resp.userName,responsable:resp.userId||resp.userName,needsAssignment:!resp.found,createdAt:new Date().toISOString(),scheduledDate:plan.nextDueDate||"",estimatedHours:parseFloat(plan.estimatedHours)||0,actualHours:null,description:`OT automática. Tareas: ${Array.isArray(plan.tasks)?plan.tasks.join(", "):plan.tasks}`,observations:"",parts:[],materialesPlanificados:plan.materialesAsociados||[],source:"plan",urgenciaBacklog:"programable"};
 };
 
 const saveTpl=()=>{
@@ -9014,14 +9022,60 @@ const upd=plans.filter(p=>p.id!==id);
 setData(d=>({...d,plans:upd}));saveData("plans",upd);
 };
 
+// Abre el modal de edición con TODOS los campos que existen al crear el plan
+// (antes solo precargaba frecuencia/horas/materiales — el resto de lo
+// ingresado en Marítimo quedaba imposible de corregir después de crear).
+const abrirEdicionPlan=(p)=>{
+  setEditPlanTarget(p);
+  setEditPlanForm({
+    frequency:String(p.frequency||""),estimatedHours:String(p.estimatedHours||0),
+    materialesAsociados:p.materialesAsociados||[],
+    nave:p.nave||"",area:p.area||"",
+    responsable:p.responsable||p.technician||"",responsableLibre:"",
+    actividadPlan:p.actividadPlan||p.name||"",
+    tipoPlan:p.tipoPlan||"Horometro",
+    unidad:p.unidad||((p.tipoPlan||"").toLowerCase()==="calendario"?"DÍAS":"HORAS"),
+    activo:p.activo!==false,criticidad:p.criticidad||"Alta",
+    fechaUltima:p.fechaUltima||"",lastHorometro:String(p.lastHorometro||0),
+    pctAnticipacion:p.pctAnticipacion??20,
+    valorRepuesto:String(p.valorRepuesto||""),valorServicio:String(p.valorServicio||""),moneda:p.moneda||"USD",
+    tasks:Array.isArray(p.tasks)?p.tasks.join("\n"):(p.tasks||""),
+  });
+};
+
 const savePlanEdit=()=>{
   const freq=parseFloat(editPlanForm.frequency);
   const hrs=parseFloat(editPlanForm.estimatedHours);
   if(isNaN(freq)||freq<=0){alert("Frecuencia inválida");return;}
   if(isNaN(hrs)||hrs<0){alert("Horas estimadas inválidas");return;}
-  const updatedPlans=plans.map(pl=>pl.id===editPlanTarget.id
-    ?{...pl,frequency:freq,estimatedHours:hrs,horometroTarget:(parseFloat(pl.lastHorometro)||0)+freq,materialesAsociados:editPlanForm.materialesAsociados||[]}
-    :pl);
+  const tipoPlanNorm=(editPlanForm.tipoPlan||"Horometro").toLowerCase();
+  const lastHoro=parseFloat(editPlanForm.lastHorometro)||0;
+  const nextDueDateCalc=tipoPlanNorm==="calendario"&&editPlanForm.fechaUltima?(()=>{
+    const d=new Date(editPlanForm.fechaUltima+"T12:00:00");d.setDate(d.getDate()+freq);return d.toISOString().slice(0,10);
+  })():null;
+  const updatedPlans=plans.map(pl=>pl.id===editPlanTarget.id?{
+    ...pl,
+    frequency:freq,
+    estimatedHours:hrs,
+    materialesAsociados:editPlanForm.materialesAsociados||[],
+    // El horómetro objetivo solo aplica a planes por horómetro — igual
+    // criterio que addPlan, para no convertir una frecuencia en días en horas.
+    ...(tipoPlanNorm==="horometro"?{horometroTarget:lastHoro+freq}:{horometroTarget:null}),
+    ...(isMaritimo?{
+      nave:editPlanForm.nave,area:editPlanForm.area,
+      responsable:editPlanForm.responsable,responsablePlan:editPlanForm.responsable,technician:editPlanForm.responsable,
+      actividadPlan:editPlanForm.actividadPlan,name:editPlanForm.actividadPlan||pl.name,
+      tipoPlan:editPlanForm.tipoPlan,unidad:editPlanForm.unidad,
+      activo:editPlanForm.activo,criticidad:editPlanForm.criticidad,criticidadPlan:(editPlanForm.criticidad||"").toLowerCase()||null,
+      fechaUltima:editPlanForm.fechaUltima,lastExecutionDate:editPlanForm.fechaUltima,
+      lastHorometro:lastHoro,
+      nextDueDate:nextDueDateCalc,proximaFecha:nextDueDateCalc||"",
+      valorRepuesto:parseFloat(editPlanForm.valorRepuesto)||0,valorServicio:parseFloat(editPlanForm.valorServicio)||0,moneda:editPlanForm.moneda,
+      pctAnticipacion:parseFloat(editPlanForm.pctAnticipacion)||20,
+      tasks:editPlanForm.tasks.split("\n").filter(Boolean),
+      historialCambios:[...(pl.historialCambios||[]),{ts:new Date().toISOString(),usuario:user.name,accion:"editado",detalle:"Plan editado"}],
+    }:{}),
+  }:pl);
   setData(d=>({...d,plans:updatedPlans}));
   saveData("plans",updatedPlans);
   setEditPlanTarget(null);
@@ -9220,11 +9274,12 @@ const confirmAssignOT=()=>{
   alert(`✅ OT ${otCode} generada`);
 };
 
+// "Vencido" y "Vencido crítico" se consolidaron en un solo estado "Crítico"
+// (decisión explícita: simplificar a solo Crítico/Próximo para lo vencido).
 const STATUS_ASSIGN={
   vigente:          {label:"Vigente",          cls:"text-emerald-700 bg-emerald-50 border-emerald-200"},
   proximo:          {label:"Próximo",           cls:"text-amber-700 bg-amber-50 border-amber-200"},
-  vencido:          {label:"Vencido",           cls:"text-red-600 bg-red-50 border-red-200"},
-  vencido_critico:  {label:"Vencido crítico",   cls:"text-white bg-red-600 border-red-700"},
+  critico:          {label:"Crítico",           cls:"text-white bg-red-600 border-red-700"},
   bloqueado_ot_abierta:{label:"OT abierta",     cls:"text-blue-700 bg-blue-50 border-blue-200"},
   inactivo:         {label:"Inactivo",          cls:"text-gray-400 bg-gray-50 border-gray-200"},
   sin_datos_horometro:{label:"Sin datos",       cls:"text-gray-400 bg-gray-50 border-gray-200"},
@@ -9285,8 +9340,7 @@ if(isMaritimo){
           <option value="">Todos los estados</option>
           <option value="vigente">Vigente</option>
           <option value="proximo">Próximo</option>
-          <option value="vencido">Vencido</option>
-          <option value="vencido_critico">Vencido crítico</option>
+          <option value="critico">Crítico</option>
           <option value="bloqueado_ot_abierta">OT abierta</option>
           <option value="inactivo">Inactivo</option>
         </select>
@@ -10906,7 +10960,7 @@ return(
 <div className="flex flex-col items-end gap-2 flex-shrink-0">
 {user.role==="supervisor"&&<>
 <input type="checkbox" checked={selPlanesIds.has(p.id)} onChange={e=>{setSelPlanesIds(prev=>{const n=new Set(prev);e.target.checked?n.add(p.id):n.delete(p.id);return n;});}} className="w-4 h-4" style={{accentColor:NV.blue}}/>
-<button onClick={()=>{setEditPlanTarget(p);setEditPlanForm({frequency:String(p.frequency),estimatedHours:String(p.estimatedHours||0),materialesAsociados:p.materialesAsociados||[]});}} className="p-1.5 rounded-lg hover:bg-blue-50 transition" style={{color:NV.blue}} title="Editar plan"><Edit2 size={13}/></button>
+<button onClick={()=>abrirEdicionPlan(p)} className="p-1.5 rounded-lg hover:bg-blue-50 transition" style={{color:NV.blue}} title="Editar plan"><Edit2 size={13}/></button>
 <button onClick={()=>generateOT(p)} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg hover:opacity-90 transition font-medium text-white" style={{background:NV.blue}}><Zap size={12}/>Generar OT</button>
 <button onClick={()=>deletePlan(p.id)} className="text-xs text-gray-300 hover:text-red-500 transition p-1"><Trash2 size={13}/></button>
 </>}
@@ -11045,7 +11099,7 @@ return(
                               <td className="px-4 py-3 text-center">
                                 <div className="flex items-center justify-center gap-1">
                                   <input type="checkbox" checked={selPlanesIds.has(p.id)} onChange={e=>{setSelPlanesIds(prev=>{const n=new Set(prev);e.target.checked?n.add(p.id):n.delete(p.id);return n;});}} className="w-3.5 h-3.5" style={{accentColor:NV.blue}}/>
-                                  <button onClick={()=>{setEditPlanTarget(p);setEditPlanForm({frequency:String(p.frequency),estimatedHours:String(p.estimatedHours||0),materialesAsociados:p.materialesAsociados||[]});}} className="p-1 rounded hover:bg-blue-50 transition" style={{color:NV.blue}} title="Editar plan">
+                                  <button onClick={()=>abrirEdicionPlan(p)} className="p-1 rounded hover:bg-blue-50 transition" style={{color:NV.blue}} title="Editar plan">
                                     <Edit2 size={12}/>
                                   </button>
                                   {!hasActiveOT&&(
@@ -11764,14 +11818,89 @@ return(
 {editPlanTarget&&(
 <Modal title={`Editar Plan: ${editPlanTarget.name}`} onClose={()=>setEditPlanTarget(null)} wide={true}>
 <div className="space-y-4">
+{isMaritimo&&(<>
+  <div className="grid grid-cols-2 gap-3">
+    <div><label className="text-gray-500 text-xs font-medium mb-1 block">NAVE</label>
+      <input value={editPlanForm.nave} onChange={e=>setEditPlanForm(f=>({...f,nave:e.target.value}))} className={iCls} placeholder="Esperanza"/>
+    </div>
+    <div><label className="text-gray-500 text-xs font-medium mb-1 block">ÁREA</label>
+      <input value={editPlanForm.area} onChange={e=>setEditPlanForm(f=>({...f,area:e.target.value}))} className={iCls} placeholder="Sala de Máquinas"/>
+    </div>
+  </div>
+  <div><label className="text-gray-500 text-xs font-medium mb-1 block">ACTIVIDAD DEL PLAN</label>
+    <input value={editPlanForm.actividadPlan} onChange={e=>setEditPlanForm(f=>({...f,actividadPlan:e.target.value}))} className={iCls} placeholder="ej: Limpieza filtro centrífugo"/>
+  </div>
+  <div><label className="text-gray-500 text-xs font-medium mb-1 block">RESPONSABLE</label>
+    <select value={editPlanForm.responsable==="__otro__"?"__otro__":(users.find(u=>u.name===editPlanForm.responsable)?editPlanForm.responsable:(editPlanForm.responsable?"__otro__":""))}
+      onChange={e=>setEditPlanForm(f=>({...f,responsable:e.target.value,responsableLibre:""}))}
+      className={sCls}>
+      <option value="">— Seleccionar responsable —</option>
+      {(users||[]).map(u=><option key={u.id} value={u.name}>{u.name} ({u.role})</option>)}
+      <option value="__otro__">✏️ Nombre no registrado...</option>
+    </select>
+    {editPlanForm.responsable==="__otro__"&&(
+      <input value={editPlanForm.responsableLibre||""} onChange={e=>setEditPlanForm(f=>({...f,responsableLibre:e.target.value,responsable:e.target.value}))} placeholder="Escribe el nombre completo" className={iCls+" mt-2"}/>
+    )}
+  </div>
+  <div className="grid grid-cols-3 gap-3">
+    <div><label className="text-gray-500 text-xs font-medium mb-1 block">TIPO DE PLAN</label>
+      <select value={editPlanForm.tipoPlan} onChange={e=>{const u=e.target.value==="Calendario"?"DÍAS":"HORAS";setEditPlanForm(f=>({...f,tipoPlan:e.target.value,unidad:u}));}} className={sCls}>
+        <option>Horometro</option><option>Calendario</option>
+      </select>
+    </div>
+    <div><label className="text-gray-500 text-xs font-medium mb-1 block">CRITICIDAD</label>
+      <select value={editPlanForm.criticidad} onChange={e=>setEditPlanForm(f=>({...f,criticidad:e.target.value}))} className={sCls}>
+        <option>Alta</option><option>Media</option><option>Baja</option>
+      </select>
+    </div>
+    <label className="flex items-center justify-between p-2.5 rounded-lg border border-gray-200 cursor-pointer self-end h-[38px]">
+      <span className="text-gray-600 text-xs font-medium">Activo</span>
+      <button onClick={()=>setEditPlanForm(f=>({...f,activo:!f.activo}))} type="button"
+        className={`w-9 h-5 rounded-full transition relative flex-shrink-0 ${editPlanForm.activo?"bg-red-500":"bg-gray-200"}`}>
+        <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition ${editPlanForm.activo?"left-4":"left-0.5"}`}/>
+      </button>
+    </label>
+  </div>
+  <div className="grid grid-cols-2 gap-3">
+    <div><label className="text-gray-500 text-xs font-medium mb-1 block">FECHA ÚLTIMA OT</label>
+      <input type="date" value={editPlanForm.fechaUltima} onChange={e=>setEditPlanForm(f=>({...f,fechaUltima:e.target.value}))} className={iCls}/>
+    </div>
+    <div><label className="text-gray-500 text-xs font-medium mb-1 block">HORÓMETRO ÚLTIMA OT</label>
+      <input type="number" value={editPlanForm.lastHorometro} onChange={e=>setEditPlanForm(f=>({...f,lastHorometro:e.target.value}))} className={iCls} placeholder="ej: 1000"/>
+    </div>
+  </div>
+  <div>
+    <label className="text-gray-500 text-xs font-medium mb-1 block">% ANTICIPACIÓN PARA GENERAR OT <span className="text-blue-500 font-bold">{parseFloat(editPlanForm.pctAnticipacion)||20}%</span></label>
+    <input type="range" min="0" max="50" step="5" value={parseFloat(editPlanForm.pctAnticipacion)||20} onChange={e=>setEditPlanForm(f=>({...f,pctAnticipacion:parseFloat(e.target.value)}))} className="w-full accent-blue-600"/>
+  </div>
+  <div className="grid grid-cols-3 gap-3">
+    <div><label className="text-gray-500 text-xs font-medium mb-1 block">VALOR REPUESTO</label>
+      <input type="number" value={editPlanForm.valorRepuesto} onChange={e=>setEditPlanForm(f=>({...f,valorRepuesto:e.target.value}))} className={iCls} placeholder="0"/>
+    </div>
+    <div><label className="text-gray-500 text-xs font-medium mb-1 block">VALOR SERVICIO</label>
+      <input type="number" value={editPlanForm.valorServicio} onChange={e=>setEditPlanForm(f=>({...f,valorServicio:e.target.value}))} className={iCls} placeholder="0"/>
+    </div>
+    <div><label className="text-gray-500 text-xs font-medium mb-1 block">MONEDA</label>
+      <select value={editPlanForm.moneda} onChange={e=>setEditPlanForm(f=>({...f,moneda:e.target.value}))} className={sCls}>
+        <option>USD</option><option>CLP</option>
+      </select>
+    </div>
+  </div>
+  <div>
+    <label className="text-gray-500 text-xs font-medium mb-1 block">ACTIVIDADES / TAREAS (UNA POR LÍNEA)</label>
+    <textarea value={editPlanForm.tasks} onChange={e=>setEditPlanForm(f=>({...f,tasks:e.target.value}))} rows={4} className={iCls+" resize-none"}/>
+  </div>
+</>)}
 <div className="grid grid-cols-2 gap-3">
-<div><label className="text-gray-500 text-xs font-medium mb-1 block">FRECUENCIA (horas)</label><input type="number" value={editPlanForm.frequency} onChange={e=>setEditPlanForm(f=>({...f,frequency:e.target.value}))} className={iCls} placeholder="250"/></div>
+<div><label className="text-gray-500 text-xs font-medium mb-1 block">{editPlanForm.tipoPlan==="Calendario"?"FRECUENCIA (días)":"FRECUENCIA (horas)"}</label><input type="number" value={editPlanForm.frequency} onChange={e=>setEditPlanForm(f=>({...f,frequency:e.target.value}))} className={iCls} placeholder="250"/></div>
 <div><label className="text-gray-500 text-xs font-medium mb-1 block">HRS ESTIMADAS</label><input type="number" value={editPlanForm.estimatedHours} onChange={e=>setEditPlanForm(f=>({...f,estimatedHours:e.target.value}))} className={iCls} placeholder="4"/></div>
 </div>
+{editPlanForm.tipoPlan!=="Calendario"&&(
 <div className="rounded-lg p-3 text-xs flex items-start gap-2" style={{background:NV.light,color:NV.navy,border:`1px solid #BFD9F2`}}>
 <Info size={13} className="flex-shrink-0 mt-0.5"/>
-<span>Nueva meta horómetro = base + frecuencia = <strong>{((parseFloat(editPlanTarget.lastHorometro)||0)+(parseFloat(editPlanForm.frequency)||0)).toLocaleString()}h</strong></span>
+<span>Nueva meta horómetro = base + frecuencia = <strong>{((parseFloat(editPlanForm.lastHorometro)||0)+(parseFloat(editPlanForm.frequency)||0)).toLocaleString()}h</strong></span>
 </div>
+)}
 <div>
   <MaterialesEquipoQuickPick
     equipId={editPlanTarget.equipId}
