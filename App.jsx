@@ -29883,6 +29883,12 @@ const [imgViewer,setImgViewer]=useState(null);
 const [conversaciones,setConversaciones]=useState([]);
 const [showChatPanel,setShowChatPanel]=useState(false);
 const [showPlanner,setShowPlanner]=useState(false);
+useEffect(()=>{window._mantekViewImg=setImgViewer;return()=>{window._mantekViewImg=null;};},[]);
+const navigate=p=>{setPage(p);setSidebarOpen(false);};
+const MODULE_LABEL=activeModule==="maritimo"
+  ?(activeBarco==="dalka"?"🚢 Dalka":"🚢 Esperanza")
+  :MODULE_CONFIG[activeModule]?.label||"🏗️ Taller Terminal";
+const activeCOLL=getActiveCOLL(activeModule,activeBarco);
   // ── Notificación visual del Planner: detecta cambios hechos por otros en
   // proyectos que comparto (comentarios/cambios de estado en tareas de
   // proyectos que creé, o cambios que un creador hizo en tareas que me
@@ -29930,12 +29936,6 @@ const [showPlanner,setShowPlanner]=useState(false);
     });
     return n;
   },[plannerOwnDoc,plannerLastSeen,user]);
-useEffect(()=>{window._mantekViewImg=setImgViewer;return()=>{window._mantekViewImg=null;};},[]);
-const navigate=p=>{setPage(p);setSidebarOpen(false);};
-const MODULE_LABEL=activeModule==="maritimo"
-  ?(activeBarco==="dalka"?"🚢 Dalka":"🚢 Esperanza")
-  :MODULE_CONFIG[activeModule]?.label||"🏗️ Taller Terminal";
-const activeCOLL=getActiveCOLL(activeModule,activeBarco);
 const saveData=useMemo(()=>makeSaveData(activeCOLL),[activeCOLL]);
 const appendToArray=useMemo(()=>makeAppendToArray(activeCOLL),[activeCOLL]);
 const updateInArray=useMemo(()=>makeUpdateInArray(activeCOLL),[activeCOLL]);
