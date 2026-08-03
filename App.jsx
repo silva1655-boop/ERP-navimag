@@ -23982,6 +23982,11 @@ const calcCumplimientoPorFecha=(checklistsFiltrados)=>{
 };
 
 // ─── MANTEK PLANNER ──────────────────────────────────────────────────────────
+// % de avance efectivo de una tarea de proyecto: usa cumplimiento si ya se
+// definió; si es una tarea vieja sin ese campo, cae a 100/0 según su columna
+// kanban. Compartida por PlannerPanel (lista de proyectos) y ProyectoEditor.
+const cumplimientoEfectivoTarea=t=>t.cumplimiento??(t.col==="listo"?100:0);
+
 function PlannerPanel({user,data,activeCOLL,onNav,onClose}){
   const [tab,setTab]=useState("hoy");
   const [compromisos,setCompromisos]=useState([]);
@@ -24156,6 +24161,7 @@ function PlannerPanel({user,data,activeCOLL,onNav,onClose}){
         {proyectoActivo?(
         <ProyectoEditor
           proyecto={proyectoActivo}
+          users={data.users||[]}
           onClose={()=>setProyectoActivo(null)}
           onSave={(proyectoActualizado)=>{
             const updated=proyectos.map(p=>p.id===proyectoActualizado.id?proyectoActualizado:p);
@@ -24354,7 +24360,7 @@ function PlannerPanel({user,data,activeCOLL,onNav,onClose}){
                 proyectos.map(p=>{
                   const tareasTotal=p.tareas?.length||0;
                   const tareasListas=(p.tareas||[]).filter(t=>t.col==="listo").length;
-                  const pct=tareasTotal>0?Math.round(tareasListas/tareasTotal*100):0;
+                  const pct=tareasTotal>0?Math.round((p.tareas||[]).reduce((s,t)=>s+cumplimientoEfectivoTarea(t),0)/tareasTotal):0;
                   return(
                     <div key={p.id}
                       onClick={()=>setProyectoActivo(p)}
@@ -24459,14 +24465,18 @@ function PlannerPanel({user,data,activeCOLL,onNav,onClose}){
   );
 }
 
-function ProyectoEditor({proyecto,onClose,onSave,onDelete}){
+function ProyectoEditor({proyecto,users,onClose,onSave,onDelete}){
   const [vistaEditor,setVistaEditor]=useState("kanban");
   const [tareas,setTareas]=useState(proyecto.tareas||[]);
   const [showFormTarea,setShowFormTarea]=useState(false);
   const [tareaEnEdicion,setTareaEnEdicion]=useState(null);
-  const [formTarea,setFormTarea]=useState({titulo:"",col:"por_hacer",fechaInicio:"",duracion:1,responsable:"",notas:""});
+  const [mesCalendario,setMesCalendario]=useState(()=>{const d=new Date();return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;});
+  const FORM_TAREA_VACIO={titulo:"",col:"por_hacer",fechaInicio:"",duracion:1,responsables:[],descripcion:"",cumplimiento:0};
+  const [formTarea,setFormTarea]=useState(FORM_TAREA_VACIO);
 
-  const FORM_TAREA_VACIO={titulo:"",col:"por_hacer",fechaInicio:"",duracion:1,responsable:"",notas:""};
+  const usuariosDisponibles=useMemo(()=>[...new Set((users||[]).map(u=>u.name).filter(Boolean))].sort(),[users]);
+
+  const cumplimientoEfectivo=cumplimientoEfectivoTarea;
 
   const abrirNuevaTarea=()=>{
     setTareaEnEdicion(null);
@@ -24476,7 +24486,12 @@ function ProyectoEditor({proyecto,onClose,onSave,onDelete}){
 
   const abrirEdicionTarea=(t)=>{
     setTareaEnEdicion(t);
-    setFormTarea({titulo:t.titulo,col:t.col,fechaInicio:t.fechaInicio||"",duracion:t.duracion||1,responsable:t.responsable||"",notas:t.notas||""});
+    setFormTarea({
+      titulo:t.titulo,col:t.col,fechaInicio:t.fechaInicio||"",duracion:t.duracion||1,
+      responsables:t.responsables||(t.responsable?[t.responsable]:[]),
+      descripcion:t.descripcion??t.notas??"",
+      cumplimiento:cumplimientoEfectivo(t),
+    });
     setShowFormTarea(true);
   };
 
@@ -24491,6 +24506,9 @@ function ProyectoEditor({proyecto,onClose,onSave,onDelete}){
     const fechaInicio=formTarea.fechaInicio||new Date().toISOString().slice(0,10);
     const dur=parseInt(formTarea.duracion)||1;
     const fechaFin=new Date(new Date(fechaInicio+"T12:00:00").getTime()+(dur-1)*86400000).toISOString().slice(0,10);
+    // Si se movió manualmente a "Listo" sin tocar el slider, el cumplimiento
+    // queda en 100 — evita que una tarea marcada lista muestre <100% de avance.
+    const cumplimiento=formTarea.col==="listo"?100:(parseInt(formTarea.cumplimiento)||0);
 
     let updated;
     if(tareaEnEdicion){
@@ -24501,8 +24519,9 @@ function ProyectoEditor({proyecto,onClose,onSave,onDelete}){
         fechaInicio,
         duracion:dur,
         fechaFin,
-        responsable:formTarea.responsable||"",
-        notas:formTarea.notas||"",
+        responsables:formTarea.responsables||[],
+        descripcion:formTarea.descripcion||"",
+        cumplimiento,
       }:t);
     }else{
       const nueva={
@@ -24512,8 +24531,9 @@ function ProyectoEditor({proyecto,onClose,onSave,onDelete}){
         fechaInicio,
         duracion:dur,
         fechaFin,
-        responsable:formTarea.responsable||"",
-        notas:formTarea.notas||"",
+        responsables:formTarea.responsables||[],
+        descripcion:formTarea.descripcion||"",
+        cumplimiento,
         creadoAt:new Date().toISOString(),
       };
       updated=[...tareas,nueva];
@@ -24524,7 +24544,7 @@ function ProyectoEditor({proyecto,onClose,onSave,onDelete}){
   };
 
   const cambiarCol=(tareaId,nuevoCol)=>{
-    const updated=tareas.map(t=>t.id===tareaId?{...t,col:nuevoCol}:t);
+    const updated=tareas.map(t=>t.id===tareaId?{...t,col:nuevoCol,cumplimiento:nuevoCol==="listo"?100:cumplimientoEfectivo(t)}:t);
     setTareas(updated);
     onSave({...proyecto,tareas:updated});
   };
@@ -24542,7 +24562,36 @@ function ProyectoEditor({proyecto,onClose,onSave,onDelete}){
     listo:{label:"Listo",color:"bg-emerald-50 border-emerald-200"},
   };
 
-  const pct=tareas.length>0?Math.round(tareas.filter(t=>t.col==="listo").length/tareas.length*100):0;
+  const pct=tareas.length>0?Math.round(tareas.reduce((s,t)=>s+cumplimientoEfectivo(t),0)/tareas.length):0;
+
+  // Vista Calendario: fechas locales armadas a mano (año-mes-día), sin pasar
+  // por toISOString() sobre un Date en medianoche local — en zonas UTC
+  // negativas (ej. Chile) eso corre la fecha un día hacia atrás.
+  const isoLocal=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+  const semanasCalendario=useMemo(()=>{
+    const [anio,mes]=mesCalendario.split("-").map(Number);
+    const primerDia=new Date(anio,mes-1,1);
+    const inicioGrid=new Date(anio,mes-1,1-((primerDia.getDay()+6)%7));
+    const dias=[];
+    for(let i=0;i<42;i++){
+      const d=new Date(inicioGrid.getFullYear(),inicioGrid.getMonth(),inicioGrid.getDate()+i);
+      const iso=isoLocal(d);
+      dias.push({
+        iso,dia:d.getDate(),enMes:d.getMonth()===mes-1,
+        tareasDelDia:tareas.filter(t=>t.fechaInicio&&t.fechaFin&&iso>=t.fechaInicio&&iso<=t.fechaFin),
+      });
+      if(i>=34&&d.getMonth()!==mes-1&&(i+1)%7===0) break; // corta tras completar la semana que ya salió del mes
+    }
+    const semanas=[];
+    for(let i=0;i<dias.length;i+=7) semanas.push(dias.slice(i,i+7));
+    return semanas;
+  },[mesCalendario,tareas]);
+  const cambiarMesCalendario=(delta)=>{
+    const [anio,mes]=mesCalendario.split("-").map(Number);
+    const d=new Date(anio,mes-1+delta,1);
+    setMesCalendario(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`);
+  };
+  const colColorCal={por_hacer:"#94a3b8",en_proceso:"#3b82f6",bloqueado:"#ef4444",listo:"#10b981"};
 
   const fechasValidas=tareas
     .filter(t=>t.fechaInicio&&t.fechaFin)
@@ -24634,6 +24683,7 @@ function ProyectoEditor({proyecto,onClose,onSave,onDelete}){
           {key:"kanban",label:"Kanban"},
           {key:"gantt",label:"Gantt"},
           {key:"lista",label:"Lista"},
+          {key:"calendario",label:"Calendario"},
         ].map(v=>(
           <button key={v.key} onClick={()=>setVistaEditor(v.key)}
             className={`py-2 px-3 text-xs font-semibold border-b-2 transition mr-1
@@ -24676,6 +24726,15 @@ function ProyectoEditor({proyecto,onClose,onSave,onDelete}){
                               {t.duracion>1&&` · ${t.duracion}d`}
                             </p>
                           )}
+                          {(t.responsables?.length>0||t.responsable)&&(
+                            <p className="text-[10px] text-gray-400 mt-0.5 truncate">👤 {(t.responsables?.length>0?t.responsables:[t.responsable]).join(", ")}</p>
+                          )}
+                          <div className="mt-1.5 flex items-center gap-1.5">
+                            <div className="flex-1 h-1 bg-gray-100 rounded-full overflow-hidden">
+                              <div className="h-full bg-blue-500 rounded-full" style={{width:cumplimientoEfectivo(t)+"%"}}/>
+                            </div>
+                            <span className="text-[9px] text-gray-400 font-semibold">{cumplimientoEfectivo(t)}%</span>
+                          </div>
                           <div className="flex gap-1 mt-1.5 flex-wrap items-center">
                             {Object.entries(cols).filter(([k])=>k!==colKey).map(([k,d])=>(
                               <button key={k} onClick={()=>cambiarCol(t.id,k)}
@@ -24756,7 +24815,8 @@ function ProyectoEditor({proyecto,onClose,onSave,onDelete}){
                           className={`absolute h-8 rounded-lg flex items-center justify-center text-white text-xs font-bold shadow-sm select-none cursor-grab active:cursor-grabbing transition-shadow
                             ${isDragging?"ring-2 ring-offset-1 ring-blue-400 shadow-lg z-20":""}`}
                           style={{left:offsetDias*DAY_W+"px",width:Math.max(durDias*DAY_W,DAY_W)+"px",background:colColor,top:"2px"}}
-                          title={`${t.titulo} · ${t.duracion}d`}>
+                          title={`${t.titulo} · ${t.duracion}d · ${cumplimientoEfectivo(t)}% de avance`}>
+                          <div className="absolute left-0 bottom-0 h-1 bg-white/70 rounded-bl-lg pointer-events-none" style={{width:cumplimientoEfectivo(t)+"%"}}/>
                           {durDias>1&&`${isDragging?durDias:t.duracion}d`}
                           <div
                             onMouseDown={e=>iniciarDragGantt(e,t,"resize",offsetDiasBase,durDiasBase)}
@@ -24806,10 +24866,16 @@ function ProyectoEditor({proyecto,onClose,onSave,onDelete}){
                   <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${t.col==="listo"?"bg-emerald-500":t.col==="en_proceso"?"bg-blue-500":t.col==="bloqueado"?"bg-red-500":"bg-gray-300"}`}/>
                   <div className="flex-1 min-w-0 cursor-pointer" onClick={()=>abrirEdicionTarea(t)}>
                     <p className="text-sm font-semibold text-gray-800 hover:text-blue-700 transition">{t.titulo}</p>
-                    <div className="flex gap-3 mt-0.5">
+                    <div className="flex gap-3 mt-0.5 flex-wrap">
                       {t.fechaInicio&&<span className="text-[10px] text-gray-400">📅 {new Date(t.fechaInicio+"T12:00:00").toLocaleDateString("es-CL")}</span>}
                       {t.duracion>0&&<span className="text-[10px] text-gray-400">⏱ {t.duracion} día{t.duracion>1?"s":""}</span>}
-                      {t.responsable&&<span className="text-[10px] text-gray-400">👤 {t.responsable}</span>}
+                      {(t.responsables?.length>0||t.responsable)&&<span className="text-[10px] text-gray-400">👤 {(t.responsables?.length>0?t.responsables:[t.responsable]).join(", ")}</span>}
+                    </div>
+                    <div className="flex items-center gap-1.5 mt-1 max-w-[160px]">
+                      <div className="flex-1 h-1 bg-gray-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-blue-500 rounded-full" style={{width:cumplimientoEfectivo(t)+"%"}}/>
+                      </div>
+                      <span className="text-[9px] text-gray-400 font-semibold">{cumplimientoEfectivo(t)}%</span>
                     </div>
                   </div>
                   <select value={t.col} onChange={e=>cambiarCol(t.id,e.target.value)}
@@ -24822,6 +24888,63 @@ function ProyectoEditor({proyecto,onClose,onSave,onDelete}){
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* VISTA CALENDARIO */}
+      {vistaEditor==="calendario"&&(
+        <div className="flex-1 overflow-y-auto p-4">
+          <div className="flex items-center justify-between mb-3">
+            <button onClick={()=>cambiarMesCalendario(-1)} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 transition">←</button>
+            <p className="font-bold text-gray-800 text-sm capitalize">
+              {new Date(mesCalendario+"-01T12:00:00").toLocaleDateString("es-CL",{month:"long",year:"numeric"})}
+            </p>
+            <button onClick={()=>cambiarMesCalendario(1)} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 transition">→</button>
+          </div>
+          <div className="grid grid-cols-7 mb-1.5">
+            {["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"].map(d=>(
+              <div key={d} className="text-center text-[10px] font-semibold text-gray-400 py-1">{d}</div>
+            ))}
+          </div>
+          <div className="space-y-1">
+            {semanasCalendario.map((semana,si)=>(
+              <div key={si} className="grid grid-cols-7 gap-1">
+                {semana.map(({iso,dia,enMes,tareasDelDia})=>{
+                  const esHoy=iso===isoLocal(new Date());
+                  const avgDia=tareasDelDia.length>0?Math.round(tareasDelDia.reduce((s,t)=>s+cumplimientoEfectivo(t),0)/tareasDelDia.length):null;
+                  return(
+                    <div key={iso} className={`rounded-lg border p-1 min-h-16 ${enMes?"bg-white border-gray-100":"bg-gray-50 border-gray-50"}`}>
+                      <div className="flex items-center justify-between">
+                        <span className={`text-[10px] font-semibold ${esHoy?"text-white bg-blue-600 rounded-full w-4 h-4 flex items-center justify-center":enMes?"text-gray-500":"text-gray-300"}`}>{dia}</span>
+                        {avgDia!=null&&<span className="text-[8px] text-gray-400 font-semibold">{avgDia}%</span>}
+                      </div>
+                      <div className="space-y-0.5 mt-1">
+                        {tareasDelDia.slice(0,3).map(t=>(
+                          <div key={t.id} onClick={()=>abrirEdicionTarea(t)}
+                            className="text-[9px] px-1 py-0.5 rounded truncate cursor-pointer text-white leading-tight"
+                            style={{background:colColorCal[t.col]||"#94a3b8"}}
+                            title={`${t.titulo} · ${cumplimientoEfectivo(t)}%`}>
+                            {t.titulo}
+                          </div>
+                        ))}
+                        {tareasDelDia.length>3&&(
+                          <p className="text-[8px] text-gray-400 pl-1">+{tareasDelDia.length-3} más</p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-4 mt-4 pt-3 border-t border-gray-100 flex-wrap">
+            {Object.entries(cols).map(([k,d])=>(
+              <div key={k} className="flex items-center gap-1.5">
+                <div className="w-3 h-3 rounded-sm" style={{background:colColorCal[k]}}/>
+                <span className="text-[10px] text-gray-500">{d.label}</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -24862,17 +24985,27 @@ function ProyectoEditor({proyecto,onClose,onSave,onDelete}){
                 </select>
               </div>
               <div>
-                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Responsable (opcional)</label>
-                <input value={formTarea.responsable} onChange={e=>setFormTarea(f=>({...f,responsable:e.target.value}))}
-                  className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-blue-400"
-                  placeholder="Nombre del responsable"/>
+                <MultiSelectFiltro label="Responsables (opcional)" opciones={usuariosDisponibles}
+                  seleccionados={formTarea.responsables} onChange={r=>setFormTarea(f=>({...f,responsables:r}))}
+                  placeholder="Sin asignar"/>
               </div>
               <div>
-                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Notas (opcional)</label>
-                <textarea value={formTarea.notas} onChange={e=>setFormTarea(f=>({...f,notas:e.target.value}))}
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Descripción (opcional)</label>
+                <textarea value={formTarea.descripcion} onChange={e=>setFormTarea(f=>({...f,descripcion:e.target.value}))}
                   rows={2}
                   className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-blue-400 resize-none"
                   placeholder="Detalles adicionales..."/>
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center justify-between mb-1">
+                  <span>% Cumplimiento</span>
+                  <span className="text-blue-600 font-bold normal-case text-sm">{formTarea.col==="listo"?100:formTarea.cumplimiento}%</span>
+                </label>
+                <input type="range" min="0" max="100" step="5" value={formTarea.col==="listo"?100:formTarea.cumplimiento}
+                  disabled={formTarea.col==="listo"}
+                  onChange={e=>setFormTarea(f=>({...f,cumplimiento:parseInt(e.target.value)}))}
+                  className="w-full accent-blue-600 disabled:opacity-50"/>
+                {formTarea.col==="listo"&&<p className="text-[10px] text-gray-400 mt-0.5">Se fija en 100% mientras el estado sea "Listo".</p>}
               </div>
               <div className="flex gap-3 pt-1">
                 <button onClick={cerrarFormTarea}
