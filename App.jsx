@@ -24641,10 +24641,83 @@ function PlannerPanel({user,data,activeCOLL,onNav,onClose}){
   );
 }
 
+const PLANNER_ADJUNTO_MAX_MB=15;
+
+// Chip de un archivo adjunto a un comentario del Planner: miniatura clickeable
+// si es imagen (reusa el visor global de la app), link de descarga si no.
+function AdjuntoChip({adjunto}){
+  if(!adjunto) return null;
+  const esImagen=(adjunto.tipo||"").startsWith("image/");
+  if(esImagen){
+    return(
+      <div className="mt-1.5 inline-block rounded-lg overflow-hidden border border-gray-200 cursor-pointer hover:border-blue-400 transition align-top"
+        style={{width:"56px",height:"56px"}} onClick={()=>window._mantekViewImg?.(adjunto.url)} title={adjunto.nombre}>
+        <img src={adjunto.url} alt={adjunto.nombre} className="w-full h-full object-cover"/>
+      </div>
+    );
+  }
+  return(
+    <a href={adjunto.url} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()}
+      className="mt-1.5 inline-flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-lg bg-gray-50 border border-gray-200 text-gray-600 hover:bg-gray-100 transition max-w-full">
+      📎 <span className="truncate">{adjunto.nombre}</span>{adjunto.tamanoKB?<span className="flex-shrink-0 text-gray-400">· {adjunto.tamanoKB}KB</span>:null}
+    </a>
+  );
+}
+
+// Botón "Adjuntar" para un comentario del Planner — lee el archivo elegido
+// como data URL y lo sube a Firebase Storage (mismo pipeline que usan las
+// fotos de checklist/hallazgos); cualquier tipo de archivo, no solo imágenes.
+function AdjuntoInput({adjunto,onChange}){
+  const [subiendo,setSubiendo]=useState(false);
+  const fileRef=useRef(null);
+  const handleFile=async(e)=>{
+    const file=e.target.files?.[0];
+    e.target.value="";
+    if(!file) return;
+    if(file.size>PLANNER_ADJUNTO_MAX_MB*1024*1024){
+      alert(`El archivo supera los ${PLANNER_ADJUNTO_MAX_MB}MB.`);
+      return;
+    }
+    setSubiendo(true);
+    try{
+      const b64=await new Promise((resolve,reject)=>{
+        const r=new FileReader();
+        r.onload=()=>resolve(r.result);
+        r.onerror=()=>reject(new Error("No se pudo leer el archivo"));
+        r.readAsDataURL(file);
+      });
+      const url=await uploadToFirebaseStorage(b64,"planner_adjuntos");
+      if(url) onChange({url,nombre:file.name,tipo:file.type||"",tamanoKB:Math.round(file.size/1024)});
+      else alert("No se pudo subir el archivo. Intenta de nuevo.");
+    }catch(err){
+      console.error("AdjuntoInput:",err);
+      alert("Error al subir el archivo.");
+    }
+    setSubiendo(false);
+  };
+  return(
+    <div className="flex items-center gap-1.5 flex-shrink-0">
+      <input ref={fileRef} type="file" className="hidden" onChange={handleFile}/>
+      {adjunto?(
+        <span className="flex items-center gap-1 text-[10px] px-2 py-1.5 rounded-lg bg-blue-50 text-blue-700 border border-blue-200 max-w-[120px]">
+          <span className="truncate">📎 {adjunto.nombre}</span>
+          <button type="button" onClick={()=>onChange(null)} className="text-blue-400 hover:text-red-500 flex-shrink-0">✕</button>
+        </span>
+      ):(
+        <button type="button" onClick={()=>fileRef.current?.click()} disabled={subiendo}
+          className="text-[10px] px-2 py-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition disabled:opacity-50 flex-shrink-0">
+          {subiendo?"Subiendo...":"📎 Adjuntar"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 // Modal de comentario obligatorio al cambiar el estado de una tarea — lo usan
 // tanto el creador (ProyectoEditor) como el responsable (TareasAsignadasPanel).
 function ModalComentarioEstado({tareaTitulo,colAnteriorLabel,colNuevoLabel,onConfirm,onCancel}){
   const [texto,setTexto]=useState("");
+  const [adjunto,setAdjunto]=useState(null);
   return(
     <div className="absolute inset-0 flex items-center justify-center z-30 p-4" style={{background:"rgba(0,0,0,0.5)"}} onClick={e=>{if(e.target===e.currentTarget)onCancel();}}>
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden" onClick={e=>e.stopPropagation()}>
@@ -24660,12 +24733,13 @@ function ModalComentarioEstado({tareaTitulo,colAnteriorLabel,colNuevoLabel,onCon
               className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-blue-400 resize-none"
               placeholder="¿Qué cambió? ¿Por qué?"/>
           </div>
+          <AdjuntoInput adjunto={adjunto} onChange={setAdjunto}/>
           <div className="flex gap-3 pt-1">
             <button onClick={onCancel}
               className="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-600 text-sm font-semibold hover:bg-gray-50 transition">
               Cancelar
             </button>
-            <button onClick={()=>{if(texto.trim())onConfirm(texto.trim());}} disabled={!texto.trim()}
+            <button onClick={()=>{if(texto.trim())onConfirm(texto.trim(),adjunto);}} disabled={!texto.trim()}
               className="flex-1 py-2.5 rounded-xl text-white text-sm font-bold transition disabled:opacity-40" style={{background:"#2563eb"}}>
               Confirmar
             </button>
@@ -24685,7 +24759,9 @@ function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}
   const [cambioEstadoPendiente,setCambioEstadoPendiente]=useState(null); // {tareaId,nuevoCol}
   const [comentariosGenerales,setComentariosGenerales]=useState(proyecto.comentariosGenerales||[]);
   const [nuevoComentarioGeneral,setNuevoComentarioGeneral]=useState("");
+  const [adjuntoGeneral,setAdjuntoGeneral]=useState(null);
   const [comentarioPorTarea,setComentarioPorTarea]=useState({});
+  const [adjuntoPorTarea,setAdjuntoPorTarea]=useState({});
   const FORM_TAREA_VACIO={titulo:"",col:"por_hacer",fechaInicio:"",duracion:1,responsables:[],descripcion:"",cumplimiento:0};
   const [formTarea,setFormTarea]=useState(FORM_TAREA_VACIO);
 
@@ -24823,7 +24899,7 @@ function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}
     if(tareaId===undefined||nuevoCol===tareas.find(t=>t.id===tareaId)?.col) return;
     setCambioEstadoPendiente({tareaId,nuevoCol});
   };
-  const confirmarCambioEstado=(comentarioTexto)=>{
+  const confirmarCambioEstado=(comentarioTexto,adjunto)=>{
     if(!cambioEstadoPendiente) return;
     const{tareaId,nuevoCol}=cambioEstadoPendiente;
     const anterior=tareas.find(t=>t.id===tareaId);
@@ -24833,6 +24909,7 @@ function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}
         id:"c_"+Math.random().toString(36).slice(2,8),
         texto:comentarioTexto,autor:user?.name||user?.username||"",fecha:new Date().toISOString(),
         colAnterior:anterior.col,colNuevo:nuevoCol,
+        adjunto:adjunto||null,
       }],
     };
     const updated=tareas.map(t=>t.id===tareaId?nueva:t);
@@ -24866,11 +24943,12 @@ function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}
 
   const agregarComentarioGeneral=()=>{
     if(!nuevoComentarioGeneral.trim()) return;
-    const comentario={id:"cg_"+Math.random().toString(36).slice(2,8),texto:nuevoComentarioGeneral.trim(),autor:user?.name||user?.username||"",fecha:new Date().toISOString()};
+    const comentario={id:"cg_"+Math.random().toString(36).slice(2,8),texto:nuevoComentarioGeneral.trim(),autor:user?.name||user?.username||"",fecha:new Date().toISOString(),adjunto:adjuntoGeneral||null};
     const actualizados=[...comentariosGenerales,comentario];
     setComentariosGenerales(actualizados);
     onSave({...proyecto,tareas,comentariosGenerales:actualizados});
     setNuevoComentarioGeneral("");
+    setAdjuntoGeneral(null);
   };
 
   // Comentario atado a una tarea específica (no requiere cambio de estado) —
@@ -24878,11 +24956,12 @@ function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}
   const agregarComentarioTarea=(tareaId)=>{
     const texto=(comentarioPorTarea[tareaId]||"").trim();
     if(!texto) return;
-    const comentario={id:"c_"+Math.random().toString(36).slice(2,8),texto,autor:user?.name||user?.username||"",fecha:new Date().toISOString()};
+    const comentario={id:"c_"+Math.random().toString(36).slice(2,8),texto,autor:user?.name||user?.username||"",fecha:new Date().toISOString(),adjunto:adjuntoPorTarea[tareaId]||null};
     const updated=tareas.map(t=>t.id===tareaId?{...t,comentarios:[...(t.comentarios||[]),comentario]}:t);
     setTareas(updated);
     onSave({...proyecto,tareas:updated,comentariosGenerales});
     setComentarioPorTarea(m=>({...m,[tareaId]:""}));
+    setAdjuntoPorTarea(m=>({...m,[tareaId]:null}));
   };
 
   // Vista Calendario: fechas locales armadas a mano (año-mes-día), sin pasar
@@ -25299,14 +25378,16 @@ function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}
                           <p className="text-[9px] text-gray-400">{cols[c.colAnterior]?.label||c.colAnterior} → {cols[c.colNuevo]?.label||c.colNuevo}</p>
                         )}
                         <p className="text-xs text-gray-600 mt-0.5">{c.texto}</p>
+                        <AdjuntoChip adjunto={c.adjunto}/>
                       </div>
                     ))
                   )}
-                  <div className="flex gap-2 pt-1">
+                  <div className="flex items-end gap-2 pt-1">
                     <input value={comentarioPorTarea[t.id]||""} onChange={e=>setComentarioPorTarea(m=>({...m,[t.id]:e.target.value}))}
                       onKeyDown={e=>{if(e.key==="Enter")agregarComentarioTarea(t.id);}}
                       placeholder="Comentar esta tarea..."
                       className="flex-1 px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs focus:outline-none focus:border-blue-400"/>
+                    <AdjuntoInput adjunto={adjuntoPorTarea[t.id]||null} onChange={a=>setAdjuntoPorTarea(m=>({...m,[t.id]:a}))}/>
                     <button onClick={()=>agregarComentarioTarea(t.id)} disabled={!(comentarioPorTarea[t.id]||"").trim()}
                       className="px-2.5 py-1.5 rounded-lg text-white text-[11px] font-bold transition disabled:opacity-40 flex-shrink-0" style={{background:"#2563eb"}}>
                       Comentar
@@ -25331,14 +25412,16 @@ function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}
                         <p className="text-[9px] text-gray-400 flex-shrink-0">{new Date(c.fecha).toLocaleString("es-CL")}</p>
                       </div>
                       <p className="text-xs text-gray-600 mt-0.5">{c.texto}</p>
+                      <AdjuntoChip adjunto={c.adjunto}/>
                     </div>
                   ))
                 )}
-                <div className="flex gap-2 pt-1">
+                <div className="flex items-end gap-2 pt-1">
                   <input value={nuevoComentarioGeneral} onChange={e=>setNuevoComentarioGeneral(e.target.value)}
                     onKeyDown={e=>{if(e.key==="Enter")agregarComentarioGeneral();}}
                     placeholder="Comentar el proyecto en general..."
                     className="flex-1 px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs focus:outline-none focus:border-blue-400"/>
+                  <AdjuntoInput adjunto={adjuntoGeneral} onChange={setAdjuntoGeneral}/>
                   <button onClick={agregarComentarioGeneral} disabled={!nuevoComentarioGeneral.trim()}
                     className="px-2.5 py-1.5 rounded-lg text-white text-[11px] font-bold transition disabled:opacity-40 flex-shrink-0" style={{background:"#2563eb"}}>
                     Comentar
@@ -25420,6 +25503,7 @@ function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}
                           {c.autor} · {new Date(c.fecha).toLocaleString("es-CL")}
                           {c.colAnterior&&c.colNuevo&&` · ${cols[c.colAnterior]?.label||c.colAnterior} → ${cols[c.colNuevo]?.label||c.colNuevo}`}
                         </p>
+                        <AdjuntoChip adjunto={c.adjunto}/>
                       </div>
                     ))}
                   </div>
@@ -25493,7 +25577,9 @@ function TareasAsignadasPanel({user,compromisos}){
   const [proyectoAbierto,setProyectoAbierto]=useState(null); // {key,proyectoId}
   const [vistaProyecto,setVistaProyecto]=useState("kanban"); // kanban | comentarios
   const [nuevoComentarioGeneral,setNuevoComentarioGeneral]=useState("");
+  const [adjuntoGeneral,setAdjuntoGeneral]=useState(null);
   const [comentarioPorTarea,setComentarioPorTarea]=useState({});
+  const [adjuntoPorTarea,setAdjuntoPorTarea]=useState({});
 
   const fuentesUnicas=useMemo(()=>{
     const vistos=new Map();
@@ -25555,7 +25641,7 @@ function TareasAsignadasPanel({user,compromisos}){
     setCambioEstadoPendiente({tarea,nuevoCol});
   };
 
-  const confirmarCambioEstado=async(comentarioTexto)=>{
+  const confirmarCambioEstado=async(comentarioTexto,adjunto)=>{
     if(!cambioEstadoPendiente) return;
     const{tarea,nuevoCol}=cambioEstadoPendiente;
     const ref=doc(db,tarea._colCreador,"planner_"+tarea._creadorId);
@@ -25573,6 +25659,7 @@ function TareasAsignadasPanel({user,compromisos}){
             id:"c_"+Math.random().toString(36).slice(2,8),
             texto:comentarioTexto,autor:user?.name||user?.username||"",fecha:new Date().toISOString(),
             colAnterior:t.col,colNuevo:nuevoCol,
+            adjunto:adjunto||null,
           }],
         };
         return tareaActualizada;
@@ -25644,13 +25731,14 @@ function TareasAsignadasPanel({user,compromisos}){
     const snap=await getDoc(ref);
     if(!snap.exists()) return;
     const data=snap.data();
-    const comentario={id:"c_"+Math.random().toString(36).slice(2,8),texto,autor:user?.name||user?.username||"",fecha:new Date().toISOString()};
+    const comentario={id:"c_"+Math.random().toString(36).slice(2,8),texto,autor:user?.name||user?.username||"",fecha:new Date().toISOString(),adjunto:adjuntoPorTarea[tarea.id]||null};
     const proyectosNuevos=(data.proyectos||[]).map(p=>{
       if(p.id!==tarea._proyectoId) return p;
       return{...p,tareas:(p.tareas||[]).map(t=>t.id===tarea.id?{...t,comentarios:[...(t.comentarios||[]),comentario]}:t)};
     });
     await setDoc(ref,{...data,proyectos:proyectosNuevos,updatedAt:new Date().toISOString()});
     setComentarioPorTarea(m=>({...m,[tarea.id]:""}));
+    setAdjuntoPorTarea(m=>({...m,[tarea.id]:null}));
   };
 
   // Comentario general del proyecto (no atado a un cambio de estado) — se
@@ -25661,10 +25749,11 @@ function TareasAsignadasPanel({user,compromisos}){
     const snap=await getDoc(ref);
     if(!snap.exists()) return;
     const data=snap.data();
-    const comentario={id:"cg_"+Math.random().toString(36).slice(2,8),texto:nuevoComentarioGeneral.trim(),autor:user?.name||user?.username||"",fecha:new Date().toISOString()};
+    const comentario={id:"cg_"+Math.random().toString(36).slice(2,8),texto:nuevoComentarioGeneral.trim(),autor:user?.name||user?.username||"",fecha:new Date().toISOString(),adjunto:adjuntoGeneral||null};
     const proyectosNuevos=(data.proyectos||[]).map(p=>p.id===proyectoActivo.proyecto.id?{...p,comentariosGenerales:[...(p.comentariosGenerales||[]),comentario]}:p);
     await setDoc(ref,{...data,proyectos:proyectosNuevos,updatedAt:new Date().toISOString()});
     setNuevoComentarioGeneral("");
+    setAdjuntoGeneral(null);
   };
 
   // ── Vista de proyecto completo (visualización total, edición solo de mis tareas) ──
@@ -25756,14 +25845,16 @@ function TareasAsignadasPanel({user,compromisos}){
                             <p className="text-[9px] text-gray-400">{COLS_TAREA[c.colAnterior]?.label||c.colAnterior} → {COLS_TAREA[c.colNuevo]?.label||c.colNuevo}</p>
                           )}
                           <p className="text-xs text-gray-600 mt-0.5">{c.texto}</p>
+                          <AdjuntoChip adjunto={c.adjunto}/>
                         </div>
                       ))
                     )}
-                    <div className="flex gap-2 pt-1">
+                    <div className="flex items-end gap-2 pt-1">
                       <input value={comentarioPorTarea[t.id]||""} onChange={e=>setComentarioPorTarea(m=>({...m,[t.id]:e.target.value}))}
                         onKeyDown={e=>{if(e.key==="Enter")agregarComentarioTarea(t);}}
                         placeholder="Comentar esta tarea..."
                         className="flex-1 px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs focus:outline-none focus:border-blue-400"/>
+                      <AdjuntoInput adjunto={adjuntoPorTarea[t.id]||null} onChange={a=>setAdjuntoPorTarea(m=>({...m,[t.id]:a}))}/>
                       <button onClick={()=>agregarComentarioTarea(t)} disabled={!(comentarioPorTarea[t.id]||"").trim()}
                         className="px-2.5 py-1.5 rounded-lg text-white text-[11px] font-bold transition disabled:opacity-40 flex-shrink-0" style={{background:"#2563eb"}}>
                         Comentar
@@ -25788,14 +25879,16 @@ function TareasAsignadasPanel({user,compromisos}){
                           <p className="text-[9px] text-gray-400 flex-shrink-0">{new Date(c.fecha).toLocaleString("es-CL")}</p>
                         </div>
                         <p className="text-xs text-gray-600 mt-0.5">{c.texto}</p>
+                        <AdjuntoChip adjunto={c.adjunto}/>
                       </div>
                     ))
                   )}
-                  <div className="flex gap-2 pt-1">
+                  <div className="flex items-end gap-2 pt-1">
                     <input value={nuevoComentarioGeneral} onChange={e=>setNuevoComentarioGeneral(e.target.value)}
                       onKeyDown={e=>{if(e.key==="Enter")agregarComentarioGeneral();}}
                       placeholder="Comentar el proyecto en general..."
                       className="flex-1 px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs focus:outline-none focus:border-blue-400"/>
+                    <AdjuntoInput adjunto={adjuntoGeneral} onChange={setAdjuntoGeneral}/>
                     <button onClick={agregarComentarioGeneral} disabled={!nuevoComentarioGeneral.trim()}
                       className="px-2.5 py-1.5 rounded-lg text-white text-[11px] font-bold transition disabled:opacity-40 flex-shrink-0" style={{background:"#2563eb"}}>
                       Comentar
@@ -25855,7 +25948,10 @@ function TareasAsignadasPanel({user,compromisos}){
             {t.comentarios?.length>0&&(
               <div className="mt-2 pt-2 border-t border-gray-100 space-y-1">
                 {[...t.comentarios].reverse().slice(0,3).map(c=>(
-                  <p key={c.id} className="text-[10px] text-gray-500"><span className="font-semibold text-gray-600">{c.autor}:</span> {c.texto}</p>
+                  <div key={c.id}>
+                    <p className="text-[10px] text-gray-500"><span className="font-semibold text-gray-600">{c.autor}:</span> {c.texto}</p>
+                    <AdjuntoChip adjunto={c.adjunto}/>
+                  </div>
                 ))}
               </div>
             )}
