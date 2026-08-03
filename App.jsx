@@ -2544,7 +2544,7 @@ repuestos:     {label:"Repuestos",            icon:Package},
 };
 function Topbar({user,page,onNav,notifCount,onToggleSidebar,fontSize,setFontSize,onChangePassword,onChangeModule,onLogout,onInstall,onOpenChat,chatBadge,onOpenPlanner,plannerBadge,navCategorias:navCats}){
 const navCategorias=navCats||NAV_CATEGORIAS;
-const canUsePlanner=["supervisor","admin"].includes(user?.role)||user?.authRole==="ADMIN";
+const canUsePlanner=["supervisor","admin","operaciones"].includes(user?.role)||user?.authRole==="ADMIN";
 const catKey=getCategoriaActiva(page,navCategorias);
 const categoria=catKey?navCategorias[catKey]:null;
 const [showUserMenu,setShowUserMenu]=useState(false);
@@ -24685,6 +24685,7 @@ function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}
   const [cambioEstadoPendiente,setCambioEstadoPendiente]=useState(null); // {tareaId,nuevoCol}
   const [comentariosGenerales,setComentariosGenerales]=useState(proyecto.comentariosGenerales||[]);
   const [nuevoComentarioGeneral,setNuevoComentarioGeneral]=useState("");
+  const [comentarioPorTarea,setComentarioPorTarea]=useState({});
   const FORM_TAREA_VACIO={titulo:"",col:"por_hacer",fechaInicio:"",duracion:1,responsables:[],descripcion:"",cumplimiento:0};
   const [formTarea,setFormTarea]=useState(FORM_TAREA_VACIO);
 
@@ -24733,6 +24734,7 @@ function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}
           asignadoA:nombre,
           creadoPor:user.name||user.username||"",
           creadoAt:existente?.creadoAt||new Date().toISOString(),
+          actualizadoAt:new Date().toISOString(),
           postergaciones:existente?.postergaciones||0,
           notas:`Asignado por ${user.name||user.username||""} en el proyecto "${proyecto.nombre}" · Avance: ${cumplimientoEfectivoTarea(tareaNueva)}%.`,
         };
@@ -24869,6 +24871,18 @@ function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}
     setComentariosGenerales(actualizados);
     onSave({...proyecto,tareas,comentariosGenerales:actualizados});
     setNuevoComentarioGeneral("");
+  };
+
+  // Comentario atado a una tarea específica (no requiere cambio de estado) —
+  // cada tarea tiene su propio hilo, así no se mezclan entre sí.
+  const agregarComentarioTarea=(tareaId)=>{
+    const texto=(comentarioPorTarea[tareaId]||"").trim();
+    if(!texto) return;
+    const comentario={id:"c_"+Math.random().toString(36).slice(2,8),texto,autor:user?.name||user?.username||"",fecha:new Date().toISOString()};
+    const updated=tareas.map(t=>t.id===tareaId?{...t,comentarios:[...(t.comentarios||[]),comentario]}:t);
+    setTareas(updated);
+    onSave({...proyecto,tareas:updated,comentariosGenerales});
+    setComentarioPorTarea(m=>({...m,[tareaId]:""}));
   };
 
   // Vista Calendario: fechas locales armadas a mano (año-mes-día), sin pasar
@@ -25256,40 +25270,83 @@ function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}
         </div>
       )}
 
-      {/* VISTA COMENTARIOS — registro visible del proyecto: comentarios de
-          cambio de estado (obligatorios) + comentarios generales (libres) */}
+      {/* VISTA COMENTARIOS — un hilo por tarea (comentarios de cambio de
+          estado + comentarios libres agregados acá), para que no se mezclen
+          entre tareas distintas. Al final, un espacio para comentarios
+          generales del proyecto que no están atados a ninguna tarea. */}
       {vistaEditor==="comentarios"&&(
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          <div className="flex gap-2">
-            <textarea value={nuevoComentarioGeneral} onChange={e=>setNuevoComentarioGeneral(e.target.value)}
-              rows={2} placeholder="Agregar un comentario al proyecto (no necesita estar atado a un cambio de estado)..."
-              className="flex-1 px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-blue-400 resize-none"/>
-            <button onClick={agregarComentarioGeneral} disabled={!nuevoComentarioGeneral.trim()}
-              className="px-3 py-2 rounded-xl text-white text-xs font-bold transition disabled:opacity-40 flex-shrink-0 self-end" style={{background:"#2563eb"}}>
-              Comentar
-            </button>
-          </div>
-          {comentariosFeed.length===0?(
+          {tareas.length===0&&comentariosGenerales.length===0?(
             <p className="text-gray-400 text-sm text-center py-8">Sin comentarios todavía.</p>
-          ):(
-            <div className="space-y-2">
-              {comentariosFeed.map(c=>(
-                <div key={c.id} className="bg-white rounded-xl border border-gray-200 p-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-xs font-semibold text-gray-700">{c.autor}</p>
-                    <p className="text-[10px] text-gray-400">{new Date(c.fecha).toLocaleString("es-CL")}</p>
-                  </div>
-                  {c.tareaTitulo&&(
-                    <p className="text-[10px] text-gray-400 mt-0.5">
-                      📌 {c.tareaTitulo}
-                      {c.colAnterior&&c.colNuevo&&` · ${cols[c.colAnterior]?.label||c.colAnterior} → ${cols[c.colNuevo]?.label||c.colNuevo}`}
-                    </p>
-                  )}
-                  <p className="text-sm text-gray-600 mt-1">{c.texto}</p>
+          ):(<>
+            {tareas.map(t=>(
+              <div key={t.id} className="border border-gray-200 rounded-xl overflow-hidden bg-white">
+                <div className="px-3 py-2 bg-gray-50 border-b border-gray-100">
+                  <p className="text-xs font-bold text-gray-700 truncate">{t.titulo}</p>
+                  <p className="text-[10px] text-gray-400">{cols[t.col]?.label||t.col}{(t.responsables?.length>0)&&` · ${t.responsables.join(", ")}`}</p>
                 </div>
-              ))}
+                <div className="p-3 space-y-2">
+                  {(t.comentarios||[]).length===0?(
+                    <p className="text-gray-300 text-xs italic">Sin comentarios en esta tarea.</p>
+                  ):(
+                    [...t.comentarios].reverse().map(c=>(
+                      <div key={c.id} className="bg-gray-50 rounded-lg px-2.5 py-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-[11px] font-semibold text-gray-700">{c.autor}</p>
+                          <p className="text-[9px] text-gray-400 flex-shrink-0">{new Date(c.fecha).toLocaleString("es-CL")}</p>
+                        </div>
+                        {c.colAnterior&&c.colNuevo&&(
+                          <p className="text-[9px] text-gray-400">{cols[c.colAnterior]?.label||c.colAnterior} → {cols[c.colNuevo]?.label||c.colNuevo}</p>
+                        )}
+                        <p className="text-xs text-gray-600 mt-0.5">{c.texto}</p>
+                      </div>
+                    ))
+                  )}
+                  <div className="flex gap-2 pt-1">
+                    <input value={comentarioPorTarea[t.id]||""} onChange={e=>setComentarioPorTarea(m=>({...m,[t.id]:e.target.value}))}
+                      onKeyDown={e=>{if(e.key==="Enter")agregarComentarioTarea(t.id);}}
+                      placeholder="Comentar esta tarea..."
+                      className="flex-1 px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs focus:outline-none focus:border-blue-400"/>
+                    <button onClick={()=>agregarComentarioTarea(t.id)} disabled={!(comentarioPorTarea[t.id]||"").trim()}
+                      className="px-2.5 py-1.5 rounded-lg text-white text-[11px] font-bold transition disabled:opacity-40 flex-shrink-0" style={{background:"#2563eb"}}>
+                      Comentar
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+            <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
+              <div className="px-3 py-2 bg-gray-50 border-b border-gray-100">
+                <p className="text-xs font-bold text-gray-700">Generales del proyecto</p>
+                <p className="text-[10px] text-gray-400">No atados a ninguna tarea en particular</p>
+              </div>
+              <div className="p-3 space-y-2">
+                {comentariosGenerales.length===0?(
+                  <p className="text-gray-300 text-xs italic">Sin comentarios generales.</p>
+                ):(
+                  [...comentariosGenerales].reverse().map(c=>(
+                    <div key={c.id} className="bg-gray-50 rounded-lg px-2.5 py-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-[11px] font-semibold text-gray-700">{c.autor}</p>
+                        <p className="text-[9px] text-gray-400 flex-shrink-0">{new Date(c.fecha).toLocaleString("es-CL")}</p>
+                      </div>
+                      <p className="text-xs text-gray-600 mt-0.5">{c.texto}</p>
+                    </div>
+                  ))
+                )}
+                <div className="flex gap-2 pt-1">
+                  <input value={nuevoComentarioGeneral} onChange={e=>setNuevoComentarioGeneral(e.target.value)}
+                    onKeyDown={e=>{if(e.key==="Enter")agregarComentarioGeneral();}}
+                    placeholder="Comentar el proyecto en general..."
+                    className="flex-1 px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs focus:outline-none focus:border-blue-400"/>
+                  <button onClick={agregarComentarioGeneral} disabled={!nuevoComentarioGeneral.trim()}
+                    className="px-2.5 py-1.5 rounded-lg text-white text-[11px] font-bold transition disabled:opacity-40 flex-shrink-0" style={{background:"#2563eb"}}>
+                    Comentar
+                  </button>
+                </div>
+              </div>
             </div>
-          )}
+          </>)}
         </div>
       )}
 
@@ -25400,6 +25457,27 @@ function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}
   );
 }
 
+// Slider de avance que el propio responsable mueve sobre su tarea — mantiene
+// el valor en estado local mientras se arrastra y solo confirma (escribe)
+// al soltar, para no disparar una escritura a Firestore por cada paso.
+function AvanceSliderInline({value,onCommit}){
+  const [val,setVal]=useState(value);
+  useEffect(()=>{setVal(value);},[value]);
+  return(
+    <div className="mt-1.5" onClick={e=>e.stopPropagation()}>
+      <div className="flex items-center justify-between mb-0.5">
+        <span className="text-[9px] text-gray-400">Mi avance</span>
+        <span className="text-[9px] font-bold text-blue-600">{val}%</span>
+      </div>
+      <input type="range" min="0" max="100" step="5" value={val}
+        onChange={e=>setVal(parseInt(e.target.value))}
+        onMouseUp={e=>onCommit(parseInt(e.target.value))}
+        onTouchEnd={()=>onCommit(val)}
+        className="w-full accent-blue-600 h-1"/>
+    </div>
+  );
+}
+
 // Vista del responsable: "Tareas asignadas a mí". Los proyectos siguen siendo
 // privados de quien los crea — este panel no los duplica, lee en vivo (vía
 // onSnapshot) los planner_<creadorId> de cada persona que le asignó algo
@@ -25415,6 +25493,7 @@ function TareasAsignadasPanel({user,compromisos}){
   const [proyectoAbierto,setProyectoAbierto]=useState(null); // {key,proyectoId}
   const [vistaProyecto,setVistaProyecto]=useState("kanban"); // kanban | comentarios
   const [nuevoComentarioGeneral,setNuevoComentarioGeneral]=useState("");
+  const [comentarioPorTarea,setComentarioPorTarea]=useState({});
 
   const fuentesUnicas=useMemo(()=>{
     const vistos=new Map();
@@ -25520,6 +25599,60 @@ function TareasAsignadasPanel({user,compromisos}){
     setCambioEstadoPendiente(null);
   };
 
+  // El propio responsable mueve su % de avance (sin pasar por el modal de
+  // cambio de estado, que es solo para el kanban) — deja un comentario
+  // automático en el hilo de la tarea para que el creador vea de dónde salió
+  // el cambio y para que dispare la notificación de "cambios nuevos".
+  const actualizarAvance=async(tarea,pct)=>{
+    if(pct===cumplimientoEfectivoTarea(tarea)) return;
+    const ref=doc(db,tarea._colCreador,"planner_"+tarea._creadorId);
+    const snap=await getDoc(ref);
+    if(!snap.exists()) return;
+    const data=snap.data();
+    const proyectosNuevos=(data.proyectos||[]).map(p=>{
+      if(p.id!==tarea._proyectoId) return p;
+      return{...p,tareas:(p.tareas||[]).map(t=>t.id===tarea.id?{
+        ...t,cumplimiento:pct,
+        comentarios:[...(t.comentarios||[]),{
+          id:"c_"+Math.random().toString(36).slice(2,8),
+          texto:`Actualizó su avance a ${pct}%.`,
+          autor:user?.name||user?.username||"",fecha:new Date().toISOString(),
+        }],
+      }:t)};
+    });
+    await setDoc(ref,{...data,proyectos:proyectosNuevos,updatedAt:new Date().toISOString()});
+    const miRef=doc(db,tarea._colCreador,"planner_"+user.id);
+    const miSnap=await getDoc(miRef);
+    if(miSnap.exists()){
+      const miData=miSnap.data();
+      const compromisoId="asig_"+tarea.id;
+      const misCompromisos=(miData.compromisos||[]).map(c=>c.id===compromisoId?{
+        ...c,notas:`Asignado por ${tarea._creadoPor||""} en el proyecto "${tarea._proyectoNombre}" · Avance: ${pct}%.`,
+      }:c);
+      await setDoc(miRef,{...miData,compromisos:misCompromisos,updatedAt:new Date().toISOString()});
+    }
+  };
+
+  // Comentario atado a una tarea puntual (no requiere cambio de estado) —
+  // cada tarea tiene su propio hilo para que no se mezclen entre sí. Sirve
+  // tanto para tareas propias como para comentar el trabajo de un compañero
+  // dentro del mismo proyecto.
+  const agregarComentarioTarea=async(tarea)=>{
+    const texto=(comentarioPorTarea[tarea.id]||"").trim();
+    if(!texto) return;
+    const ref=doc(db,tarea._colCreador,"planner_"+tarea._creadorId);
+    const snap=await getDoc(ref);
+    if(!snap.exists()) return;
+    const data=snap.data();
+    const comentario={id:"c_"+Math.random().toString(36).slice(2,8),texto,autor:user?.name||user?.username||"",fecha:new Date().toISOString()};
+    const proyectosNuevos=(data.proyectos||[]).map(p=>{
+      if(p.id!==tarea._proyectoId) return p;
+      return{...p,tareas:(p.tareas||[]).map(t=>t.id===tarea.id?{...t,comentarios:[...(t.comentarios||[]),comentario]}:t)};
+    });
+    await setDoc(ref,{...data,proyectos:proyectosNuevos,updatedAt:new Date().toISOString()});
+    setComentarioPorTarea(m=>({...m,[tarea.id]:""}));
+  };
+
   // Comentario general del proyecto (no atado a un cambio de estado) — se
   // escribe directo en el doc del creador, igual que un cambio de estado.
   const agregarComentarioGeneral=async()=>{
@@ -25572,10 +25705,14 @@ function TareasAsignadasPanel({user,compromisos}){
                           <div key={t.id} className={`bg-white rounded-lg border p-2 shadow-sm ${esMia?"border-blue-300":"border-gray-200"}`}>
                             <p className="text-xs font-semibold text-gray-800 leading-tight">{t.titulo}</p>
                             {t.responsables?.length>0&&<p className="text-[10px] text-gray-400 mt-0.5 truncate">👤 {t.responsables.join(", ")}</p>}
-                            <div className="mt-1.5 flex items-center gap-1.5">
-                              <div className="flex-1 h-1 bg-gray-100 rounded-full overflow-hidden"><div className="h-full bg-blue-500 rounded-full" style={{width:cumplimientoEfectivoTarea(t)+"%"}}/></div>
-                              <span className="text-[9px] text-gray-400 font-semibold">{cumplimientoEfectivoTarea(t)}%</span>
-                            </div>
+                            {esMia?(
+                              <AvanceSliderInline value={cumplimientoEfectivoTarea(t)} onCommit={pct=>actualizarAvance(t,pct)}/>
+                            ):(
+                              <div className="mt-1.5 flex items-center gap-1.5">
+                                <div className="flex-1 h-1 bg-gray-100 rounded-full overflow-hidden"><div className="h-full bg-blue-500 rounded-full" style={{width:cumplimientoEfectivoTarea(t)+"%"}}/></div>
+                                <span className="text-[9px] text-gray-400 font-semibold">{cumplimientoEfectivoTarea(t)}%</span>
+                              </div>
+                            )}
                             {esMia?(
                               <select value={t.col} onChange={e=>solicitarCambioEstado(t,e.target.value)}
                                 className="mt-1.5 w-full text-[10px] px-1.5 py-1 rounded-md border border-gray-200 bg-white text-gray-600 focus:outline-none">
@@ -25596,31 +25733,77 @@ function TareasAsignadasPanel({user,compromisos}){
         )}
         {vistaProyecto==="comentarios"&&(
           <div className="flex-1 overflow-y-auto p-4 space-y-3">
-            <div className="flex gap-2">
-              <textarea value={nuevoComentarioGeneral} onChange={e=>setNuevoComentarioGeneral(e.target.value)}
-                rows={2} placeholder="Agregar un comentario al proyecto..."
-                className="flex-1 px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-blue-400 resize-none"/>
-              <button onClick={agregarComentarioGeneral} disabled={!nuevoComentarioGeneral.trim()}
-                className="px-3 py-2 rounded-xl text-white text-xs font-bold transition disabled:opacity-40 flex-shrink-0 self-end" style={{background:"#2563eb"}}>
-                Comentar
-              </button>
-            </div>
-            {comentariosFeedProyectoActivo.length===0?(
+            {tareasP.length===0&&!(proyectoActivo.proyecto.comentariosGenerales||[]).length?(
               <p className="text-gray-400 text-sm text-center py-8">Sin comentarios todavía.</p>
-            ):(
-              <div className="space-y-2">
-                {comentariosFeedProyectoActivo.map(c=>(
-                  <div key={c.id} className="bg-white rounded-xl border border-gray-200 p-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="text-xs font-semibold text-gray-700">{c.autor}</p>
-                      <p className="text-[10px] text-gray-400">{new Date(c.fecha).toLocaleString("es-CL")}</p>
-                    </div>
-                    {c.tareaTitulo&&<p className="text-[10px] text-gray-400 mt-0.5">📌 {c.tareaTitulo}</p>}
-                    <p className="text-sm text-gray-600 mt-1">{c.texto}</p>
+            ):(<>
+              {tareasP.map(t=>(
+                <div key={t.id} className="border border-gray-200 rounded-xl overflow-hidden bg-white">
+                  <div className="px-3 py-2 bg-gray-50 border-b border-gray-100">
+                    <p className="text-xs font-bold text-gray-700 truncate">{t.titulo}</p>
+                    <p className="text-[10px] text-gray-400">{COLS_TAREA[t.col]?.label||t.col}{(t.responsables?.length>0)&&` · ${t.responsables.join(", ")}`}</p>
                   </div>
-                ))}
+                  <div className="p-3 space-y-2">
+                    {(t.comentarios||[]).length===0?(
+                      <p className="text-gray-300 text-xs italic">Sin comentarios en esta tarea.</p>
+                    ):(
+                      [...t.comentarios].reverse().map(c=>(
+                        <div key={c.id} className="bg-gray-50 rounded-lg px-2.5 py-1.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-[11px] font-semibold text-gray-700">{c.autor}</p>
+                            <p className="text-[9px] text-gray-400 flex-shrink-0">{new Date(c.fecha).toLocaleString("es-CL")}</p>
+                          </div>
+                          {c.colAnterior&&c.colNuevo&&(
+                            <p className="text-[9px] text-gray-400">{COLS_TAREA[c.colAnterior]?.label||c.colAnterior} → {COLS_TAREA[c.colNuevo]?.label||c.colNuevo}</p>
+                          )}
+                          <p className="text-xs text-gray-600 mt-0.5">{c.texto}</p>
+                        </div>
+                      ))
+                    )}
+                    <div className="flex gap-2 pt-1">
+                      <input value={comentarioPorTarea[t.id]||""} onChange={e=>setComentarioPorTarea(m=>({...m,[t.id]:e.target.value}))}
+                        onKeyDown={e=>{if(e.key==="Enter")agregarComentarioTarea(t);}}
+                        placeholder="Comentar esta tarea..."
+                        className="flex-1 px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs focus:outline-none focus:border-blue-400"/>
+                      <button onClick={()=>agregarComentarioTarea(t)} disabled={!(comentarioPorTarea[t.id]||"").trim()}
+                        className="px-2.5 py-1.5 rounded-lg text-white text-[11px] font-bold transition disabled:opacity-40 flex-shrink-0" style={{background:"#2563eb"}}>
+                        Comentar
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+              <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
+                <div className="px-3 py-2 bg-gray-50 border-b border-gray-100">
+                  <p className="text-xs font-bold text-gray-700">Generales del proyecto</p>
+                  <p className="text-[10px] text-gray-400">No atados a ninguna tarea en particular</p>
+                </div>
+                <div className="p-3 space-y-2">
+                  {(proyectoActivo.proyecto.comentariosGenerales||[]).length===0?(
+                    <p className="text-gray-300 text-xs italic">Sin comentarios generales.</p>
+                  ):(
+                    [...proyectoActivo.proyecto.comentariosGenerales].reverse().map(c=>(
+                      <div key={c.id} className="bg-gray-50 rounded-lg px-2.5 py-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-[11px] font-semibold text-gray-700">{c.autor}</p>
+                          <p className="text-[9px] text-gray-400 flex-shrink-0">{new Date(c.fecha).toLocaleString("es-CL")}</p>
+                        </div>
+                        <p className="text-xs text-gray-600 mt-0.5">{c.texto}</p>
+                      </div>
+                    ))
+                  )}
+                  <div className="flex gap-2 pt-1">
+                    <input value={nuevoComentarioGeneral} onChange={e=>setNuevoComentarioGeneral(e.target.value)}
+                      onKeyDown={e=>{if(e.key==="Enter")agregarComentarioGeneral();}}
+                      placeholder="Comentar el proyecto en general..."
+                      className="flex-1 px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs focus:outline-none focus:border-blue-400"/>
+                    <button onClick={agregarComentarioGeneral} disabled={!nuevoComentarioGeneral.trim()}
+                      className="px-2.5 py-1.5 rounded-lg text-white text-[11px] font-bold transition disabled:opacity-40 flex-shrink-0" style={{background:"#2563eb"}}>
+                      Comentar
+                    </button>
+                  </div>
+                </div>
               </div>
-            )}
+            </>)}
           </div>
         )}
         {cambioEstadoPendiente&&(
@@ -25663,12 +25846,7 @@ function TareasAsignadasPanel({user,compromisos}){
                 {Object.entries(COLS_TAREA).map(([k,d])=><option key={k} value={k}>{d.label}</option>)}
               </select>
             </div>
-            <div className="flex items-center gap-2 mt-2.5">
-              <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                <div className="h-full bg-blue-500 rounded-full" style={{width:cumplimientoEfectivoTarea(t)+"%"}}/>
-              </div>
-              <span className="text-xs font-semibold text-gray-600">{cumplimientoEfectivoTarea(t)}%</span>
-            </div>
+            <AvanceSliderInline value={cumplimientoEfectivoTarea(t)} onCommit={pct=>actualizarAvance(t,pct)}/>
             {t.fechaInicio&&(
               <p className="text-[10px] text-gray-400 mt-1.5">
                 📅 {new Date(t.fechaInicio+"T12:00:00").toLocaleDateString("es-CL")}{t.duracion>1&&` · ${t.duracion} día(s)`}
@@ -29705,6 +29883,53 @@ const [imgViewer,setImgViewer]=useState(null);
 const [conversaciones,setConversaciones]=useState([]);
 const [showChatPanel,setShowChatPanel]=useState(false);
 const [showPlanner,setShowPlanner]=useState(false);
+  // ── Notificación visual del Planner: detecta cambios hechos por otros en
+  // proyectos que comparto (comentarios/cambios de estado en tareas de
+  // proyectos que creé, o cambios que un creador hizo en tareas que me
+  // asignó) comparando contra la última vez que abrí el Planner. Se
+  // suscribe siempre (no solo con el panel abierto) para que la burbuja del
+  // topbar sea correcta incluso con el Planner cerrado.
+  const [plannerOwnDoc,setPlannerOwnDoc]=useState({compromisos:[],proyectos:[]});
+  useEffect(()=>{
+    if(!user?.id||!activeCOLL) return;
+    const ref=doc(db,activeCOLL,"planner_"+user.id);
+    const unsub=onSnapshot(ref,snap=>{
+      if(snap.exists()){
+        const d=snap.data();
+        setPlannerOwnDoc({compromisos:d.compromisos||[],proyectos:d.proyectos||[]});
+      }
+    });
+    return()=>unsub();
+  },[user?.id,activeCOLL]);
+  const plannerLastSeenKey=user?.id?"planner_lastseen_"+user.id:null;
+  const [plannerLastSeen,setPlannerLastSeen]=useState(()=>{
+    if(!plannerLastSeenKey) return new Date().toISOString();
+    const v=localStorage.getItem(plannerLastSeenKey);
+    if(v) return v;
+    const now=new Date().toISOString();
+    localStorage.setItem(plannerLastSeenKey,now); // primera vez: no inundar con historial viejo
+    return now;
+  });
+  const marcarPlannerVisto=()=>{
+    const now=new Date().toISOString();
+    setPlannerLastSeen(now);
+    if(plannerLastSeenKey) localStorage.setItem(plannerLastSeenKey,now);
+  };
+  const plannerBadgeCount=useMemo(()=>{
+    if(!user) return 0;
+    const miNombre=user.name||user.username||"";
+    let n=0;
+    (plannerOwnDoc.proyectos||[]).forEach(p=>{
+      (p.tareas||[]).forEach(t=>{
+        (t.comentarios||[]).forEach(c=>{if(c.autor&&c.autor!==miNombre&&c.fecha>plannerLastSeen) n++;});
+      });
+      (p.comentariosGenerales||[]).forEach(c=>{if(c.autor&&c.autor!==miNombre&&c.fecha>plannerLastSeen) n++;});
+    });
+    (plannerOwnDoc.compromisos||[]).forEach(c=>{
+      if(c.vinculo?.tipo==="proyecto_tarea"&&c.actualizadoAt&&c.actualizadoAt>plannerLastSeen) n++;
+    });
+    return n;
+  },[plannerOwnDoc,plannerLastSeen,user]);
 useEffect(()=>{window._mantekViewImg=setImgViewer;return()=>{window._mantekViewImg=null;};},[]);
 const navigate=p=>{setPage(p);setSidebarOpen(false);};
 const MODULE_LABEL=activeModule==="maritimo"
@@ -30708,7 +30933,7 @@ return(
 {sidebarOpen&&<div className="fixed inset-0 bg-black/40 z-40 lg:hidden" onClick={()=>setSidebarOpen(false)}/>}
 <Sidebar user={user} active={page} onNav={handleNav} onLogout={async()=>{try{await fetch(AUTH_URL+'/api/auth/logout',{method:'POST',credentials:'include'});}catch(e){console.warn('logout:',e);}setUser(null);setPage("dashboard");}} onChangePassword={()=>setShowChangePwd(true)} onChangeModule={()=>{setActiveModule(null);setActiveBarco(null);setPage("dashboard");setUser(null);setLoading(false);unsubs.current.forEach(u=>u());unsubs.current=[];setData({users:[],equip:[],plans:[],requests:[],wos:[],taskTemplates:[],checklists:[]});}} notifications={pendingReqs} devBadge={devBadge} online={online} collapsed={!sidebarOpen} moduleLabel={MODULE_LABEL} onInstall={showInstallBtn?async()=>{if(!installPrompt)return;installPrompt.prompt();const r=await installPrompt.userChoice;if(r.outcome==="accepted"){setShowInstallBtn(false);setInstallPrompt(null);}}:null} fontSize={fontSize} setFontSize={setFontSize} data={data} navCategorias={activeModule==="sgn"?SGN_NAV_CATEGORIAS:activeModule==="maritimo"?NAV_CATEGORIAS_MARITIMO:NAV_CATEGORIAS} userPerms={activeModule==="sgn"?getSgnUserPerms(user):getUserPerms(user)}/>
 <div className="flex-1 min-h-screen flex flex-col overflow-hidden">
-  <Topbar user={user} page={page} onNav={handleNav} notifCount={pendingReqs} onToggleSidebar={()=>setSidebarOpen(s=>!s)} fontSize={fontSize} setFontSize={setFontSize} onChangePassword={()=>setShowChangePwd(true)} onChangeModule={()=>{setActiveModule(null);setActiveBarco(null);setPage("dashboard");setUser(null);setLoading(false);unsubs.current.forEach(u=>u());unsubs.current=[];setData({users:[],equip:[],plans:[],requests:[],wos:[],taskTemplates:[],checklists:[]});}} onLogout={async()=>{try{await fetch(AUTH_URL+'/api/auth/logout',{method:'POST',credentials:'include'});}catch(e){console.warn('logout:',e);}setUser(null);setPage("dashboard");}} onInstall={showInstallBtn?async()=>{if(!installPrompt)return;installPrompt.prompt();const r=await installPrompt.userChoice;if(r.outcome==="accepted"){setShowInstallBtn(false);setInstallPrompt(null);}}:null} onOpenChat={()=>setShowChatPanel(true)} chatBadge={totalNoLeidos} onOpenPlanner={()=>setShowPlanner(true)} plannerBadge={0} navCategorias={activeModule==="sgn"?SGN_NAV_CATEGORIAS:activeModule==="maritimo"?NAV_CATEGORIAS_MARITIMO:NAV_CATEGORIAS}/>
+  <Topbar user={user} page={page} onNav={handleNav} notifCount={pendingReqs} onToggleSidebar={()=>setSidebarOpen(s=>!s)} fontSize={fontSize} setFontSize={setFontSize} onChangePassword={()=>setShowChangePwd(true)} onChangeModule={()=>{setActiveModule(null);setActiveBarco(null);setPage("dashboard");setUser(null);setLoading(false);unsubs.current.forEach(u=>u());unsubs.current=[];setData({users:[],equip:[],plans:[],requests:[],wos:[],taskTemplates:[],checklists:[]});}} onLogout={async()=>{try{await fetch(AUTH_URL+'/api/auth/logout',{method:'POST',credentials:'include'});}catch(e){console.warn('logout:',e);}setUser(null);setPage("dashboard");}} onInstall={showInstallBtn?async()=>{if(!installPrompt)return;installPrompt.prompt();const r=await installPrompt.userChoice;if(r.outcome==="accepted"){setShowInstallBtn(false);setInstallPrompt(null);}}:null} onOpenChat={()=>setShowChatPanel(true)} chatBadge={totalNoLeidos} onOpenPlanner={()=>{setShowPlanner(true);marcarPlannerVisto();}} plannerBadge={plannerBadgeCount} navCategorias={activeModule==="sgn"?SGN_NAV_CATEGORIAS:activeModule==="maritimo"?NAV_CATEGORIAS_MARITIMO:NAV_CATEGORIAS}/>
   {(()=>{const _navCats=activeModule==="sgn"?SGN_NAV_CATEGORIAS:activeModule==="maritimo"?NAV_CATEGORIAS_MARITIMO:NAV_CATEGORIAS;const catKey=getCategoriaActiva(page,_navCats);const categoria=catKey?_navCats[catKey]:null;const paginaLabel=getPaginaLabel(page);if(!categoria)return null;return(<div className="flex items-center gap-1.5 text-xs text-gray-400 px-5 pt-3 pb-1"><span>{categoria.label}</span><ChevronRight size={11}/><span className="text-gray-600 font-medium">{paginaLabel}</span></div>);})()}
   <main className="flex-1 overflow-y-auto"><ErrorBoundary key={page}>{
     (()=>{
@@ -30784,7 +31009,7 @@ return(
   </div>
 )}
 {showChatPanel&&<ChatPanel user={user} users={data.users||[]} conversaciones={conversaciones} activeCOLL={activeCOLL} onClose={()=>setShowChatPanel(false)}/>}
-{showPlanner&&<PlannerPanel user={user} data={data} activeCOLL={activeCOLL} onNav={handleNav} onClose={()=>setShowPlanner(false)}/>}
+{showPlanner&&<PlannerPanel user={user} data={data} activeCOLL={activeCOLL} onNav={handleNav} onClose={()=>{setShowPlanner(false);marcarPlannerVisto();}}/>}
 {showChangePwd&&<ChangePasswordModal user={user} onSave={async(o,n)=>handleChangePwd(o,n)} onClose={()=>setShowChangePwd(false)}/>}
 </div>
 );
