@@ -24162,6 +24162,8 @@ function PlannerPanel({user,data,activeCOLL,onNav,onClose}){
         <ProyectoEditor
           proyecto={proyectoActivo}
           users={data.users||[]}
+          user={user}
+          activeCOLL={activeCOLL}
           onClose={()=>setProyectoActivo(null)}
           onSave={(proyectoActualizado)=>{
             const updated=proyectos.map(p=>p.id===proyectoActualizado.id?proyectoActualizado:p);
@@ -24265,7 +24267,13 @@ function PlannerPanel({user,data,activeCOLL,onNav,onClose}){
                               ⚠️ En riesgo
                             </span>
                           )}
-                          {c.vinculo&&(
+                          {c.vinculo&&c.vinculo.tipo==="proyecto_tarea"?(
+                            // El proyecto de origen es privado de quien asignó — no hay a dónde
+                            // navegar acá, solo mostramos de qué proyecto viene la asignación.
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-50 text-purple-700 border border-purple-200 font-semibold">
+                              📁 {c.vinculo.proyectoNombre||"Proyecto"}
+                            </span>
+                          ):c.vinculo&&(
                             <button onClick={()=>{
                                 if(c.vinculo.tipo==="ot") onNav("workorders");
                                 else if(c.vinculo.tipo==="plan") onNav("plans");
@@ -24465,7 +24473,7 @@ function PlannerPanel({user,data,activeCOLL,onNav,onClose}){
   );
 }
 
-function ProyectoEditor({proyecto,users,onClose,onSave,onDelete}){
+function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}){
   const [vistaEditor,setVistaEditor]=useState("kanban");
   const [tareas,setTareas]=useState(proyecto.tareas||[]);
   const [showFormTarea,setShowFormTarea]=useState(false);
@@ -24477,6 +24485,55 @@ function ProyectoEditor({proyecto,users,onClose,onSave,onDelete}){
   const usuariosDisponibles=useMemo(()=>[...new Set((users||[]).map(u=>u.name).filter(Boolean))].sort(),[users]);
 
   const cumplimientoEfectivo=cumplimientoEfectivoTarea;
+
+  // Cada usuario tiene su propio doc de planner (planner_<uid>) — asignar un
+  // responsable NO lo hace aparecer solo por guardar la tarea acá, hay que
+  // escribirle un recordatorio en SU documento. compromisoId es estable por
+  // tarea (no por responsable) para poder actualizar/quitar ese recordatorio
+  // en sucesivos guardados sin duplicarlo.
+  const sincronizarAsignaciones=async(tareaAnterior,tareaNueva)=>{
+    if(!user?.id||!activeCOLL) return;
+    const prevResp=new Set(tareaAnterior?.responsables||(tareaAnterior?.responsable?[tareaAnterior.responsable]:[]));
+    const nuevosResp=new Set(tareaNueva.responsables||[]);
+    const todosLosNombres=new Set([...prevResp,...nuevosResp]);
+    const compromisoId="asig_"+tareaNueva.id;
+    for(const nombre of todosLosNombres){
+      const u=(users||[]).find(x=>x.name===nombre);
+      if(!u||u.id===user.id) continue; // no auto-notificarse a uno mismo
+      const ref=doc(db,activeCOLL,"planner_"+u.id);
+      const snap=await getDoc(ref);
+      const actual=snap.exists()?snap.data():{compromisos:[],proyectos:[]};
+      const compromisosActuales=actual.compromisos||[];
+      const existente=compromisosActuales.find(c=>c.id===compromisoId);
+      let compromisosNuevos;
+      if(nuevosResp.has(nombre)){
+        const actualizado={
+          id:compromisoId,
+          titulo:`Tarea asignada: ${tareaNueva.titulo}`,
+          fecha:tareaNueva.fechaInicio||new Date().toISOString().slice(0,10),
+          hora:"",
+          prioridad:tareaNueva.col==="bloqueado"?"alta":"media",
+          estado:tareaNueva.col==="listo"?"completado":"pendiente",
+          completadoAt:tareaNueva.col==="listo"?new Date().toISOString():null,
+          privado:false,
+          vinculo:{tipo:"proyecto_tarea",proyectoId:proyecto.id,tareaId:tareaNueva.id,proyectoNombre:proyecto.nombre},
+          asignadoA:nombre,
+          creadoPor:user.name||user.username||"",
+          creadoAt:existente?.creadoAt||new Date().toISOString(),
+          postergaciones:existente?.postergaciones||0,
+          notas:`Asignado por ${user.name||user.username||""} en el proyecto "${proyecto.nombre}" · Avance: ${cumplimientoEfectivoTarea(tareaNueva)}%.`,
+        };
+        compromisosNuevos=existente
+          ?compromisosActuales.map(c=>c.id===compromisoId?actualizado:c)
+          :[...compromisosActuales,actualizado];
+      }else if(existente){
+        compromisosNuevos=compromisosActuales.filter(c=>c.id!==compromisoId);
+      }else{
+        continue; // nunca tuvo recordatorio y sigue sin ser responsable — nada que hacer
+      }
+      await setDoc(ref,{...actual,compromisos:compromisosNuevos,updatedAt:new Date().toISOString(),userId:u.id});
+    }
+  };
 
   const abrirNuevaTarea=()=>{
     setTareaEnEdicion(null);
@@ -24510,10 +24567,10 @@ function ProyectoEditor({proyecto,users,onClose,onSave,onDelete}){
     // queda en 100 — evita que una tarea marcada lista muestre <100% de avance.
     const cumplimiento=formTarea.col==="listo"?100:(parseInt(formTarea.cumplimiento)||0);
 
-    let updated;
+    let updated,tareaGuardada;
     if(tareaEnEdicion){
-      updated=tareas.map(t=>t.id===tareaEnEdicion.id?{
-        ...t,
+      tareaGuardada={
+        ...tareaEnEdicion,
         titulo:formTarea.titulo.trim(),
         col:formTarea.col,
         fechaInicio,
@@ -24522,9 +24579,10 @@ function ProyectoEditor({proyecto,users,onClose,onSave,onDelete}){
         responsables:formTarea.responsables||[],
         descripcion:formTarea.descripcion||"",
         cumplimiento,
-      }:t);
+      };
+      updated=tareas.map(t=>t.id===tareaEnEdicion.id?tareaGuardada:t);
     }else{
-      const nueva={
+      tareaGuardada={
         id:"t_"+Math.random().toString(36).slice(2,8),
         titulo:formTarea.titulo.trim(),
         col:formTarea.col,
@@ -24536,23 +24594,29 @@ function ProyectoEditor({proyecto,users,onClose,onSave,onDelete}){
         cumplimiento,
         creadoAt:new Date().toISOString(),
       };
-      updated=[...tareas,nueva];
+      updated=[...tareas,tareaGuardada];
     }
     setTareas(updated);
     onSave({...proyecto,tareas:updated});
+    sincronizarAsignaciones(tareaEnEdicion,tareaGuardada);
     cerrarFormTarea();
   };
 
   const cambiarCol=(tareaId,nuevoCol)=>{
-    const updated=tareas.map(t=>t.id===tareaId?{...t,col:nuevoCol,cumplimiento:nuevoCol==="listo"?100:cumplimientoEfectivo(t)}:t);
+    const anterior=tareas.find(t=>t.id===tareaId);
+    const nueva={...anterior,col:nuevoCol,cumplimiento:nuevoCol==="listo"?100:cumplimientoEfectivo(anterior)};
+    const updated=tareas.map(t=>t.id===tareaId?nueva:t);
     setTareas(updated);
     onSave({...proyecto,tareas:updated});
+    sincronizarAsignaciones(anterior,nueva);
   };
 
   const eliminarTarea=(id)=>{
+    const anterior=tareas.find(t=>t.id===id);
     const updated=tareas.filter(t=>t.id!==id);
     setTareas(updated);
     onSave({...proyecto,tareas:updated});
+    if(anterior) sincronizarAsignaciones(anterior,{...anterior,responsables:[]});
   };
 
   const cols={
