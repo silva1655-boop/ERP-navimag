@@ -23986,6 +23986,14 @@ const calcCumplimientoPorFecha=(checklistsFiltrados)=>{
 // definió; si es una tarea vieja sin ese campo, cae a 100/0 según su columna
 // kanban. Compartida por PlannerPanel (lista de proyectos) y ProyectoEditor.
 const cumplimientoEfectivoTarea=t=>t.cumplimiento??(t.col==="listo"?100:0);
+// Columnas del Kanban de una tarea — compartidas por ProyectoEditor (visto
+// por el creador) y TareasAsignadasPanel (visto por el responsable).
+const COLS_TAREA={
+  por_hacer:{label:"Por hacer",color:"bg-gray-50 border-gray-200"},
+  en_proceso:{label:"En proceso",color:"bg-blue-50 border-blue-200"},
+  bloqueado:{label:"Bloqueado",color:"bg-red-50 border-red-200"},
+  listo:{label:"Listo",color:"bg-emerald-50 border-emerald-200"},
+};
 
 function PlannerPanel({user,data,activeCOLL,onNav,onClose}){
   const [tab,setTab]=useState("hoy");
@@ -24209,6 +24217,7 @@ function PlannerPanel({user,data,activeCOLL,onNav,onClose}){
             {key:"hoy",label:"Hoy",badge:compHoy.length},
             {key:"semana",label:"Semana",badge:compSemana.length},
             {key:"proyectos",label:"Proyectos",badge:proyectos.filter(p=>p.estado==="activo").length},
+            {key:"asignadas",label:"Asignadas",badge:compromisos.filter(c=>c.vinculo?.tipo==="proyecto_tarea"&&c.estado!=="completado").length},
             {key:"decisiones",label:"Decisiones",badge:0},
           ].map(t=>(
             <button key={t.key} onClick={()=>setTab(t.key)}
@@ -24424,6 +24433,8 @@ function PlannerPanel({user,data,activeCOLL,onNav,onClose}){
             </div>
           )}
 
+          {tab==="asignadas"&&<TareasAsignadasPanel user={user} compromisos={compromisos}/>}
+
           {tab==="decisiones"&&(
             <div className="p-4">
               <div className="text-center py-12">
@@ -24473,12 +24484,48 @@ function PlannerPanel({user,data,activeCOLL,onNav,onClose}){
   );
 }
 
+// Modal de comentario obligatorio al cambiar el estado de una tarea — lo usan
+// tanto el creador (ProyectoEditor) como el responsable (TareasAsignadasPanel).
+function ModalComentarioEstado({tareaTitulo,colAnteriorLabel,colNuevoLabel,onConfirm,onCancel}){
+  const [texto,setTexto]=useState("");
+  return(
+    <div className="absolute inset-0 flex items-center justify-center z-30 p-4" style={{background:"rgba(0,0,0,0.5)"}} onClick={e=>{if(e.target===e.currentTarget)onCancel();}}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden" onClick={e=>e.stopPropagation()}>
+        <div className="px-5 py-4 border-b border-gray-100">
+          <p className="font-bold text-gray-900">Cambiar estado</p>
+          <p className="text-xs text-gray-400 mt-0.5 truncate">{tareaTitulo}</p>
+        </div>
+        <div className="px-5 py-4 space-y-3">
+          <p className="text-sm text-gray-600">{colAnteriorLabel} → <span className="font-semibold text-gray-800">{colNuevoLabel}</span></p>
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Comentario (obligatorio)</label>
+            <textarea value={texto} onChange={e=>setTexto(e.target.value)} rows={3} autoFocus
+              className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-blue-400 resize-none"
+              placeholder="¿Qué cambió? ¿Por qué?"/>
+          </div>
+          <div className="flex gap-3 pt-1">
+            <button onClick={onCancel}
+              className="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-600 text-sm font-semibold hover:bg-gray-50 transition">
+              Cancelar
+            </button>
+            <button onClick={()=>{if(texto.trim())onConfirm(texto.trim());}} disabled={!texto.trim()}
+              className="flex-1 py-2.5 rounded-xl text-white text-sm font-bold transition disabled:opacity-40" style={{background:"#2563eb"}}>
+              Confirmar
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}){
   const [vistaEditor,setVistaEditor]=useState("kanban");
   const [tareas,setTareas]=useState(proyecto.tareas||[]);
   const [showFormTarea,setShowFormTarea]=useState(false);
   const [tareaEnEdicion,setTareaEnEdicion]=useState(null);
   const [mesCalendario,setMesCalendario]=useState(()=>{const d=new Date();return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;});
+  const [cambioEstadoPendiente,setCambioEstadoPendiente]=useState(null); // {tareaId,nuevoCol}
   const FORM_TAREA_VACIO={titulo:"",col:"por_hacer",fechaInicio:"",duracion:1,responsables:[],descripcion:"",cumplimiento:0};
   const [formTarea,setFormTarea]=useState(FORM_TAREA_VACIO);
 
@@ -24516,7 +24563,10 @@ function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}
           estado:tareaNueva.col==="listo"?"completado":"pendiente",
           completadoAt:tareaNueva.col==="listo"?new Date().toISOString():null,
           privado:false,
-          vinculo:{tipo:"proyecto_tarea",proyectoId:proyecto.id,tareaId:tareaNueva.id,proyectoNombre:proyecto.nombre},
+          // colCreador+creadorId: para que el responsable pueda ubicar el doc
+          // de planner donde vive el proyecto real (es de otro usuario, y
+          // puede estar en otra colección si el creador usa otro módulo).
+          vinculo:{tipo:"proyecto_tarea",proyectoId:proyecto.id,tareaId:tareaNueva.id,proyectoNombre:proyecto.nombre,creadorId:user.id,colCreador:activeCOLL},
           asignadoA:nombre,
           creadoPor:user.name||user.username||"",
           creadoAt:existente?.creadoAt||new Date().toISOString(),
@@ -24602,13 +24652,29 @@ function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}
     cerrarFormTarea();
   };
 
-  const cambiarCol=(tareaId,nuevoCol)=>{
+  // Cambiar de columna requiere comentario obligatorio (abre el modal en vez
+  // de aplicar directo); confirmarCambioEstado hace el cambio real.
+  const solicitarCambioEstado=(tareaId,nuevoCol)=>{
+    if(tareaId===undefined||nuevoCol===tareas.find(t=>t.id===tareaId)?.col) return;
+    setCambioEstadoPendiente({tareaId,nuevoCol});
+  };
+  const confirmarCambioEstado=(comentarioTexto)=>{
+    if(!cambioEstadoPendiente) return;
+    const{tareaId,nuevoCol}=cambioEstadoPendiente;
     const anterior=tareas.find(t=>t.id===tareaId);
-    const nueva={...anterior,col:nuevoCol,cumplimiento:nuevoCol==="listo"?100:cumplimientoEfectivo(anterior)};
+    const nueva={
+      ...anterior,col:nuevoCol,cumplimiento:nuevoCol==="listo"?100:cumplimientoEfectivo(anterior),
+      comentarios:[...(anterior.comentarios||[]),{
+        id:"c_"+Math.random().toString(36).slice(2,8),
+        texto:comentarioTexto,autor:user?.name||user?.username||"",fecha:new Date().toISOString(),
+        colAnterior:anterior.col,colNuevo:nuevoCol,
+      }],
+    };
     const updated=tareas.map(t=>t.id===tareaId?nueva:t);
     setTareas(updated);
     onSave({...proyecto,tareas:updated});
     sincronizarAsignaciones(anterior,nueva);
+    setCambioEstadoPendiente(null);
   };
 
   const eliminarTarea=(id)=>{
@@ -24619,12 +24685,7 @@ function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}
     if(anterior) sincronizarAsignaciones(anterior,{...anterior,responsables:[]});
   };
 
-  const cols={
-    por_hacer:{label:"Por hacer",color:"bg-gray-50 border-gray-200"},
-    en_proceso:{label:"En proceso",color:"bg-blue-50 border-blue-200"},
-    bloqueado:{label:"Bloqueado",color:"bg-red-50 border-red-200"},
-    listo:{label:"Listo",color:"bg-emerald-50 border-emerald-200"},
-  };
+  const cols=COLS_TAREA;
 
   const pct=tareas.length>0?Math.round(tareas.reduce((s,t)=>s+cumplimientoEfectivo(t),0)/tareas.length):0;
 
@@ -24801,7 +24862,7 @@ function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}
                           </div>
                           <div className="flex gap-1 mt-1.5 flex-wrap items-center">
                             {Object.entries(cols).filter(([k])=>k!==colKey).map(([k,d])=>(
-                              <button key={k} onClick={()=>cambiarCol(t.id,k)}
+                              <button key={k} onClick={()=>solicitarCambioEstado(t.id,k)}
                                 className="text-[9px] px-1.5 py-0.5 rounded-md border border-gray-200 text-gray-500 hover:bg-gray-100 transition">
                                 → {d.label}
                               </button>
@@ -24942,7 +25003,7 @@ function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}
                       <span className="text-[9px] text-gray-400 font-semibold">{cumplimientoEfectivo(t)}%</span>
                     </div>
                   </div>
-                  <select value={t.col} onChange={e=>cambiarCol(t.id,e.target.value)}
+                  <select value={t.col} onChange={e=>solicitarCambioEstado(t.id,e.target.value)}
                     className="text-[10px] px-2 py-1 rounded-lg border border-gray-200 bg-white text-gray-600 focus:outline-none">
                     {Object.entries(cols).map(([k,d])=><option key={k} value={k}>{d.label}</option>)}
                   </select>
@@ -25071,6 +25132,22 @@ function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}
                   className="w-full accent-blue-600 disabled:opacity-50"/>
                 {formTarea.col==="listo"&&<p className="text-[10px] text-gray-400 mt-0.5">Se fija en 100% mientras el estado sea "Listo".</p>}
               </div>
+              {tareaEnEdicion?.comentarios?.length>0&&(
+                <div>
+                  <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Historial de comentarios</label>
+                  <div className="space-y-1.5 max-h-32 overflow-y-auto">
+                    {[...tareaEnEdicion.comentarios].reverse().map(c=>(
+                      <div key={c.id} className="bg-gray-50 rounded-lg px-2.5 py-1.5 text-xs">
+                        <p className="text-gray-700">{c.texto}</p>
+                        <p className="text-[10px] text-gray-400 mt-0.5">
+                          {c.autor} · {new Date(c.fecha).toLocaleString("es-CL")}
+                          {c.colAnterior&&c.colNuevo&&` · ${cols[c.colAnterior]?.label||c.colAnterior} → ${cols[c.colNuevo]?.label||c.colNuevo}`}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="flex gap-3 pt-1">
                 <button onClick={cerrarFormTarea}
                   className="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-600 text-sm font-semibold hover:bg-gray-50 transition">
@@ -25084,6 +25161,174 @@ function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}
             </div>
           </div>
         </div>
+      )}
+
+      {cambioEstadoPendiente&&(()=>{
+        const t=tareas.find(x=>x.id===cambioEstadoPendiente.tareaId);
+        if(!t) return null;
+        return(
+          <ModalComentarioEstado
+            tareaTitulo={t.titulo}
+            colAnteriorLabel={cols[t.col]?.label||t.col}
+            colNuevoLabel={cols[cambioEstadoPendiente.nuevoCol]?.label||cambioEstadoPendiente.nuevoCol}
+            onConfirm={confirmarCambioEstado}
+            onCancel={()=>setCambioEstadoPendiente(null)}
+          />
+        );
+      })()}
+    </div>
+  );
+}
+
+// Vista del responsable: "Tareas asignadas a mí". Los proyectos siguen siendo
+// privados de quien los crea — este panel no los duplica, lee en vivo (vía
+// onSnapshot) los planner_<creadorId> de cada persona que le asignó algo
+// (descubiertos a partir de sus propios compromisos vinculo.tipo=
+// "proyecto_tarea"), y filtra solo las tareas donde figura como responsable.
+// Los cambios de estado escriben directo en el doc del creador (misma
+// colección Firestore que usó al asignar, guardada en vinculo.colCreador —
+// importante si el creador y el responsable trabajan en módulos distintos)
+// y reflejan el resultado en el propio compromiso del responsable.
+function TareasAsignadasPanel({user,compromisos}){
+  const [porCreador,setPorCreador]=useState({});
+  const [cambioEstadoPendiente,setCambioEstadoPendiente]=useState(null);
+
+  const fuentesUnicas=useMemo(()=>{
+    const vistos=new Map();
+    (compromisos||[]).forEach(c=>{
+      if(c.vinculo?.tipo!=="proyecto_tarea"||!c.vinculo.creadorId||!c.vinculo.colCreador) return;
+      const key=c.vinculo.colCreador+"|"+c.vinculo.creadorId;
+      if(!vistos.has(key)) vistos.set(key,{creadorId:c.vinculo.creadorId,colCreador:c.vinculo.colCreador,creadoPor:c.creadoPor});
+    });
+    return[...vistos.entries()];
+  },[compromisos]);
+  const fuentesKey=fuentesUnicas.map(([k])=>k).join(",");
+
+  useEffect(()=>{
+    if(fuentesUnicas.length===0){setPorCreador({});return;}
+    const unsubs=fuentesUnicas.map(([key,info])=>onSnapshot(doc(db,info.colCreador,"planner_"+info.creadorId),snap=>{
+      setPorCreador(prev=>({...prev,[key]:{...info,proyectos:snap.exists()?(snap.data().proyectos||[]):[]}}));
+    }));
+    return()=>unsubs.forEach(u=>u());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[fuentesKey]);
+
+  const misTareas=useMemo(()=>{
+    const nombre=user?.name||user?.username||"";
+    const lista=[];
+    Object.entries(porCreador).forEach(([key,info])=>{
+      (info.proyectos||[]).forEach(p=>{
+        (p.tareas||[]).forEach(t=>{
+          if(!(t.responsables||[]).includes(nombre)) return;
+          lista.push({...t,_key:key,_creadorId:info.creadorId,_colCreador:info.colCreador,_proyectoId:p.id,_proyectoNombre:p.nombre,_creadoPor:info.creadoPor});
+        });
+      });
+    });
+    return lista.sort((a,b)=>(a.fechaInicio||"9999").localeCompare(b.fechaInicio||"9999"));
+  },[porCreador,user]);
+
+  const solicitarCambioEstado=(tarea,nuevoCol)=>{
+    if(nuevoCol===tarea.col) return;
+    setCambioEstadoPendiente({tarea,nuevoCol});
+  };
+
+  const confirmarCambioEstado=async(comentarioTexto)=>{
+    if(!cambioEstadoPendiente) return;
+    const{tarea,nuevoCol}=cambioEstadoPendiente;
+    const ref=doc(db,tarea._colCreador,"planner_"+tarea._creadorId);
+    const snap=await getDoc(ref);
+    if(!snap.exists()){setCambioEstadoPendiente(null);return;}
+    const data=snap.data();
+    let tareaActualizada=null;
+    const proyectosNuevos=(data.proyectos||[]).map(p=>{
+      if(p.id!==tarea._proyectoId) return p;
+      return{...p,tareas:(p.tareas||[]).map(t=>{
+        if(t.id!==tarea.id) return t;
+        tareaActualizada={
+          ...t,col:nuevoCol,cumplimiento:nuevoCol==="listo"?100:cumplimientoEfectivoTarea(t),
+          comentarios:[...(t.comentarios||[]),{
+            id:"c_"+Math.random().toString(36).slice(2,8),
+            texto:comentarioTexto,autor:user?.name||user?.username||"",fecha:new Date().toISOString(),
+            colAnterior:t.col,colNuevo:nuevoCol,
+          }],
+        };
+        return tareaActualizada;
+      })};
+    });
+    await setDoc(ref,{...data,proyectos:proyectosNuevos,updatedAt:new Date().toISOString()});
+    if(tareaActualizada){
+      // Mi propio compromiso vive en la MISMA colección que usó el creador
+      // (ahí fue donde sincronizarAsignaciones lo escribió).
+      const miRef=doc(db,tarea._colCreador,"planner_"+user.id);
+      const miSnap=await getDoc(miRef);
+      if(miSnap.exists()){
+        const miData=miSnap.data();
+        const compromisoId="asig_"+tarea.id;
+        const misCompromisos=(miData.compromisos||[]).map(c=>c.id===compromisoId?{
+          ...c,
+          estado:nuevoCol==="listo"?"completado":"pendiente",
+          completadoAt:nuevoCol==="listo"?new Date().toISOString():null,
+          notas:`Asignado por ${tarea._creadoPor||""} en el proyecto "${tarea._proyectoNombre}" · Avance: ${cumplimientoEfectivoTarea(tareaActualizada)}%.`,
+        }:c);
+        await setDoc(miRef,{...miData,compromisos:misCompromisos,updatedAt:new Date().toISOString()});
+      }
+    }
+    setCambioEstadoPendiente(null);
+  };
+
+  return(
+    <div className="p-4 space-y-3">
+      {misTareas.length===0?(
+        <div className="text-center py-12">
+          <p className="text-4xl mb-3">✅</p>
+          <p className="text-gray-500 text-sm font-semibold">Sin tareas asignadas</p>
+          <p className="text-gray-400 text-xs mt-1">Acá aparecen las tareas de proyectos de otras personas donde figurás como responsable.</p>
+        </div>
+      ):(
+        misTareas.map(t=>(
+          <div key={t._key+"_"+t.id} className="bg-white rounded-2xl border border-gray-200 p-4">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex-1 min-w-0">
+                <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide truncate">
+                  📁 {t._proyectoNombre} · asignado por {t._creadoPor||"—"}
+                </p>
+                <p className="font-bold text-gray-800 mt-0.5">{t.titulo}</p>
+                {t.descripcion&&<p className="text-xs text-gray-500 mt-1">{t.descripcion}</p>}
+              </div>
+              <select value={t.col} onChange={e=>solicitarCambioEstado(t,e.target.value)}
+                className="text-xs px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-gray-600 focus:outline-none flex-shrink-0">
+                {Object.entries(COLS_TAREA).map(([k,d])=><option key={k} value={k}>{d.label}</option>)}
+              </select>
+            </div>
+            <div className="flex items-center gap-2 mt-2.5">
+              <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                <div className="h-full bg-blue-500 rounded-full" style={{width:cumplimientoEfectivoTarea(t)+"%"}}/>
+              </div>
+              <span className="text-xs font-semibold text-gray-600">{cumplimientoEfectivoTarea(t)}%</span>
+            </div>
+            {t.fechaInicio&&(
+              <p className="text-[10px] text-gray-400 mt-1.5">
+                📅 {new Date(t.fechaInicio+"T12:00:00").toLocaleDateString("es-CL")}{t.duracion>1&&` · ${t.duracion} día(s)`}
+              </p>
+            )}
+            {t.comentarios?.length>0&&(
+              <div className="mt-2 pt-2 border-t border-gray-100 space-y-1">
+                {[...t.comentarios].reverse().slice(0,3).map(c=>(
+                  <p key={c.id} className="text-[10px] text-gray-500"><span className="font-semibold text-gray-600">{c.autor}:</span> {c.texto}</p>
+                ))}
+              </div>
+            )}
+          </div>
+        ))
+      )}
+      {cambioEstadoPendiente&&(
+        <ModalComentarioEstado
+          tareaTitulo={cambioEstadoPendiente.tarea.titulo}
+          colAnteriorLabel={COLS_TAREA[cambioEstadoPendiente.tarea.col]?.label||cambioEstadoPendiente.tarea.col}
+          colNuevoLabel={COLS_TAREA[cambioEstadoPendiente.nuevoCol]?.label||cambioEstadoPendiente.nuevoCol}
+          onConfirm={confirmarCambioEstado}
+          onCancel={()=>setCambioEstadoPendiente(null)}
+        />
       )}
     </div>
   );
