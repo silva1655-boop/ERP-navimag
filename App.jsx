@@ -24025,6 +24025,34 @@ function PlannerPanel({user,data,activeCOLL,onNav,onClose}){
     return()=>unsub();
   },[user,activeCOLL]);
 
+  // ═══ DEBUG TEMPORAL — bug "tareas asignadas no aparecen" ═══════════════════
+  // Compara el id de sesión (mantek-auth) contra el id que tiene esta misma
+  // persona en data.users (la lista usada para resolver a quién escribirle el
+  // recordatorio al asignar). Si no coinciden, ahí está el bug: se está
+  // escribiendo en un planner_<id> que esta sesión nunca lee.
+  // Quitar este bloque una vez confirmado el diagnóstico.
+  useEffect(()=>{
+    if(!user) return;
+    const propia=(data.users||[]).find(u=>
+      (u.username||"").toLowerCase()===(user.username||"").toLowerCase()||
+      (u.email||"").toLowerCase()===(user.email||"").toLowerCase()||
+      u.name===user.name
+    );
+    console.log("\n═══ DEBUG PLANNER — identidad de sesión ═══");
+    console.log("Sesión (mantek-auth): id=%s · name=%s · username=%s · email=%s",user.id,user.name,user.username,user.email);
+    console.log("activeCOLL actual:",activeCOLL);
+    console.log("Match en data.users:",propia?{id:propia.id,name:propia.name,username:propia.username,email:propia.email}:"⚠ NO SE ENCONTRÓ ningún registro en data.users que coincida con esta sesión");
+    if(propia&&propia.id!==user.id){
+      console.log(`⚠⚠⚠ MISMATCH: tu id de sesión (${user.id}) es DISTINTO al id que tenés en data.users (${propia.id}). Si alguien te asigna una tarea eligiéndote por nombre, el recordatorio se escribe en planner_${propia.id}, pero tu sesión solo lee planner_${user.id} — nunca lo vas a ver.`);
+    }
+    console.log("Total de compromisos en tu doc actual (planner_"+user.id+"):",compromisos.length);
+    const asignaciones=compromisos.filter(c=>c.vinculo?.tipo==="proyecto_tarea");
+    console.log("De esos, con vinculo.tipo=proyecto_tarea (asignaciones recibidas):",asignaciones.length,asignaciones);
+    console.log("═══ FIN DEBUG PLANNER ═══\n");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[user,data.users,activeCOLL,compromisos]);
+  // ═══ FIN DEBUG TEMPORAL ═════════════════════════════════════════════════
+
   const save=async(newCompromisos,newProyectos)=>{
     const uid=user.id;
     const docRef=doc(db,activeCOLL,"planner_"+uid);
@@ -24546,6 +24574,10 @@ function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}
     const compromisoId="asig_"+tareaNueva.id;
     for(const nombre of todosLosNombres){
       const u=(users||[]).find(x=>x.name===nombre);
+      // DEBUG TEMPORAL — bug "tareas asignadas no aparecen": confirma en qué
+      // id/colección se está escribiendo el recordatorio de esta asignación.
+      console.log(`═══ DEBUG asignación "${nombre}" ═══`,u?{id:u.id,name:u.name,username:u.username,email:u.email}:"⚠ NO SE ENCONTRÓ ningún usuario con ese nombre en data.users",
+        "→ escribiría en:",u?`${activeCOLL}/planner_${u.id}`:"(nada, no se encontró)");
       if(!u||u.id===user.id) continue; // no auto-notificarse a uno mismo
       const ref=doc(db,activeCOLL,"planner_"+u.id);
       const snap=await getDoc(ref);
