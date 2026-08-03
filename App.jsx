@@ -24683,6 +24683,8 @@ function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}
   const [tareaEnEdicion,setTareaEnEdicion]=useState(null);
   const [mesCalendario,setMesCalendario]=useState(()=>{const d=new Date();return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;});
   const [cambioEstadoPendiente,setCambioEstadoPendiente]=useState(null); // {tareaId,nuevoCol}
+  const [comentariosGenerales,setComentariosGenerales]=useState(proyecto.comentariosGenerales||[]);
+  const [nuevoComentarioGeneral,setNuevoComentarioGeneral]=useState("");
   const FORM_TAREA_VACIO={titulo:"",col:"por_hacer",fechaInicio:"",duracion:1,responsables:[],descripcion:"",cumplimiento:0};
   const [formTarea,setFormTarea]=useState(FORM_TAREA_VACIO);
 
@@ -24850,6 +24852,25 @@ function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}
 
   const pct=tareas.length>0?Math.round(tareas.reduce((s,t)=>s+cumplimientoEfectivo(t),0)/tareas.length):0;
 
+  // Registro de comentarios del proyecto: junta los comentarios de cambio de
+  // estado de cada tarea (ya obligatorios) con los comentarios generales del
+  // proyecto (libres, no atados a un cambio de estado) en un solo feed
+  // cronológico — visible acá y en la vista del responsable (TareasAsignadasPanel).
+  const comentariosFeed=useMemo(()=>{
+    const deTareas=tareas.flatMap(t=>(t.comentarios||[]).map(c=>({...c,tareaId:t.id,tareaTitulo:t.titulo})));
+    const generales=comentariosGenerales.map(c=>({...c,tareaId:null,tareaTitulo:null}));
+    return[...deTareas,...generales].sort((a,b)=>(b.fecha||"").localeCompare(a.fecha||""));
+  },[tareas,comentariosGenerales]);
+
+  const agregarComentarioGeneral=()=>{
+    if(!nuevoComentarioGeneral.trim()) return;
+    const comentario={id:"cg_"+Math.random().toString(36).slice(2,8),texto:nuevoComentarioGeneral.trim(),autor:user?.name||user?.username||"",fecha:new Date().toISOString()};
+    const actualizados=[...comentariosGenerales,comentario];
+    setComentariosGenerales(actualizados);
+    onSave({...proyecto,tareas,comentariosGenerales:actualizados});
+    setNuevoComentarioGeneral("");
+  };
+
   // Vista Calendario: fechas locales armadas a mano (año-mes-día), sin pasar
   // por toISOString() sobre un Date en medianoche local — en zonas UTC
   // negativas (ej. Chile) eso corre la fecha un día hacia atrás.
@@ -24970,11 +24991,12 @@ function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}
           {key:"gantt",label:"Gantt"},
           {key:"lista",label:"Lista"},
           {key:"calendario",label:"Calendario"},
+          {key:"comentarios",label:"Comentarios",badge:comentariosFeed.length},
         ].map(v=>(
           <button key={v.key} onClick={()=>setVistaEditor(v.key)}
             className={`py-2 px-3 text-xs font-semibold border-b-2 transition mr-1
               ${vistaEditor===v.key?"border-blue-600 text-blue-600":"border-transparent text-gray-400 hover:text-gray-600"}`}>
-            {v.label}
+            {v.label}{v.badge>0&&<span className="ml-1 text-[9px] px-1 py-0.5 rounded-full bg-gray-200 text-gray-500">{v.badge}</span>}
           </button>
         ))}
       </div>
@@ -25234,6 +25256,43 @@ function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}
         </div>
       )}
 
+      {/* VISTA COMENTARIOS — registro visible del proyecto: comentarios de
+          cambio de estado (obligatorios) + comentarios generales (libres) */}
+      {vistaEditor==="comentarios"&&(
+        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          <div className="flex gap-2">
+            <textarea value={nuevoComentarioGeneral} onChange={e=>setNuevoComentarioGeneral(e.target.value)}
+              rows={2} placeholder="Agregar un comentario al proyecto (no necesita estar atado a un cambio de estado)..."
+              className="flex-1 px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-blue-400 resize-none"/>
+            <button onClick={agregarComentarioGeneral} disabled={!nuevoComentarioGeneral.trim()}
+              className="px-3 py-2 rounded-xl text-white text-xs font-bold transition disabled:opacity-40 flex-shrink-0 self-end" style={{background:"#2563eb"}}>
+              Comentar
+            </button>
+          </div>
+          {comentariosFeed.length===0?(
+            <p className="text-gray-400 text-sm text-center py-8">Sin comentarios todavía.</p>
+          ):(
+            <div className="space-y-2">
+              {comentariosFeed.map(c=>(
+                <div key={c.id} className="bg-white rounded-xl border border-gray-200 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs font-semibold text-gray-700">{c.autor}</p>
+                    <p className="text-[10px] text-gray-400">{new Date(c.fecha).toLocaleString("es-CL")}</p>
+                  </div>
+                  {c.tareaTitulo&&(
+                    <p className="text-[10px] text-gray-400 mt-0.5">
+                      📌 {c.tareaTitulo}
+                      {c.colAnterior&&c.colNuevo&&` · ${cols[c.colAnterior]?.label||c.colAnterior} → ${cols[c.colNuevo]?.label||c.colNuevo}`}
+                    </p>
+                  )}
+                  <p className="text-sm text-gray-600 mt-1">{c.texto}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Modal nueva tarea */}
       {showFormTarea&&(
         <div className="absolute inset-0 flex items-center justify-center z-10 p-4" style={{background:"rgba(0,0,0,0.5)"}}>
@@ -25353,6 +25412,9 @@ function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}
 function TareasAsignadasPanel({user,compromisos}){
   const [porCreador,setPorCreador]=useState({});
   const [cambioEstadoPendiente,setCambioEstadoPendiente]=useState(null);
+  const [proyectoAbierto,setProyectoAbierto]=useState(null); // {key,proyectoId}
+  const [vistaProyecto,setVistaProyecto]=useState("kanban"); // kanban | comentarios
+  const [nuevoComentarioGeneral,setNuevoComentarioGeneral]=useState("");
 
   const fuentesUnicas=useMemo(()=>{
     const vistos=new Map();
@@ -25374,19 +25436,40 @@ function TareasAsignadasPanel({user,compromisos}){
     // eslint-disable-next-line react-hooks/exhaustive-deps
   },[fuentesKey]);
 
-  const misTareas=useMemo(()=>{
-    const nombre=user?.name||user?.username||"";
+  const miNombre=user?.name||user?.username||"";
+
+  // Un proyecto entra en esta lista si tengo AL MENOS una tarea asignada ahí
+  // — pero acá quedan TODAS sus tareas (no filtradas), anotadas con la misma
+  // metadata que antes, para poder mostrar el proyecto completo (visualización
+  // total) aunque solo pueda editar las que son mías.
+  const proyectosConMiTarea=useMemo(()=>{
     const lista=[];
     Object.entries(porCreador).forEach(([key,info])=>{
       (info.proyectos||[]).forEach(p=>{
-        (p.tareas||[]).forEach(t=>{
-          if(!(t.responsables||[]).includes(nombre)) return;
-          lista.push({...t,_key:key,_creadorId:info.creadorId,_colCreador:info.colCreador,_proyectoId:p.id,_proyectoNombre:p.nombre,_creadoPor:info.creadoPor});
-        });
+        const tareasAnotadas=(p.tareas||[]).map(t=>({...t,_key:key,_creadorId:info.creadorId,_colCreador:info.colCreador,_proyectoId:p.id,_proyectoNombre:p.nombre,_creadoPor:info.creadoPor}));
+        if(!tareasAnotadas.some(t=>(t.responsables||[]).includes(miNombre))) return;
+        lista.push({key,creadorId:info.creadorId,colCreador:info.colCreador,creadoPor:info.creadoPor,proyecto:{...p,tareas:tareasAnotadas}});
       });
     });
-    return lista.sort((a,b)=>(a.fechaInicio||"9999").localeCompare(b.fechaInicio||"9999"));
-  },[porCreador,user]);
+    return lista;
+  },[porCreador,miNombre]);
+
+  const misTareas=useMemo(()=>
+    proyectosConMiTarea.flatMap(pr=>pr.proyecto.tareas.filter(t=>(t.responsables||[]).includes(miNombre)))
+      .sort((a,b)=>(a.fechaInicio||"9999").localeCompare(b.fechaInicio||"9999")),
+  [proyectosConMiTarea,miNombre]);
+
+  const proyectoActivo=useMemo(()=>{
+    if(!proyectoAbierto) return null;
+    return proyectosConMiTarea.find(pr=>pr.key===proyectoAbierto.key&&pr.proyecto.id===proyectoAbierto.proyectoId)||null;
+  },[proyectosConMiTarea,proyectoAbierto]);
+
+  const comentariosFeedProyectoActivo=useMemo(()=>{
+    if(!proyectoActivo) return [];
+    const deTareas=proyectoActivo.proyecto.tareas.flatMap(t=>(t.comentarios||[]).map(c=>({...c,tareaTitulo:t.titulo})));
+    const generales=(proyectoActivo.proyecto.comentariosGenerales||[]).map(c=>({...c,tareaTitulo:null}));
+    return[...deTareas,...generales].sort((a,b)=>(b.fecha||"").localeCompare(a.fecha||""));
+  },[proyectoActivo]);
 
   const solicitarCambioEstado=(tarea,nuevoCol)=>{
     if(nuevoCol===tarea.col) return;
@@ -25437,6 +25520,123 @@ function TareasAsignadasPanel({user,compromisos}){
     setCambioEstadoPendiente(null);
   };
 
+  // Comentario general del proyecto (no atado a un cambio de estado) — se
+  // escribe directo en el doc del creador, igual que un cambio de estado.
+  const agregarComentarioGeneral=async()=>{
+    if(!nuevoComentarioGeneral.trim()||!proyectoActivo) return;
+    const ref=doc(db,proyectoActivo.colCreador,"planner_"+proyectoActivo.creadorId);
+    const snap=await getDoc(ref);
+    if(!snap.exists()) return;
+    const data=snap.data();
+    const comentario={id:"cg_"+Math.random().toString(36).slice(2,8),texto:nuevoComentarioGeneral.trim(),autor:user?.name||user?.username||"",fecha:new Date().toISOString()};
+    const proyectosNuevos=(data.proyectos||[]).map(p=>p.id===proyectoActivo.proyecto.id?{...p,comentariosGenerales:[...(p.comentariosGenerales||[]),comentario]}:p);
+    await setDoc(ref,{...data,proyectos:proyectosNuevos,updatedAt:new Date().toISOString()});
+    setNuevoComentarioGeneral("");
+  };
+
+  // ── Vista de proyecto completo (visualización total, edición solo de mis tareas) ──
+  if(proyectoActivo){
+    const tareasP=proyectoActivo.proyecto.tareas;
+    const pctP=tareasP.length>0?Math.round(tareasP.reduce((s,t)=>s+cumplimientoEfectivoTarea(t),0)/tareasP.length):0;
+    return(
+      <div className="flex flex-col" style={{minHeight:"60vh"}}>
+        <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-3">
+          <button onClick={()=>{setProyectoAbierto(null);setVistaProyecto("kanban");}} className="text-gray-400 hover:text-gray-700 text-lg">←</button>
+          <div className="flex-1 min-w-0">
+            <p className="font-bold text-gray-900 truncate">{proyectoActivo.proyecto.nombre}</p>
+            <p className="text-[10px] text-gray-400">Creado por {proyectoActivo.creadoPor||"—"} · {pctP}% completado</p>
+          </div>
+        </div>
+        <div className="flex border-b border-gray-100 bg-gray-50 px-4">
+          {[{key:"kanban",label:"Kanban"},{key:"comentarios",label:"Comentarios",badge:comentariosFeedProyectoActivo.length}].map(v=>(
+            <button key={v.key} onClick={()=>setVistaProyecto(v.key)}
+              className={`py-2 px-3 text-xs font-semibold border-b-2 transition mr-1 ${vistaProyecto===v.key?"border-blue-600 text-blue-600":"border-transparent text-gray-400 hover:text-gray-600"}`}>
+              {v.label}{v.badge>0&&<span className="ml-1 text-[9px] px-1 py-0.5 rounded-full bg-gray-200 text-gray-500">{v.badge}</span>}
+            </button>
+          ))}
+        </div>
+        {vistaProyecto==="kanban"&&(
+          <div className="flex-1 overflow-y-auto p-3">
+            <div className="grid grid-cols-2 gap-2">
+              {Object.entries(COLS_TAREA).map(([colKey,colData])=>{
+                const tareasCol=tareasP.filter(t=>t.col===colKey);
+                return(
+                  <div key={colKey} className={`rounded-xl border p-2 min-h-24 ${colData.color}`}>
+                    <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-2">
+                      {colData.label}<span className="ml-1 normal-case font-normal">({tareasCol.length})</span>
+                    </p>
+                    <div className="space-y-1.5">
+                      {tareasCol.map(t=>{
+                        const esMia=(t.responsables||[]).includes(miNombre);
+                        return(
+                          <div key={t.id} className={`bg-white rounded-lg border p-2 shadow-sm ${esMia?"border-blue-300":"border-gray-200"}`}>
+                            <p className="text-xs font-semibold text-gray-800 leading-tight">{t.titulo}</p>
+                            {t.responsables?.length>0&&<p className="text-[10px] text-gray-400 mt-0.5 truncate">👤 {t.responsables.join(", ")}</p>}
+                            <div className="mt-1.5 flex items-center gap-1.5">
+                              <div className="flex-1 h-1 bg-gray-100 rounded-full overflow-hidden"><div className="h-full bg-blue-500 rounded-full" style={{width:cumplimientoEfectivoTarea(t)+"%"}}/></div>
+                              <span className="text-[9px] text-gray-400 font-semibold">{cumplimientoEfectivoTarea(t)}%</span>
+                            </div>
+                            {esMia?(
+                              <select value={t.col} onChange={e=>solicitarCambioEstado(t,e.target.value)}
+                                className="mt-1.5 w-full text-[10px] px-1.5 py-1 rounded-md border border-gray-200 bg-white text-gray-600 focus:outline-none">
+                                {Object.entries(COLS_TAREA).map(([k,d])=><option key={k} value={k}>{d.label}</option>)}
+                              </select>
+                            ):(
+                              <p className="text-[9px] text-gray-300 mt-1.5 italic">Solo lectura</p>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+        {vistaProyecto==="comentarios"&&(
+          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            <div className="flex gap-2">
+              <textarea value={nuevoComentarioGeneral} onChange={e=>setNuevoComentarioGeneral(e.target.value)}
+                rows={2} placeholder="Agregar un comentario al proyecto..."
+                className="flex-1 px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-blue-400 resize-none"/>
+              <button onClick={agregarComentarioGeneral} disabled={!nuevoComentarioGeneral.trim()}
+                className="px-3 py-2 rounded-xl text-white text-xs font-bold transition disabled:opacity-40 flex-shrink-0 self-end" style={{background:"#2563eb"}}>
+                Comentar
+              </button>
+            </div>
+            {comentariosFeedProyectoActivo.length===0?(
+              <p className="text-gray-400 text-sm text-center py-8">Sin comentarios todavía.</p>
+            ):(
+              <div className="space-y-2">
+                {comentariosFeedProyectoActivo.map(c=>(
+                  <div key={c.id} className="bg-white rounded-xl border border-gray-200 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs font-semibold text-gray-700">{c.autor}</p>
+                      <p className="text-[10px] text-gray-400">{new Date(c.fecha).toLocaleString("es-CL")}</p>
+                    </div>
+                    {c.tareaTitulo&&<p className="text-[10px] text-gray-400 mt-0.5">📌 {c.tareaTitulo}</p>}
+                    <p className="text-sm text-gray-600 mt-1">{c.texto}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        {cambioEstadoPendiente&&(
+          <ModalComentarioEstado
+            tareaTitulo={cambioEstadoPendiente.tarea.titulo}
+            colAnteriorLabel={COLS_TAREA[cambioEstadoPendiente.tarea.col]?.label||cambioEstadoPendiente.tarea.col}
+            colNuevoLabel={COLS_TAREA[cambioEstadoPendiente.nuevoCol]?.label||cambioEstadoPendiente.nuevoCol}
+            onConfirm={confirmarCambioEstado}
+            onCancel={()=>setCambioEstadoPendiente(null)}
+          />
+        )}
+      </div>
+    );
+  }
+
+  // ── Vista por defecto: lista de mis tareas asignadas ──
   return(
     <div className="p-4 space-y-3">
       {misTareas.length===0?(
@@ -25450,9 +25650,11 @@ function TareasAsignadasPanel({user,compromisos}){
           <div key={t._key+"_"+t.id} className="bg-white rounded-2xl border border-gray-200 p-4">
             <div className="flex items-start justify-between gap-2">
               <div className="flex-1 min-w-0">
-                <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide truncate">
-                  📁 {t._proyectoNombre} · asignado por {t._creadoPor||"—"}
-                </p>
+                <button onClick={()=>{setProyectoAbierto({key:t._key,proyectoId:t._proyectoId});setVistaProyecto("kanban");}}
+                  className="text-[10px] text-blue-600 font-semibold uppercase tracking-wide truncate hover:underline">
+                  📁 {t._proyectoNombre} — ver proyecto completo →
+                </button>
+                <p className="text-[10px] text-gray-400 mt-0.5">asignado por {t._creadoPor||"—"}</p>
                 <p className="font-bold text-gray-800 mt-0.5">{t.titulo}</p>
                 {t.descripcion&&<p className="text-xs text-gray-500 mt-1">{t.descripcion}</p>}
               </div>
