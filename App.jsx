@@ -25809,9 +25809,9 @@ function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}
           </div>
         </div>
         <button onClick={()=>setShowComentariosGenerales(true)}
-          className="relative px-3 py-1.5 rounded-xl text-xs font-semibold text-gray-600 border border-gray-200 hover:bg-gray-50 transition flex items-center gap-1">
+          className="relative px-3 py-1.5 rounded-xl text-xs font-bold text-purple-700 bg-purple-50 border border-purple-200 hover:bg-purple-100 transition flex items-center gap-1.5 flex-shrink-0">
           💬 Comentarios
-          {comentariosGenerales.length>0&&<span className="text-[9px] px-1.5 py-0.5 rounded-full bg-gray-200 text-gray-600 font-bold">{comentariosGenerales.length}</span>}
+          {comentariosGenerales.length>0&&<span className="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-600 text-white font-bold">{comentariosGenerales.length}</span>}
         </button>
         <button onClick={abrirNuevaTarea} className="px-3 py-1.5 rounded-xl text-xs font-bold text-white transition" style={{background:"#2563eb"}}>
           + Tarea
@@ -26496,9 +26496,9 @@ function TareasAsignadasPanel({user,compromisos}){
             <p className="text-[10px] text-gray-400">Creado por {proyectoActivo.creadoPor||"—"} · {pctP}% completado</p>
           </div>
           <button onClick={()=>setShowComentariosGenerales(true)}
-            className="relative px-3 py-1.5 rounded-xl text-xs font-semibold text-gray-600 border border-gray-200 hover:bg-gray-50 transition flex items-center gap-1 flex-shrink-0">
-            💬
-            {(proyectoActivo.proyecto.comentariosGenerales?.length>0)&&<span className="text-[9px] px-1.5 py-0.5 rounded-full bg-gray-200 text-gray-600 font-bold">{proyectoActivo.proyecto.comentariosGenerales.length}</span>}
+            className="relative px-3 py-1.5 rounded-xl text-xs font-bold text-purple-700 bg-purple-50 border border-purple-200 hover:bg-purple-100 transition flex items-center gap-1.5 flex-shrink-0">
+            💬 Comentarios
+            {(proyectoActivo.proyecto.comentariosGenerales?.length>0)&&<span className="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-600 text-white font-bold">{proyectoActivo.proyecto.comentariosGenerales.length}</span>}
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-3">
