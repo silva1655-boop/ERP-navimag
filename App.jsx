@@ -14221,10 +14221,12 @@ function GastoMensualChart({serie,onClickMes,mesSeleccionado,height=260,width=76
   const yPct=pct=>pad.t+cH-(Math.max(0,Math.min(pct??0,PCT_MAX))/PCT_MAX)*cH;
   const gridlines=Array.from({length:4},(_,i)=>({v:(maxVal/3)*i,y:yAt((maxVal/3)*i)}));
   const pctTicks=[0,50,100].map(v=>({v,y:yPct(v)}));
-  const pctPath=serie.filter(m=>m.pct!=null).map((m,i,arr)=>{
-    const idx=serie.indexOf(m);
-    return`${i===0?"M":"L"}${xCentro(idx).toFixed(1)},${yPct(m.pct).toFixed(1)}`;
-  }).join(" ");
+  // % Ejecución > 100% = se gastó más de lo presupuestado ese mes (rojo,
+  // alerta) · <=100% = dentro de presupuesto (verde). Colorea por tramo
+  // (un segmento queda rojo si cualquiera de sus dos puntos se pasó) para
+  // que el quiebre se note apenas cruza la línea de 100%, no solo en el punto.
+  const colorPct=pct=>pct>100?"#dc2626":"#16a34a";
+  const puntosPct=serie.map((m,i)=>({...m,idx:i})).filter(m=>m.pct!=null);
   return(
     <svg width="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{display:"block",height:`${H}px`}}>
       {gridlines.map((g,i)=>(
@@ -14251,18 +14253,21 @@ function GastoMensualChart({serie,onClickMes,mesSeleccionado,height=260,width=76
           </g>
         );
       })}
-      <path d={pctPath} fill="none" stroke="#16a34a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-      {serie.filter(m=>m.pct!=null).map((m,i)=>{
-        const idx=serie.indexOf(m);
+      {puntosPct.slice(1).map((m,i)=>{
+        const prev=puntosPct[i];
         return(
-          <g key={i}>
-            <circle cx={xCentro(idx)} cy={yPct(m.pct)} r="3" fill="white" stroke="#16a34a" strokeWidth="2">
-              <title>% Ejecución {m.mes}: gastado {fmtCompactCLP(m.real)} de {fmtCompactCLP(m.presupuesto)} presupuestado ({m.pct}%)</title>
-            </circle>
-            <text x={xCentro(idx)} y={yPct(m.pct)-8} textAnchor="middle" fontSize="9" fontWeight="700" fill="#16a34a">{m.pct}%</text>
-          </g>
+          <line key={i} x1={xCentro(prev.idx)} y1={yPct(prev.pct)} x2={xCentro(m.idx)} y2={yPct(m.pct)}
+            stroke={colorPct(Math.max(prev.pct,m.pct))} strokeWidth="2" strokeLinecap="round"/>
         );
       })}
+      {puntosPct.map((m,i)=>(
+        <g key={i}>
+          <circle cx={xCentro(m.idx)} cy={yPct(m.pct)} r="3" fill="white" stroke={colorPct(m.pct)} strokeWidth="2">
+            <title>% Ejecución {m.mes}: gastado {fmtCompactCLP(m.real)} de {fmtCompactCLP(m.presupuesto)} presupuestado ({m.pct}%){m.pct>100?" — sobre presupuesto":""}</title>
+          </circle>
+          <text x={xCentro(m.idx)} y={yPct(m.pct)-8} textAnchor="middle" fontSize="9" fontWeight="700" fill={colorPct(m.pct)}>{m.pct}%</text>
+        </g>
+      ))}
     </svg>
   );
 }
@@ -15282,7 +15287,11 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
           <div className="flex items-center gap-4 mt-1 justify-center flex-wrap">
             <span className="flex items-center gap-1.5 text-xs text-gray-500"><span className="w-2.5 h-2.5 rounded-sm bg-blue-500 inline-block"/>Real filtrado</span>
             <span className="flex items-center gap-1.5 text-xs text-gray-500"><span className="w-2.5 h-2.5 rounded-sm bg-gray-300 inline-block"/>Presupuesto</span>
-            <span className="flex items-center gap-1.5 text-xs text-gray-500"><span className="w-3 h-0.5 bg-emerald-600 inline-block rounded"/>% Ejecución (real ÷ presupuesto del mes, eje derecho)</span>
+            <span className="flex items-center gap-1.5 text-xs text-gray-500">
+              % Ejecución (real ÷ presupuesto del mes, eje derecho):
+              <span className="w-3 h-0.5 bg-emerald-600 inline-block rounded ml-1"/>≤100%
+              <span className="w-3 h-0.5 bg-red-600 inline-block rounded ml-1"/>&gt;100% (sobre presupuesto)
+            </span>
           </div>
         </div>
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
