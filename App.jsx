@@ -15828,7 +15828,10 @@ const BUQUE_COLOR={ESPERANZA:"#0055A4",DALKA:"#F59E0B"};
 // mensual" del Excel, extendido a 2 buques y a Disponibilidad+Utilización
 // per el spec — el Excel original solo traía un promedio combinado de
 // Disponibilidad, sin separar por buque ni incluir Utilización).
-function PromedioMensualChart({datos,height=180,width=620}){
+// Línea de promedio por buque a través de períodos — el tamaño del período
+// (mes/trimestre/semestre/año) lo decide quien arma `datos` (cada punto trae
+// su propio `key` para el React key y `label` ya formateado para el eje).
+function PromedioPeriodoChart({datos,height=180,width=620}){
   const pad={l:34,r:10,t:10,b:22};
   const cW=width-pad.l-pad.r, cH=height-pad.t-pad.b;
   if(!datos||datos.length===0) return <p className="text-gray-400 text-xs italic py-6 text-center">Sin datos suficientes todavía.</p>;
@@ -15851,10 +15854,10 @@ function PromedioMensualChart({datos,height=180,width=620}){
       <path d={buildPath("ESPERANZA")} fill="none" stroke={BUQUE_COLOR.ESPERANZA} strokeWidth="2"/>
       <path d={buildPath("DALKA")} fill="none" stroke={BUQUE_COLOR.DALKA} strokeWidth="2"/>
       {datos.map((d,i)=>(
-        <g key={d.mesKey}>
-          {d.ESPERANZA!=null&&<circle cx={x(i)} cy={y(d.ESPERANZA)} r="3" fill={BUQUE_COLOR.ESPERANZA}><title>{`Esperanza ${d.mesKey}: ${Math.round(d.ESPERANZA*100)}%`}</title></circle>}
-          {d.DALKA!=null&&<circle cx={x(i)} cy={y(d.DALKA)} r="3" fill={BUQUE_COLOR.DALKA}><title>{`Dalka ${d.mesKey}: ${Math.round(d.DALKA*100)}%`}</title></circle>}
-          <text x={x(i)} y={height-6} textAnchor="middle" fontSize="9" fill="#9CA3AF">{d.mesKey.slice(2)}</text>
+        <g key={d.key}>
+          {d.ESPERANZA!=null&&<circle cx={x(i)} cy={y(d.ESPERANZA)} r="3" fill={BUQUE_COLOR.ESPERANZA}><title>{`Esperanza ${d.label}: ${Math.round(d.ESPERANZA*100)}%`}</title></circle>}
+          {d.DALKA!=null&&<circle cx={x(i)} cy={y(d.DALKA)} r="3" fill={BUQUE_COLOR.DALKA}><title>{`Dalka ${d.label}: ${Math.round(d.DALKA*100)}%`}</title></circle>}
+          <text x={x(i)} y={height-6} textAnchor="middle" fontSize="9" fill="#9CA3AF">{d.label}</text>
         </g>
       ))}
     </svg>
@@ -15873,6 +15876,7 @@ function DisponibilidadUtilizacion({user,data}){
   const [loadingFaenas,setLoadingFaenas]=useState(true);
   const [nuevaFaena,setNuevaFaena]=useState(FAENA_VACIA);
   const [editFaenaId,setEditFaenaId]=useState(null);
+  const [granularidadPromedio,setGranularidadPromedio]=useState("mensual"); // mensual|trimestral|semestral|anual
 
   const [detenciones,setDetenciones]=useState([]);
   const [loadingDetenciones,setLoadingDetenciones]=useState(true);
@@ -15980,12 +15984,23 @@ function DisponibilidadUtilizacion({user,data}){
   );
   const targetFaenaActual=targets.find(t=>t.buque===nuevaFaena.buque&&t.terminal===nuevaFaena.terminal);
 
+  // Aviso de faena repetida: mismo buque + mismo N° de faena ya registrado
+  // (normalizado — espacios/mayúsculas no cuentan), excluyendo la que se está
+  // editando. Es un aviso, no un bloqueo — se puede confirmar igual por si
+  // hay un caso real de corregir/duplicar a propósito.
+  const faenaDuplicada=useMemo(()=>{
+    const num=String(nuevaFaena.numeroFaena||"").trim().toUpperCase().replace(/\s+/g," ");
+    if(!num) return null;
+    return faenas.find(x=>x.id!==editFaenaId&&x.buque===nuevaFaena.buque&&String(x.numeroFaena||"").trim().toUpperCase().replace(/\s+/g," ")===num)||null;
+  },[faenas,nuevaFaena.buque,nuevaFaena.numeroFaena,editFaenaId]);
+
   const guardarFaena=()=>{
     const f=nuevaFaena;
     if(!f.numeroFaena.trim()){alert("Ingresa el número de faena.");return;}
     if(!f.inicioOp||!f.terminoOp){alert("Ingresa inicio y término de la operación.");return;}
     if(new Date(f.terminoOp)<=new Date(f.inicioOp)){alert("El término de la operación debe ser posterior al inicio.");return;}
     if(!targetFaenaActual){alert(`No hay target configurado para ${f.buque} · ${f.terminal}. Agrégalo arriba en "Configuración de Targets" antes de guardar esta faena.`);return;}
+    if(faenaDuplicada&&!window.confirm(`Ya existe una faena ${faenaDuplicada.buque} N°"${faenaDuplicada.numeroFaena}" (${faenaDuplicada.terminal}, término ${faenaDuplicada.terminoOp?new Date(faenaDuplicada.terminoOp).toLocaleDateString("es-CL"):"—"}). ¿Guardar igual y tener dos faenas con el mismo número?`)) return;
     const derivados=calcularFaenaDerivados(f,targets,indisponibilidadHHDeEdicion);
     if(!derivados){alert("No se pudo calcular la faena — revisa las fechas ingresadas.");return;}
     const ahora=new Date().toISOString();
@@ -16038,28 +16053,54 @@ function DisponibilidadUtilizacion({user,data}){
     return true;
   }),[faenasOrdenadas,filtrosBuqueTabla,filtrosTerminalTabla,fechaDesdeTabla,fechaHastaTabla]);
 
-  // Promedio mensual de Disponibilidad/Utilización por buque — equivalente a
-  // la hoja "Prom. Disp. mensual" del Excel, extendido a 2 buques y a
-  // Utilización (el original solo traía un promedio combinado, sin buque,
-  // solo de Disponibilidad).
-  const promediosMensuales=useMemo(()=>{
+  // Promedio de Disponibilidad/Utilización por buque, agrupado según la
+  // granularidad elegida (mensual/trimestral/semestral/anual) — equivalente a
+  // la hoja "Prom. Disp. mensual" del Excel, extendido a 2 buques, a
+  // Utilización, y a más de un tamaño de período.
+  const PERIODOS_PROMEDIO=[
+    {key:"mensual",label:"Mensual"},
+    {key:"trimestral",label:"Trimestral"},
+    {key:"semestral",label:"Semestral"},
+    {key:"anual",label:"Anual"},
+  ];
+  const periodoDeFecha=(anio,mes,granularidad)=>{
+    if(granularidad==="anual") return{key:`${anio}`,label:`${anio}`};
+    if(granularidad==="semestral"){
+      const s=mes<=6?1:2;
+      return{key:`${anio}-S${s}`,label:`S${s} ${String(anio).slice(2)}`};
+    }
+    if(granularidad==="trimestral"){
+      const t=Math.ceil(mes/3);
+      return{key:`${anio}-T${t}`,label:`T${t} ${String(anio).slice(2)}`};
+    }
+    return{key:`${anio}-${String(mes).padStart(2,"0")}`,label:new Date(anio,mes-1,1).toLocaleDateString("es-CL",{month:"short",year:"2-digit"})};
+  };
+  const promediosPorPeriodo=useMemo(()=>{
     const grupos={};
     faenas.forEach(f=>{
-      const k=`${f.anio}-${String(f.mes).padStart(2,"0")}`;
-      if(!grupos[k]) grupos[k]={mesKey:k,ESPERANZA:{d:0,u:0,n:0},DALKA:{d:0,u:0,n:0}};
-      const g=grupos[k][f.buque];
+      const{key,label}=periodoDeFecha(f.anio,f.mes,granularidadPromedio);
+      if(!grupos[key]) grupos[key]={key,label,ESPERANZA:{d:0,u:0,n:0},DALKA:{d:0,u:0,n:0}};
+      const g=grupos[key][f.buque];
       if(g){g.d+=f.disponibilidadTecnica;g.u+=f.utilizacion;g.n++;}
     });
-    return Object.values(grupos).sort((a,b)=>a.mesKey.localeCompare(b.mesKey)).map(g=>({
-      mesKey:g.mesKey,
+    return Object.values(grupos).sort((a,b)=>a.key.localeCompare(b.key)).map(g=>({
+      key:g.key,label:g.label,
       dispEsperanza:g.ESPERANZA.n>0?g.ESPERANZA.d/g.ESPERANZA.n:null,
       dispDalka:g.DALKA.n>0?g.DALKA.d/g.DALKA.n:null,
       utilEsperanza:g.ESPERANZA.n>0?g.ESPERANZA.u/g.ESPERANZA.n:null,
       utilDalka:g.DALKA.n>0?g.DALKA.u/g.DALKA.n:null,
+      nEsperanza:g.ESPERANZA.n,nDalka:g.DALKA.n,
     }));
-  },[faenas]);
-  const serieDisponibilidadMensual=useMemo(()=>promediosMensuales.map(d=>({mesKey:d.mesKey,ESPERANZA:d.dispEsperanza,DALKA:d.dispDalka})),[promediosMensuales]);
-  const serieUtilizacionMensual=useMemo(()=>promediosMensuales.map(d=>({mesKey:d.mesKey,ESPERANZA:d.utilEsperanza,DALKA:d.utilDalka})),[promediosMensuales]);
+  },[faenas,granularidadPromedio]);
+  const serieDisponibilidadPeriodo=useMemo(()=>promediosPorPeriodo.map(d=>({key:d.key,label:d.label,ESPERANZA:d.dispEsperanza,DALKA:d.dispDalka})),[promediosPorPeriodo]);
+  const serieUtilizacionPeriodo=useMemo(()=>promediosPorPeriodo.map(d=>({key:d.key,label:d.label,ESPERANZA:d.utilEsperanza,DALKA:d.utilDalka})),[promediosPorPeriodo]);
+  // Período actual (según la granularidad elegida) para las tarjetas de
+  // arriba — busca si ya hay faenas calzando ese período exacto.
+  const periodoActualInfo=useMemo(()=>{
+    const hoy=new Date();
+    const{key,label}=periodoDeFecha(hoy.getFullYear(),hoy.getMonth()+1,granularidadPromedio);
+    return{label,datos:promediosPorPeriodo.find(p=>p.key===key)||null};
+  },[promediosPorPeriodo,granularidadPromedio]);
 
   // Recalcula indisponibilidadHH/disponibilidadTecnica/utilizacion de una o más
   // Faenas a partir del arreglo de Detenciones actualizado, y guarda mantek_faena.
@@ -16574,6 +16615,12 @@ function DisponibilidadUtilizacion({user,data}){
           <p className="text-red-500 text-xs mb-3">⚠ No hay target configurado para {nuevaFaena.buque} · {nuevaFaena.terminal}. Agrégalo arriba antes de guardar.</p>
         )}
 
+        {faenaDuplicada&&(
+          <p className="text-amber-700 text-xs mb-3 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            ⚠ Ya existe una faena {faenaDuplicada.buque} N°"{faenaDuplicada.numeroFaena}" ({faenaDuplicada.terminal}, término {faenaDuplicada.terminoOp?new Date(faenaDuplicada.terminoOp).toLocaleDateString("es-CL"):"—"}). Si guardás, te va a preguntar de nuevo para confirmar.
+          </p>
+        )}
+
         {previewFaena&&(
           <div className="bg-gray-50 rounded-xl p-4 mb-3 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
             <div><p className="text-gray-400 text-[10px]">Target</p><p className="font-bold text-gray-800">{previewFaena.target} tractos</p></div>
@@ -16597,18 +16644,42 @@ function DisponibilidadUtilizacion({user,data}){
         </div>
       </div>
 
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
+        <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
+          <h2 className="font-bold text-gray-800 text-base">Período actual — {periodoActualInfo.label}</h2>
+          <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
+            {PERIODOS_PROMEDIO.map(p=>(
+              <button key={p.key} onClick={()=>setGranularidadPromedio(p.key)}
+                className={`px-3 py-1.5 rounded-md text-xs font-semibold transition ${granularidadPromedio===p.key?"bg-white shadow-sm text-blue-700":"text-gray-500 hover:text-gray-700"}`}>
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {periodoActualInfo.datos?(
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <StatCard icon={Gauge} label="Disp. Técnica · Esperanza" value={periodoActualInfo.datos.nEsperanza>0?fmtPct(periodoActualInfo.datos.dispEsperanza):"—"} sub={periodoActualInfo.datos.nEsperanza>0?`${periodoActualInfo.datos.nEsperanza} faena(s)`:"Sin faenas"} color="blue"/>
+            <StatCard icon={TrendingUp} label="Utilización · Esperanza" value={periodoActualInfo.datos.nEsperanza>0?fmtPct(periodoActualInfo.datos.utilEsperanza):"—"} sub={periodoActualInfo.datos.nEsperanza>0?`${periodoActualInfo.datos.nEsperanza} faena(s)`:"Sin faenas"} color="cyan"/>
+            <StatCard icon={Gauge} label="Disp. Técnica · Dalka" value={periodoActualInfo.datos.nDalka>0?fmtPct(periodoActualInfo.datos.dispDalka):"—"} sub={periodoActualInfo.datos.nDalka>0?`${periodoActualInfo.datos.nDalka} faena(s)`:"Sin faenas"} color="blue"/>
+            <StatCard icon={TrendingUp} label="Utilización · Dalka" value={periodoActualInfo.datos.nDalka>0?fmtPct(periodoActualInfo.datos.utilDalka):"—"} sub={periodoActualInfo.datos.nDalka>0?`${periodoActualInfo.datos.nDalka} faena(s)`:"Sin faenas"} color="cyan"/>
+          </div>
+        ):(
+          <p className="text-gray-400 text-sm italic">Todavía no hay faenas registradas en el período actual ({periodoActualInfo.label}).</p>
+        )}
+      </div>
+
       <div className="grid xl:grid-cols-2 gap-5">
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
-          <h2 className="font-bold text-gray-800 text-base mb-3">Promedio mensual de Disponibilidad Técnica por buque</h2>
-          <PromedioMensualChart datos={serieDisponibilidadMensual} height={240}/>
+          <h2 className="font-bold text-gray-800 text-base mb-3">Promedio de Disponibilidad Técnica por buque</h2>
+          <PromedioPeriodoChart datos={serieDisponibilidadPeriodo} height={240}/>
           <div className="flex items-center gap-4 text-xs text-gray-500 mt-2">
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:BUQUE_COLOR.ESPERANZA}}/>Esperanza</span>
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:BUQUE_COLOR.DALKA}}/>Dalka</span>
           </div>
         </div>
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
-          <h2 className="font-bold text-gray-800 text-base mb-3">Promedio mensual de Utilización por buque</h2>
-          <PromedioMensualChart datos={serieUtilizacionMensual} height={240}/>
+          <h2 className="font-bold text-gray-800 text-base mb-3">Promedio de Utilización por buque</h2>
+          <PromedioPeriodoChart datos={serieUtilizacionPeriodo} height={240}/>
           <div className="flex items-center gap-4 text-xs text-gray-500 mt-2">
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:BUQUE_COLOR.ESPERANZA}}/>Esperanza</span>
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:BUQUE_COLOR.DALKA}}/>Dalka</span>
