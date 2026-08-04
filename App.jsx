@@ -19555,7 +19555,7 @@ function Checklist({user,data,setData,activeModule,activeBarco,saveData,appendTo
 const {checklists=[],equip=[],requests=[],users=[]}=data;
 const allCL=checklists||[];
 const [editing,setEditing]=useState(false);
-const [setup,setSetup]=useState({operatorName:"",equipType:activeModule==="maritimo"?"sala_maquinas":"tracto",equipId:"",horometro:"",fuel:"1/2",puerto:"",nave:"",inspectionType:"pre"});
+const [setup,setSetup]=useState({operatorName:user?.name||user?.fullName||"",equipType:activeModule==="maritimo"?"sala_maquinas":"tracto",equipId:"",horometro:"",fuel:"1/2",puerto:"",nave:"",inspectionType:"pre"});
 const [postPhotos,setPostPhotos]=useState({front:null,right:null,left:null,rear:null,interior:null,extintor:null});
 const [cortaCorrientePhotos,setCortaCorrientePhotos]=useState({cortado:null});
 const [postDamageNote,setPostDamageNote]=useState("");
@@ -21314,16 +21314,31 @@ return(
 </div>
 <div>
 <label className="text-gray-500 text-xs font-medium mb-1 block">NOMBRE DEL OPERADOR *</label>
-<select value={setup.operatorName} onChange={e=>setSetup(s=>({...s,operatorName:e.target.value}))} className={sCls} disabled={!setup.puerto}>
-  <option value="">{setup.puerto?"Selecciona tu nombre...":"Primero selecciona un puerto"}</option>
-  {(data.operadores||[])
-    .filter(o=>o.activo)
-    .filter(o=>!setup.puerto||!o.puerto||o.puerto===setup.puerto)
-    .sort((a,b)=>a.nombre.localeCompare(b.nombre))
-    .map(o=>(
-      <option key={o.id} value={o.nombre}>{o.nombre}{!o.puerto?" (sin puerto asignado)":""}</option>
-    ))}
-</select>
+{(()=>{
+  const esOperador=user?.role==="operador"||user?.authRole==="OPERADOR";
+  const nombreUsuario=user?.name||user?.fullName||"";
+  // Si es operador, auto-seleccionar y bloquear
+  if(esOperador&&nombreUsuario){
+    return(
+      <div className={sCls+" bg-gray-50 flex items-center justify-between px-3"}>
+        <span className="text-gray-700 font-medium text-sm">{nombreUsuario}</span>
+        <span className="text-xs text-gray-400 bg-gray-200 px-2 py-0.5 rounded-full">Auto</span>
+      </div>
+    );
+  }
+  return(
+    <select value={setup.operatorName} onChange={e=>setSetup(s=>({...s,operatorName:e.target.value}))} className={sCls} disabled={!setup.puerto}>
+      <option value="">{setup.puerto?"Selecciona tu nombre...":"Primero selecciona un puerto"}</option>
+      {(data.operadores||[])
+        .filter(o=>o.activo)
+        .filter(o=>!setup.puerto||!o.puerto||o.puerto===setup.puerto)
+        .sort((a,b)=>a.nombre.localeCompare(b.nombre))
+        .map(o=>(
+          <option key={o.id} value={o.nombre}>{o.nombre}{!o.puerto?" (sin puerto asignado)":""}</option>
+        ))}
+    </select>
+  );
+})()}
 {setup.puerto&&(data.operadores||[]).filter(o=>o.activo&&(!o.puerto||o.puerto===setup.puerto)).length===0&&(
   <p className="text-amber-600 text-xs mt-1">No hay operadores registrados para {PUERTOS[setup.puerto]?.label}. Contacta a Operaciones para agregar operadores a este puerto.</p>
 )}
