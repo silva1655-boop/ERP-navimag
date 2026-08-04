@@ -19865,8 +19865,12 @@ const naCount=items.filter(it=>it.status==="na").length;
     const idxRef=doc(db,COLL,`cl_index_${monthKey}`);
 
     let lastTxError=null;
-    for(let attempt=1;attempt<=3;attempt++){
+    for(let attempt=1;attempt<=5;attempt++){
       try{
+        if(attempt>1){
+          // Backoff exponencial: 200ms, 400ms, 800ms, 1600ms
+          await new Promise(r=>setTimeout(r,Math.pow(2,attempt-1)*100));
+        }
         await runTransaction(db,async(tx)=>{
           const idxSnap=await tx.get(idxRef);
           const currentIds=idxSnap.exists()?idxSnap.data().ids||[]:[];
