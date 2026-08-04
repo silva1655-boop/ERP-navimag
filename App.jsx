@@ -25333,7 +25333,7 @@ function AdjuntoChip({adjunto}){
   const esImagen=(adjunto.tipo||"").startsWith("image/");
   if(esImagen){
     return(
-      <div className="mt-1.5 inline-block rounded-lg overflow-hidden border border-gray-200 cursor-pointer hover:border-blue-400 transition align-top"
+      <div className="inline-block rounded-lg overflow-hidden border border-gray-200 cursor-pointer hover:border-blue-400 transition align-top"
         style={{width:"56px",height:"56px"}} onClick={()=>window._mantekViewImg?.(adjunto.url)} title={adjunto.nombre}>
         <img src={adjunto.url} alt={adjunto.nombre} className="w-full h-full object-cover"/>
       </div>
@@ -25341,57 +25341,126 @@ function AdjuntoChip({adjunto}){
   }
   return(
     <a href={adjunto.url} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()}
-      className="mt-1.5 inline-flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-lg bg-gray-50 border border-gray-200 text-gray-600 hover:bg-gray-100 transition max-w-full">
+      className="inline-flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-lg bg-gray-50 border border-gray-200 text-gray-600 hover:bg-gray-100 transition max-w-full">
       📎 <span className="truncate">{adjunto.nombre}</span>{adjunto.tamanoKB?<span className="flex-shrink-0 text-gray-400">· {adjunto.tamanoKB}KB</span>:null}
     </a>
   );
 }
 
-// Botón "Adjuntar" para un comentario del Planner — lee el archivo elegido
-// como data URL y lo sube a Firebase Storage (mismo pipeline que usan las
-// fotos de checklist/hallazgos); cualquier tipo de archivo, no solo imágenes.
-function AdjuntoInput({adjunto,onChange}){
+// Todos los adjuntos de un comentario — acepta `adjuntos` (array, formato
+// actual) o `adjunto` (objeto suelto, formato legado de comentarios viejos)
+// para que ambos se sigan viendo sin tener que migrar datos.
+function AdjuntosChips({adjuntos,adjunto}){
+  const lista=adjuntos&&adjuntos.length>0?adjuntos:(adjunto?[adjunto]:[]);
+  if(lista.length===0) return null;
+  return(
+    <div className="flex flex-wrap gap-1.5 mt-1.5">
+      {lista.map((a,i)=><AdjuntoChip key={i} adjunto={a}/>)}
+    </div>
+  );
+}
+
+// Botón "Adjuntar" para un comentario del Planner — permite elegir varios
+// archivos a la vez (o ir agregando de a uno), los sube todos a Firebase
+// Storage (mismo pipeline que las fotos de checklist/hallazgos) y devuelve
+// la lista completa vía onChange; cualquier tipo de archivo, no solo imágenes.
+function AdjuntosInput({adjuntos,onChange}){
   const [subiendo,setSubiendo]=useState(false);
   const fileRef=useRef(null);
-  const handleFile=async(e)=>{
-    const file=e.target.files?.[0];
+  const lista=adjuntos||[];
+  const handleFiles=async(e)=>{
+    const files=Array.from(e.target.files||[]);
     e.target.value="";
-    if(!file) return;
-    if(file.size>PLANNER_ADJUNTO_MAX_MB*1024*1024){
-      alert(`El archivo supera los ${PLANNER_ADJUNTO_MAX_MB}MB.`);
-      return;
-    }
+    if(files.length===0) return;
+    const validos=files.filter(f=>f.size<=PLANNER_ADJUNTO_MAX_MB*1024*1024);
+    const grandes=files.filter(f=>f.size>PLANNER_ADJUNTO_MAX_MB*1024*1024);
+    if(grandes.length>0) alert(`${grandes.length} archivo(s) superan los ${PLANNER_ADJUNTO_MAX_MB}MB y no se subieron: ${grandes.map(f=>f.name).join(", ")}`);
+    if(validos.length===0) return;
     setSubiendo(true);
     try{
-      const b64=await new Promise((resolve,reject)=>{
-        const r=new FileReader();
-        r.onload=()=>resolve(r.result);
-        r.onerror=()=>reject(new Error("No se pudo leer el archivo"));
-        r.readAsDataURL(file);
-      });
-      const url=await uploadToFirebaseStorage(b64,"planner_adjuntos");
-      if(url) onChange({url,nombre:file.name,tipo:file.type||"",tamanoKB:Math.round(file.size/1024)});
-      else alert("No se pudo subir el archivo. Intenta de nuevo.");
+      const subidos=await Promise.all(validos.map(async file=>{
+        try{
+          const b64=await new Promise((resolve,reject)=>{
+            const r=new FileReader();
+            r.onload=()=>resolve(r.result);
+            r.onerror=()=>reject(new Error("No se pudo leer "+file.name));
+            r.readAsDataURL(file);
+          });
+          const url=await uploadToFirebaseStorage(b64,"planner_adjuntos");
+          return url?{url,nombre:file.name,tipo:file.type||"",tamanoKB:Math.round(file.size/1024)}:null;
+        }catch(err){console.error("AdjuntosInput:",file.name,err);return null;}
+      }));
+      const ok=subidos.filter(Boolean);
+      if(ok.length<validos.length) alert("Algún archivo no se pudo subir — intenta de nuevo con ese.");
+      if(ok.length>0) onChange([...lista,...ok]);
     }catch(err){
-      console.error("AdjuntoInput:",err);
-      alert("Error al subir el archivo.");
+      console.error("AdjuntosInput:",err);
+      alert("Error al subir los archivos.");
     }
     setSubiendo(false);
   };
+  const quitar=(idx)=>onChange(lista.filter((_,i)=>i!==idx));
   return(
-    <div className="flex items-center gap-1.5 flex-shrink-0">
-      <input ref={fileRef} type="file" className="hidden" onChange={handleFile}/>
-      {adjunto?(
-        <span className="flex items-center gap-1 text-[10px] px-2 py-1.5 rounded-lg bg-blue-50 text-blue-700 border border-blue-200 max-w-[120px]">
-          <span className="truncate">📎 {adjunto.nombre}</span>
-          <button type="button" onClick={()=>onChange(null)} className="text-blue-400 hover:text-red-500 flex-shrink-0">✕</button>
+    <div className="flex items-center gap-1.5 flex-wrap flex-shrink-0">
+      <input ref={fileRef} type="file" multiple className="hidden" onChange={handleFiles}/>
+      {lista.map((a,i)=>(
+        <span key={i} className="flex items-center gap-1 text-[10px] px-2 py-1.5 rounded-lg bg-blue-50 text-blue-700 border border-blue-200 max-w-[120px]">
+          <span className="truncate">📎 {a.nombre}</span>
+          <button type="button" onClick={()=>quitar(i)} className="text-blue-400 hover:text-red-500 flex-shrink-0">✕</button>
         </span>
-      ):(
-        <button type="button" onClick={()=>fileRef.current?.click()} disabled={subiendo}
-          className="text-[10px] px-2 py-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition disabled:opacity-50 flex-shrink-0">
-          {subiendo?"Subiendo...":"📎 Adjuntar"}
+      ))}
+      <button type="button" onClick={()=>fileRef.current?.click()} disabled={subiendo}
+        className="text-[10px] px-2 py-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition disabled:opacity-50 flex-shrink-0">
+        {subiendo?"Subiendo...":lista.length>0?"+ Adjuntar":"📎 Adjuntar"}
+      </button>
+    </div>
+  );
+}
+
+// Hilo de comentarios + composer reutilizable — un solo lugar para "seleccionar
+// algo (tarea o proyecto) y ver/agregar todos sus comentarios ahí mismo", en
+// vez de una pestaña aparte. Orden ascendente (más viejo arriba, más nuevo
+// pegado al composer) como un chat.
+function PanelComentarios({comentarios,onAgregar,cols,placeholder="Comentar..."}){
+  const [texto,setTexto]=useState("");
+  const [adjuntos,setAdjuntos]=useState([]);
+  const ordenados=useMemo(()=>[...(comentarios||[])].sort((a,b)=>(a.fecha||"").localeCompare(b.fecha||"")),[comentarios]);
+  const enviar=()=>{
+    if(!texto.trim()) return;
+    onAgregar(texto.trim(),adjuntos);
+    setTexto("");
+    setAdjuntos([]);
+  };
+  return(
+    <div className="flex flex-col min-h-0">
+      <div className="space-y-2 overflow-y-auto pr-1" style={{maxHeight:"280px"}}>
+        {ordenados.length===0?(
+          <p className="text-gray-300 text-xs italic text-center py-4">Sin comentarios todavía.</p>
+        ):ordenados.map(c=>(
+          <div key={c.id} className="bg-gray-50 rounded-lg px-2.5 py-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-[11px] font-semibold text-gray-700">{c.autor}</p>
+              <p className="text-[9px] text-gray-400 flex-shrink-0">{new Date(c.fecha).toLocaleString("es-CL")}</p>
+            </div>
+            {c.colAnterior&&c.colNuevo&&cols&&(
+              <p className="text-[9px] text-gray-400">{cols[c.colAnterior]?.label||c.colAnterior} → {cols[c.colNuevo]?.label||c.colNuevo}</p>
+            )}
+            <p className="text-xs text-gray-600 mt-0.5 whitespace-pre-wrap">{c.texto}</p>
+            <AdjuntosChips adjuntos={c.adjuntos} adjunto={c.adjunto}/>
+          </div>
+        ))}
+      </div>
+      <div className="flex items-end gap-2 pt-2 mt-2 border-t border-gray-100 flex-shrink-0">
+        <textarea value={texto} onChange={e=>setTexto(e.target.value)} rows={1}
+          onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();enviar();}}}
+          placeholder={placeholder}
+          className="flex-1 px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs focus:outline-none focus:border-blue-400 resize-none"/>
+        <AdjuntosInput adjuntos={adjuntos} onChange={setAdjuntos}/>
+        <button onClick={enviar} disabled={!texto.trim()}
+          className="px-2.5 py-1.5 rounded-lg text-white text-[11px] font-bold transition disabled:opacity-40 flex-shrink-0" style={{background:"#2563eb"}}>
+          Comentar
         </button>
-      )}
+      </div>
     </div>
   );
 }
@@ -25400,7 +25469,7 @@ function AdjuntoInput({adjunto,onChange}){
 // tanto el creador (ProyectoEditor) como el responsable (TareasAsignadasPanel).
 function ModalComentarioEstado({tareaTitulo,colAnteriorLabel,colNuevoLabel,onConfirm,onCancel}){
   const [texto,setTexto]=useState("");
-  const [adjunto,setAdjunto]=useState(null);
+  const [adjuntos,setAdjuntos]=useState([]);
   return(
     <div className="absolute inset-0 flex items-center justify-center z-30 p-4" style={{background:"rgba(0,0,0,0.5)"}} onClick={e=>{if(e.target===e.currentTarget)onCancel();}}>
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden" onClick={e=>e.stopPropagation()}>
@@ -25416,13 +25485,13 @@ function ModalComentarioEstado({tareaTitulo,colAnteriorLabel,colNuevoLabel,onCon
               className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-blue-400 resize-none"
               placeholder="¿Qué cambió? ¿Por qué?"/>
           </div>
-          <AdjuntoInput adjunto={adjunto} onChange={setAdjunto}/>
+          <AdjuntosInput adjuntos={adjuntos} onChange={setAdjuntos}/>
           <div className="flex gap-3 pt-1">
             <button onClick={onCancel}
               className="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-600 text-sm font-semibold hover:bg-gray-50 transition">
               Cancelar
             </button>
-            <button onClick={()=>{if(texto.trim())onConfirm(texto.trim(),adjunto);}} disabled={!texto.trim()}
+            <button onClick={()=>{if(texto.trim())onConfirm(texto.trim(),adjuntos);}} disabled={!texto.trim()}
               className="flex-1 py-2.5 rounded-xl text-white text-sm font-bold transition disabled:opacity-40" style={{background:"#2563eb"}}>
               Confirmar
             </button>
@@ -25441,10 +25510,7 @@ function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}
   const [mesCalendario,setMesCalendario]=useState(()=>{const d=new Date();return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;});
   const [cambioEstadoPendiente,setCambioEstadoPendiente]=useState(null); // {tareaId,nuevoCol}
   const [comentariosGenerales,setComentariosGenerales]=useState(proyecto.comentariosGenerales||[]);
-  const [nuevoComentarioGeneral,setNuevoComentarioGeneral]=useState("");
-  const [adjuntoGeneral,setAdjuntoGeneral]=useState(null);
-  const [comentarioPorTarea,setComentarioPorTarea]=useState({});
-  const [adjuntoPorTarea,setAdjuntoPorTarea]=useState({});
+  const [showComentariosGenerales,setShowComentariosGenerales]=useState(false);
   const FORM_TAREA_VACIO={titulo:"",col:"por_hacer",fechaInicio:"",duracion:1,responsables:[],descripcion:"",cumplimiento:0};
   const [formTarea,setFormTarea]=useState(FORM_TAREA_VACIO);
 
@@ -25532,6 +25598,12 @@ function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}
     setFormTarea(FORM_TAREA_VACIO);
   };
 
+  // tareaEnEdicion es una foto fija de cuando se abrió el modal — para que
+  // los comentarios que se van agregando aparezcan al toque en el mismo
+  // modal (sin cerrar y volver a abrir), esto busca la versión viva en
+  // `tareas` en cada render.
+  const tareaModalActual=tareaEnEdicion?(tareas.find(t=>t.id===tareaEnEdicion.id)||tareaEnEdicion):null;
+
   const guardarTarea=()=>{
     if(!formTarea.titulo.trim()) return;
     const fechaInicio=formTarea.fechaInicio||new Date().toISOString().slice(0,10);
@@ -25582,7 +25654,7 @@ function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}
     if(tareaId===undefined||nuevoCol===tareas.find(t=>t.id===tareaId)?.col) return;
     setCambioEstadoPendiente({tareaId,nuevoCol});
   };
-  const confirmarCambioEstado=(comentarioTexto,adjunto)=>{
+  const confirmarCambioEstado=(comentarioTexto,adjuntos)=>{
     if(!cambioEstadoPendiente) return;
     const{tareaId,nuevoCol}=cambioEstadoPendiente;
     const anterior=tareas.find(t=>t.id===tareaId);
@@ -25592,7 +25664,7 @@ function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}
         id:"c_"+Math.random().toString(36).slice(2,8),
         texto:comentarioTexto,autor:user?.name||user?.username||"",fecha:new Date().toISOString(),
         colAnterior:anterior.col,colNuevo:nuevoCol,
-        adjunto:adjunto||null,
+        adjuntos:adjuntos||[],
       }],
     };
     const updated=tareas.map(t=>t.id===tareaId?nueva:t);
@@ -25614,37 +25686,22 @@ function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}
 
   const pct=tareas.length>0?Math.round(tareas.reduce((s,t)=>s+cumplimientoEfectivo(t),0)/tareas.length):0;
 
-  // Registro de comentarios del proyecto: junta los comentarios de cambio de
-  // estado de cada tarea (ya obligatorios) con los comentarios generales del
-  // proyecto (libres, no atados a un cambio de estado) en un solo feed
-  // cronológico — visible acá y en la vista del responsable (TareasAsignadasPanel).
-  const comentariosFeed=useMemo(()=>{
-    const deTareas=tareas.flatMap(t=>(t.comentarios||[]).map(c=>({...c,tareaId:t.id,tareaTitulo:t.titulo})));
-    const generales=comentariosGenerales.map(c=>({...c,tareaId:null,tareaTitulo:null}));
-    return[...deTareas,...generales].sort((a,b)=>(b.fecha||"").localeCompare(a.fecha||""));
-  },[tareas,comentariosGenerales]);
-
-  const agregarComentarioGeneral=()=>{
-    if(!nuevoComentarioGeneral.trim()) return;
-    const comentario={id:"cg_"+Math.random().toString(36).slice(2,8),texto:nuevoComentarioGeneral.trim(),autor:user?.name||user?.username||"",fecha:new Date().toISOString(),adjunto:adjuntoGeneral||null};
+  const agregarComentarioGeneral=(texto,adjuntos)=>{
+    const comentario={id:"cg_"+Math.random().toString(36).slice(2,8),texto,autor:user?.name||user?.username||"",fecha:new Date().toISOString(),adjuntos};
     const actualizados=[...comentariosGenerales,comentario];
     setComentariosGenerales(actualizados);
     onSave({...proyecto,tareas,comentariosGenerales:actualizados});
-    setNuevoComentarioGeneral("");
-    setAdjuntoGeneral(null);
   };
 
   // Comentario atado a una tarea específica (no requiere cambio de estado) —
-  // cada tarea tiene su propio hilo, así no se mezclan entre sí.
-  const agregarComentarioTarea=(tareaId)=>{
-    const texto=(comentarioPorTarea[tareaId]||"").trim();
-    if(!texto) return;
-    const comentario={id:"c_"+Math.random().toString(36).slice(2,8),texto,autor:user?.name||user?.username||"",fecha:new Date().toISOString(),adjunto:adjuntoPorTarea[tareaId]||null};
+  // cada tarea tiene su propio hilo, así no se mezclan entre sí. Se agrega
+  // directo desde el detalle de la tarea (PanelComentarios en el modal), no
+  // desde una pestaña aparte.
+  const agregarComentarioTarea=(tareaId,texto,adjuntos)=>{
+    const comentario={id:"c_"+Math.random().toString(36).slice(2,8),texto,autor:user?.name||user?.username||"",fecha:new Date().toISOString(),adjuntos};
     const updated=tareas.map(t=>t.id===tareaId?{...t,comentarios:[...(t.comentarios||[]),comentario]}:t);
     setTareas(updated);
     onSave({...proyecto,tareas:updated,comentariosGenerales});
-    setComentarioPorTarea(m=>({...m,[tareaId]:""}));
-    setAdjuntoPorTarea(m=>({...m,[tareaId]:null}));
   };
 
   // Vista Calendario: fechas locales armadas a mano (año-mes-día), sin pasar
@@ -25751,6 +25808,11 @@ function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}
             )}
           </div>
         </div>
+        <button onClick={()=>setShowComentariosGenerales(true)}
+          className="relative px-3 py-1.5 rounded-xl text-xs font-semibold text-gray-600 border border-gray-200 hover:bg-gray-50 transition flex items-center gap-1">
+          💬 Comentarios
+          {comentariosGenerales.length>0&&<span className="text-[9px] px-1.5 py-0.5 rounded-full bg-gray-200 text-gray-600 font-bold">{comentariosGenerales.length}</span>}
+        </button>
         <button onClick={abrirNuevaTarea} className="px-3 py-1.5 rounded-xl text-xs font-bold text-white transition" style={{background:"#2563eb"}}>
           + Tarea
         </button>
@@ -25767,7 +25829,6 @@ function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}
           {key:"gantt",label:"Gantt"},
           {key:"lista",label:"Lista"},
           {key:"calendario",label:"Calendario"},
-          {key:"comentarios",label:"Comentarios",badge:comentariosFeed.length},
         ].map(v=>(
           <button key={v.key} onClick={()=>setVistaEditor(v.key)}
             className={`py-2 px-3 text-xs font-semibold border-b-2 transition mr-1
@@ -25826,6 +25887,11 @@ function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}
                                 → {d.label}
                               </button>
                             ))}
+                            {t.comentarios?.length>0&&(
+                              <button onClick={()=>abrirEdicionTarea(t)} className="text-[9px] px-1.5 py-0.5 rounded-md text-gray-400 hover:text-blue-600 transition flex items-center gap-0.5" title="Ver comentarios">
+                                💬{t.comentarios.length}
+                              </button>
+                            )}
                             <button onClick={()=>abrirEdicionTarea(t)} className="text-[9px] px-1.5 py-0.5 rounded-md text-gray-400 hover:text-blue-600 transition ml-auto">
                               ✏️
                             </button>
@@ -26031,102 +26097,18 @@ function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}
           </div>
         </div>
       )}
-
-      {/* VISTA COMENTARIOS — un hilo por tarea (comentarios de cambio de
-          estado + comentarios libres agregados acá), para que no se mezclen
-          entre tareas distintas. Al final, un espacio para comentarios
-          generales del proyecto que no están atados a ninguna tarea. */}
-      {vistaEditor==="comentarios"&&(
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          {tareas.length===0&&comentariosGenerales.length===0?(
-            <p className="text-gray-400 text-sm text-center py-8">Sin comentarios todavía.</p>
-          ):(<>
-            {tareas.map(t=>(
-              <div key={t.id} className="border border-gray-200 rounded-xl overflow-hidden bg-white">
-                <div className="px-3 py-2 bg-gray-50 border-b border-gray-100">
-                  <p className="text-xs font-bold text-gray-700 truncate">{t.titulo}</p>
-                  <p className="text-[10px] text-gray-400">{cols[t.col]?.label||t.col}{(t.responsables?.length>0)&&` · ${t.responsables.join(", ")}`}</p>
-                </div>
-                <div className="p-3 space-y-2">
-                  {(t.comentarios||[]).length===0?(
-                    <p className="text-gray-300 text-xs italic">Sin comentarios en esta tarea.</p>
-                  ):(
-                    [...t.comentarios].reverse().map(c=>(
-                      <div key={c.id} className="bg-gray-50 rounded-lg px-2.5 py-1.5">
-                        <div className="flex items-center justify-between gap-2">
-                          <p className="text-[11px] font-semibold text-gray-700">{c.autor}</p>
-                          <p className="text-[9px] text-gray-400 flex-shrink-0">{new Date(c.fecha).toLocaleString("es-CL")}</p>
-                        </div>
-                        {c.colAnterior&&c.colNuevo&&(
-                          <p className="text-[9px] text-gray-400">{cols[c.colAnterior]?.label||c.colAnterior} → {cols[c.colNuevo]?.label||c.colNuevo}</p>
-                        )}
-                        <p className="text-xs text-gray-600 mt-0.5">{c.texto}</p>
-                        <AdjuntoChip adjunto={c.adjunto}/>
-                      </div>
-                    ))
-                  )}
-                  <div className="flex items-end gap-2 pt-1">
-                    <input value={comentarioPorTarea[t.id]||""} onChange={e=>setComentarioPorTarea(m=>({...m,[t.id]:e.target.value}))}
-                      onKeyDown={e=>{if(e.key==="Enter")agregarComentarioTarea(t.id);}}
-                      placeholder="Comentar esta tarea..."
-                      className="flex-1 px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs focus:outline-none focus:border-blue-400"/>
-                    <AdjuntoInput adjunto={adjuntoPorTarea[t.id]||null} onChange={a=>setAdjuntoPorTarea(m=>({...m,[t.id]:a}))}/>
-                    <button onClick={()=>agregarComentarioTarea(t.id)} disabled={!(comentarioPorTarea[t.id]||"").trim()}
-                      className="px-2.5 py-1.5 rounded-lg text-white text-[11px] font-bold transition disabled:opacity-40 flex-shrink-0" style={{background:"#2563eb"}}>
-                      Comentar
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))}
-            <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
-              <div className="px-3 py-2 bg-gray-50 border-b border-gray-100">
-                <p className="text-xs font-bold text-gray-700">Generales del proyecto</p>
-                <p className="text-[10px] text-gray-400">No atados a ninguna tarea en particular</p>
-              </div>
-              <div className="p-3 space-y-2">
-                {comentariosGenerales.length===0?(
-                  <p className="text-gray-300 text-xs italic">Sin comentarios generales.</p>
-                ):(
-                  [...comentariosGenerales].reverse().map(c=>(
-                    <div key={c.id} className="bg-gray-50 rounded-lg px-2.5 py-1.5">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="text-[11px] font-semibold text-gray-700">{c.autor}</p>
-                        <p className="text-[9px] text-gray-400 flex-shrink-0">{new Date(c.fecha).toLocaleString("es-CL")}</p>
-                      </div>
-                      <p className="text-xs text-gray-600 mt-0.5">{c.texto}</p>
-                      <AdjuntoChip adjunto={c.adjunto}/>
-                    </div>
-                  ))
-                )}
-                <div className="flex items-end gap-2 pt-1">
-                  <input value={nuevoComentarioGeneral} onChange={e=>setNuevoComentarioGeneral(e.target.value)}
-                    onKeyDown={e=>{if(e.key==="Enter")agregarComentarioGeneral();}}
-                    placeholder="Comentar el proyecto en general..."
-                    className="flex-1 px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs focus:outline-none focus:border-blue-400"/>
-                  <AdjuntoInput adjunto={adjuntoGeneral} onChange={setAdjuntoGeneral}/>
-                  <button onClick={agregarComentarioGeneral} disabled={!nuevoComentarioGeneral.trim()}
-                    className="px-2.5 py-1.5 rounded-lg text-white text-[11px] font-bold transition disabled:opacity-40 flex-shrink-0" style={{background:"#2563eb"}}>
-                    Comentar
-                  </button>
-                </div>
-              </div>
-            </div>
-          </>)}
-        </div>
-      )}
-
-      {/* Modal nueva tarea */}
+      {/* Modal tarea — datos + su hilo de comentarios juntos ("seleccionás la
+          tarea y adentro están todos los comentarios"), sin pestaña aparte. */}
       {showFormTarea&&(
         <div className="absolute inset-0 flex items-center justify-center z-10 p-4" style={{background:"rgba(0,0,0,0.5)"}}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden" onClick={e=>e.stopPropagation()}>
-            <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col" style={{maxHeight:"88vh"}} onClick={e=>e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
               <p className="font-bold text-gray-900">{tareaEnEdicion?"Editar tarea":"Nueva tarea"}</p>
               <button onClick={cerrarFormTarea} className="text-gray-400 hover:text-gray-600">
                 <X size={16}/>
               </button>
             </div>
-            <div className="px-5 py-4 space-y-3">
+            <div className="px-5 py-4 space-y-3 overflow-y-auto">
               <div>
                 <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Tarea *</label>
                 <input value={formTarea.titulo} onChange={e=>setFormTarea(f=>({...f,titulo:e.target.value}))}
@@ -26175,23 +26157,6 @@ function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}
                   className="w-full accent-blue-600 disabled:opacity-50"/>
                 {formTarea.col==="listo"&&<p className="text-[10px] text-gray-400 mt-0.5">Se fija en 100% mientras el estado sea "Listo".</p>}
               </div>
-              {tareaEnEdicion?.comentarios?.length>0&&(
-                <div>
-                  <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Historial de comentarios</label>
-                  <div className="space-y-1.5 max-h-32 overflow-y-auto">
-                    {[...tareaEnEdicion.comentarios].reverse().map(c=>(
-                      <div key={c.id} className="bg-gray-50 rounded-lg px-2.5 py-1.5 text-xs">
-                        <p className="text-gray-700">{c.texto}</p>
-                        <p className="text-[10px] text-gray-400 mt-0.5">
-                          {c.autor} · {new Date(c.fecha).toLocaleString("es-CL")}
-                          {c.colAnterior&&c.colNuevo&&` · ${cols[c.colAnterior]?.label||c.colAnterior} → ${cols[c.colNuevo]?.label||c.colNuevo}`}
-                        </p>
-                        <AdjuntoChip adjunto={c.adjunto}/>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
               <div className="flex gap-3 pt-1">
                 <button onClick={cerrarFormTarea}
                   className="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-600 text-sm font-semibold hover:bg-gray-50 transition">
@@ -26202,6 +26167,37 @@ function ProyectoEditor({proyecto,users,user,activeCOLL,onClose,onSave,onDelete}
                   {tareaEnEdicion?"Guardar cambios":"Agregar tarea"}
                 </button>
               </div>
+              {tareaModalActual&&(
+                <div className="pt-3 border-t border-gray-100">
+                  <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-2">
+                    Comentarios{tareaModalActual.comentarios?.length>0&&` (${tareaModalActual.comentarios.length})`}
+                  </label>
+                  <PanelComentarios comentarios={tareaModalActual.comentarios} cols={cols}
+                    onAgregar={(texto,adjuntos)=>agregarComentarioTarea(tareaModalActual.id,texto,adjuntos)}
+                    placeholder="Comentar esta tarea..."/>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal comentarios generales del proyecto — mismo patrón que el de
+          una tarea, pero sin tarea asociada. */}
+      {showComentariosGenerales&&(
+        <div className="absolute inset-0 flex items-center justify-center z-10 p-4" style={{background:"rgba(0,0,0,0.5)"}} onClick={()=>setShowComentariosGenerales(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col" style={{maxHeight:"80vh"}} onClick={e=>e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
+              <div>
+                <p className="font-bold text-gray-900">💬 Comentarios del proyecto</p>
+                <p className="text-[10px] text-gray-400">No atados a ninguna tarea en particular</p>
+              </div>
+              <button onClick={()=>setShowComentariosGenerales(false)} className="text-gray-400 hover:text-gray-600">
+                <X size={16}/>
+              </button>
+            </div>
+            <div className="px-5 py-4 overflow-y-auto">
+              <PanelComentarios comentarios={comentariosGenerales} onAgregar={agregarComentarioGeneral} placeholder="Comentar el proyecto en general..."/>
             </div>
           </div>
         </div>
@@ -26258,11 +26254,8 @@ function TareasAsignadasPanel({user,compromisos}){
   const [porCreador,setPorCreador]=useState({});
   const [cambioEstadoPendiente,setCambioEstadoPendiente]=useState(null);
   const [proyectoAbierto,setProyectoAbierto]=useState(null); // {key,proyectoId}
-  const [vistaProyecto,setVistaProyecto]=useState("kanban"); // kanban | comentarios
-  const [nuevoComentarioGeneral,setNuevoComentarioGeneral]=useState("");
-  const [adjuntoGeneral,setAdjuntoGeneral]=useState(null);
-  const [comentarioPorTarea,setComentarioPorTarea]=useState({});
-  const [adjuntoPorTarea,setAdjuntoPorTarea]=useState({});
+  const [tareaModalAbierta,setTareaModalAbierta]=useState(null); // tarea anotada, o null
+  const [showComentariosGenerales,setShowComentariosGenerales]=useState(false);
 
   const fuentesUnicas=useMemo(()=>{
     const vistos=new Map();
@@ -26312,12 +26305,17 @@ function TareasAsignadasPanel({user,compromisos}){
     return proyectosConMiTarea.find(pr=>pr.key===proyectoAbierto.key&&pr.proyecto.id===proyectoAbierto.proyectoId)||null;
   },[proyectosConMiTarea,proyectoAbierto]);
 
-  const comentariosFeedProyectoActivo=useMemo(()=>{
-    if(!proyectoActivo) return [];
-    const deTareas=proyectoActivo.proyecto.tareas.flatMap(t=>(t.comentarios||[]).map(c=>({...c,tareaTitulo:t.titulo})));
-    const generales=(proyectoActivo.proyecto.comentariosGenerales||[]).map(c=>({...c,tareaTitulo:null}));
-    return[...deTareas,...generales].sort((a,b)=>(b.fecha||"").localeCompare(a.fecha||""));
-  },[proyectoActivo]);
+  // tareaModalAbierta es una foto fija de cuándo se abrió el modal — busca la
+  // versión viva (con comentarios/estado/avance al día) en cada render, igual
+  // que tareaModalActual en ProyectoEditor.
+  const tareaModalLive=useMemo(()=>{
+    if(!tareaModalAbierta) return null;
+    for(const pr of proyectosConMiTarea){
+      const t=pr.proyecto.tareas.find(x=>x.id===tareaModalAbierta.id);
+      if(t) return t;
+    }
+    return tareaModalAbierta;
+  },[proyectosConMiTarea,tareaModalAbierta]);
 
   const solicitarCambioEstado=(tarea,nuevoCol)=>{
     if(nuevoCol===tarea.col) return;
@@ -26406,182 +26404,147 @@ function TareasAsignadasPanel({user,compromisos}){
   // Comentario atado a una tarea puntual (no requiere cambio de estado) —
   // cada tarea tiene su propio hilo para que no se mezclen entre sí. Sirve
   // tanto para tareas propias como para comentar el trabajo de un compañero
-  // dentro del mismo proyecto.
-  const agregarComentarioTarea=async(tarea)=>{
-    const texto=(comentarioPorTarea[tarea.id]||"").trim();
-    if(!texto) return;
+  // dentro del mismo proyecto. Se agrega directo desde el detalle de la tarea
+  // (PanelComentarios en el modal), no desde una pestaña aparte.
+  const agregarComentarioTarea=async(tarea,texto,adjuntos)=>{
     const ref=doc(db,tarea._colCreador,"planner_"+tarea._creadorId);
     const snap=await getDoc(ref);
     if(!snap.exists()) return;
     const data=snap.data();
-    const comentario={id:"c_"+Math.random().toString(36).slice(2,8),texto,autor:user?.name||user?.username||"",fecha:new Date().toISOString(),adjunto:adjuntoPorTarea[tarea.id]||null};
+    const comentario={id:"c_"+Math.random().toString(36).slice(2,8),texto,autor:user?.name||user?.username||"",fecha:new Date().toISOString(),adjuntos};
     const proyectosNuevos=(data.proyectos||[]).map(p=>{
       if(p.id!==tarea._proyectoId) return p;
       return{...p,tareas:(p.tareas||[]).map(t=>t.id===tarea.id?{...t,comentarios:[...(t.comentarios||[]),comentario]}:t)};
     });
     await setDoc(ref,{...data,proyectos:proyectosNuevos,updatedAt:new Date().toISOString()});
-    setComentarioPorTarea(m=>({...m,[tarea.id]:""}));
-    setAdjuntoPorTarea(m=>({...m,[tarea.id]:null}));
   };
 
   // Comentario general del proyecto (no atado a un cambio de estado) — se
   // escribe directo en el doc del creador, igual que un cambio de estado.
-  const agregarComentarioGeneral=async()=>{
-    if(!nuevoComentarioGeneral.trim()||!proyectoActivo) return;
+  const agregarComentarioGeneral=async(texto,adjuntos)=>{
+    if(!proyectoActivo) return;
     const ref=doc(db,proyectoActivo.colCreador,"planner_"+proyectoActivo.creadorId);
     const snap=await getDoc(ref);
     if(!snap.exists()) return;
     const data=snap.data();
-    const comentario={id:"cg_"+Math.random().toString(36).slice(2,8),texto:nuevoComentarioGeneral.trim(),autor:user?.name||user?.username||"",fecha:new Date().toISOString(),adjunto:adjuntoGeneral||null};
+    const comentario={id:"cg_"+Math.random().toString(36).slice(2,8),texto,autor:user?.name||user?.username||"",fecha:new Date().toISOString(),adjuntos};
     const proyectosNuevos=(data.proyectos||[]).map(p=>p.id===proyectoActivo.proyecto.id?{...p,comentariosGenerales:[...(p.comentariosGenerales||[]),comentario]}:p);
     await setDoc(ref,{...data,proyectos:proyectosNuevos,updatedAt:new Date().toISOString()});
-    setNuevoComentarioGeneral("");
-    setAdjuntoGeneral(null);
   };
 
-  // ── Vista de proyecto completo (visualización total, edición solo de mis tareas) ──
+  // Modal de detalle de una tarea (estado/avance si es mía + su hilo de
+  // comentarios completo) — se arma una sola vez y se reusa tanto en la
+  // vista de proyecto completo como en la lista de "mis tareas" de abajo.
+  const tareaModalJSX=tareaModalAbierta&&tareaModalLive&&(()=>{
+    const esMia=(tareaModalLive.responsables||[]).includes(miNombre);
+    return(
+      <div className="absolute inset-0 flex items-center justify-center z-20 p-4" style={{background:"rgba(0,0,0,0.5)"}} onClick={()=>setTareaModalAbierta(null)}>
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col" style={{maxHeight:"88vh"}} onClick={e=>e.stopPropagation()}>
+          <div className="px-5 py-4 border-b border-gray-100 flex items-start justify-between flex-shrink-0">
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] text-blue-600 font-semibold uppercase tracking-wide truncate">{tareaModalLive._proyectoNombre}</p>
+              <p className="font-bold text-gray-900">{tareaModalLive.titulo}</p>
+              {tareaModalLive.responsables?.length>0&&<p className="text-[10px] text-gray-400 mt-0.5">👤 {tareaModalLive.responsables.join(", ")}</p>}
+            </div>
+            <button onClick={()=>setTareaModalAbierta(null)} className="text-gray-400 hover:text-gray-600 flex-shrink-0 ml-2"><X size={16}/></button>
+          </div>
+          <div className="px-5 py-4 space-y-3 overflow-y-auto">
+            {tareaModalLive.descripcion&&<p className="text-xs text-gray-500">{tareaModalLive.descripcion}</p>}
+            {esMia?(
+              <>
+                <div>
+                  <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Estado</label>
+                  <select value={tareaModalLive.col} onChange={e=>solicitarCambioEstado(tareaModalLive,e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-blue-400">
+                    {Object.entries(COLS_TAREA).map(([k,d])=><option key={k} value={k}>{d.label}</option>)}
+                  </select>
+                </div>
+                <AvanceSliderInline value={cumplimientoEfectivoTarea(tareaModalLive)} onCommit={pct=>actualizarAvance(tareaModalLive,pct)}/>
+              </>
+            ):(
+              <div className="flex items-center gap-2 text-xs">
+                <span className="px-2 py-1 rounded-lg bg-gray-100 text-gray-600 font-semibold">{COLS_TAREA[tareaModalLive.col]?.label||tareaModalLive.col}</span>
+                <span className="text-gray-400">{cumplimientoEfectivoTarea(tareaModalLive)}% de avance — solo lectura</span>
+              </div>
+            )}
+            <div className="pt-3 border-t border-gray-100">
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-2">
+                Comentarios{tareaModalLive.comentarios?.length>0&&` (${tareaModalLive.comentarios.length})`}
+              </label>
+              <PanelComentarios comentarios={tareaModalLive.comentarios} cols={COLS_TAREA}
+                onAgregar={(texto,adjuntos)=>agregarComentarioTarea(tareaModalLive,texto,adjuntos)}
+                placeholder="Comentar esta tarea..."/>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  })();
+
+  // ── Vista de proyecto completo (visualización total, edición solo de mis
+  // tareas) — click en el título de una tarea abre su detalle con el hilo de
+  // comentarios completo ahí mismo, sin pestaña aparte. ──
   if(proyectoActivo){
     const tareasP=proyectoActivo.proyecto.tareas;
     const pctP=tareasP.length>0?Math.round(tareasP.reduce((s,t)=>s+cumplimientoEfectivoTarea(t),0)/tareasP.length):0;
     return(
       <div className="flex flex-col" style={{minHeight:"60vh"}}>
         <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-3">
-          <button onClick={()=>{setProyectoAbierto(null);setVistaProyecto("kanban");}} className="text-gray-400 hover:text-gray-700 text-lg">←</button>
+          <button onClick={()=>setProyectoAbierto(null)} className="text-gray-400 hover:text-gray-700 text-lg">←</button>
           <div className="flex-1 min-w-0">
             <p className="font-bold text-gray-900 truncate">{proyectoActivo.proyecto.nombre}</p>
             <p className="text-[10px] text-gray-400">Creado por {proyectoActivo.creadoPor||"—"} · {pctP}% completado</p>
           </div>
+          <button onClick={()=>setShowComentariosGenerales(true)}
+            className="relative px-3 py-1.5 rounded-xl text-xs font-semibold text-gray-600 border border-gray-200 hover:bg-gray-50 transition flex items-center gap-1 flex-shrink-0">
+            💬
+            {(proyectoActivo.proyecto.comentariosGenerales?.length>0)&&<span className="text-[9px] px-1.5 py-0.5 rounded-full bg-gray-200 text-gray-600 font-bold">{proyectoActivo.proyecto.comentariosGenerales.length}</span>}
+          </button>
         </div>
-        <div className="flex border-b border-gray-100 bg-gray-50 px-4">
-          {[{key:"kanban",label:"Kanban"},{key:"comentarios",label:"Comentarios",badge:comentariosFeedProyectoActivo.length}].map(v=>(
-            <button key={v.key} onClick={()=>setVistaProyecto(v.key)}
-              className={`py-2 px-3 text-xs font-semibold border-b-2 transition mr-1 ${vistaProyecto===v.key?"border-blue-600 text-blue-600":"border-transparent text-gray-400 hover:text-gray-600"}`}>
-              {v.label}{v.badge>0&&<span className="ml-1 text-[9px] px-1 py-0.5 rounded-full bg-gray-200 text-gray-500">{v.badge}</span>}
-            </button>
-          ))}
-        </div>
-        {vistaProyecto==="kanban"&&(
-          <div className="flex-1 overflow-y-auto p-3">
-            <div className="grid grid-cols-2 gap-2">
-              {Object.entries(COLS_TAREA).map(([colKey,colData])=>{
-                const tareasCol=tareasP.filter(t=>t.col===colKey);
-                return(
-                  <div key={colKey} className={`rounded-xl border p-2 min-h-24 ${colData.color}`}>
-                    <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-2">
-                      {colData.label}<span className="ml-1 normal-case font-normal">({tareasCol.length})</span>
-                    </p>
-                    <div className="space-y-1.5">
-                      {tareasCol.map(t=>{
-                        const esMia=(t.responsables||[]).includes(miNombre);
-                        return(
-                          <div key={t.id} className={`bg-white rounded-lg border p-2 shadow-sm ${esMia?"border-blue-300":"border-gray-200"}`}>
-                            <p className="text-xs font-semibold text-gray-800 leading-tight">{t.titulo}</p>
-                            {t.responsables?.length>0&&<p className="text-[10px] text-gray-400 mt-0.5 truncate">👤 {t.responsables.join(", ")}</p>}
-                            {esMia?(
-                              <AvanceSliderInline value={cumplimientoEfectivoTarea(t)} onCommit={pct=>actualizarAvance(t,pct)}/>
-                            ):(
-                              <div className="mt-1.5 flex items-center gap-1.5">
-                                <div className="flex-1 h-1 bg-gray-100 rounded-full overflow-hidden"><div className="h-full bg-blue-500 rounded-full" style={{width:cumplimientoEfectivoTarea(t)+"%"}}/></div>
-                                <span className="text-[9px] text-gray-400 font-semibold">{cumplimientoEfectivoTarea(t)}%</span>
-                              </div>
-                            )}
-                            {esMia?(
-                              <select value={t.col} onChange={e=>solicitarCambioEstado(t,e.target.value)}
-                                className="mt-1.5 w-full text-[10px] px-1.5 py-1 rounded-md border border-gray-200 bg-white text-gray-600 focus:outline-none">
-                                {Object.entries(COLS_TAREA).map(([k,d])=><option key={k} value={k}>{d.label}</option>)}
-                              </select>
-                            ):(
-                              <p className="text-[9px] text-gray-300 mt-1.5 italic">Solo lectura</p>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-        {vistaProyecto==="comentarios"&&(
-          <div className="flex-1 overflow-y-auto p-4 space-y-3">
-            {tareasP.length===0&&!(proyectoActivo.proyecto.comentariosGenerales||[]).length?(
-              <p className="text-gray-400 text-sm text-center py-8">Sin comentarios todavía.</p>
-            ):(<>
-              {tareasP.map(t=>(
-                <div key={t.id} className="border border-gray-200 rounded-xl overflow-hidden bg-white">
-                  <div className="px-3 py-2 bg-gray-50 border-b border-gray-100">
-                    <p className="text-xs font-bold text-gray-700 truncate">{t.titulo}</p>
-                    <p className="text-[10px] text-gray-400">{COLS_TAREA[t.col]?.label||t.col}{(t.responsables?.length>0)&&` · ${t.responsables.join(", ")}`}</p>
-                  </div>
-                  <div className="p-3 space-y-2">
-                    {(t.comentarios||[]).length===0?(
-                      <p className="text-gray-300 text-xs italic">Sin comentarios en esta tarea.</p>
-                    ):(
-                      [...t.comentarios].reverse().map(c=>(
-                        <div key={c.id} className="bg-gray-50 rounded-lg px-2.5 py-1.5">
-                          <div className="flex items-center justify-between gap-2">
-                            <p className="text-[11px] font-semibold text-gray-700">{c.autor}</p>
-                            <p className="text-[9px] text-gray-400 flex-shrink-0">{new Date(c.fecha).toLocaleString("es-CL")}</p>
-                          </div>
-                          {c.colAnterior&&c.colNuevo&&(
-                            <p className="text-[9px] text-gray-400">{COLS_TAREA[c.colAnterior]?.label||c.colAnterior} → {COLS_TAREA[c.colNuevo]?.label||c.colNuevo}</p>
+        <div className="flex-1 overflow-y-auto p-3">
+          <div className="grid grid-cols-2 gap-2">
+            {Object.entries(COLS_TAREA).map(([colKey,colData])=>{
+              const tareasCol=tareasP.filter(t=>t.col===colKey);
+              return(
+                <div key={colKey} className={`rounded-xl border p-2 min-h-24 ${colData.color}`}>
+                  <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-2">
+                    {colData.label}<span className="ml-1 normal-case font-normal">({tareasCol.length})</span>
+                  </p>
+                  <div className="space-y-1.5">
+                    {tareasCol.map(t=>{
+                      const esMia=(t.responsables||[]).includes(miNombre);
+                      return(
+                        <div key={t.id} className={`bg-white rounded-lg border p-2 shadow-sm ${esMia?"border-blue-300":"border-gray-200"}`}>
+                          <p onClick={()=>setTareaModalAbierta(t)}
+                            className="text-xs font-semibold text-gray-800 leading-tight cursor-pointer hover:text-blue-700 transition">
+                            {t.titulo}{t.comentarios?.length>0&&<span className="ml-1 text-[9px] text-gray-400 font-normal">💬{t.comentarios.length}</span>}
+                          </p>
+                          {t.responsables?.length>0&&<p className="text-[10px] text-gray-400 mt-0.5 truncate">👤 {t.responsables.join(", ")}</p>}
+                          {esMia?(
+                            <AvanceSliderInline value={cumplimientoEfectivoTarea(t)} onCommit={pct=>actualizarAvance(t,pct)}/>
+                          ):(
+                            <div className="mt-1.5 flex items-center gap-1.5">
+                              <div className="flex-1 h-1 bg-gray-100 rounded-full overflow-hidden"><div className="h-full bg-blue-500 rounded-full" style={{width:cumplimientoEfectivoTarea(t)+"%"}}/></div>
+                              <span className="text-[9px] text-gray-400 font-semibold">{cumplimientoEfectivoTarea(t)}%</span>
+                            </div>
                           )}
-                          <p className="text-xs text-gray-600 mt-0.5">{c.texto}</p>
-                          <AdjuntoChip adjunto={c.adjunto}/>
+                          {esMia?(
+                            <select value={t.col} onChange={e=>solicitarCambioEstado(t,e.target.value)}
+                              className="mt-1.5 w-full text-[10px] px-1.5 py-1 rounded-md border border-gray-200 bg-white text-gray-600 focus:outline-none">
+                              {Object.entries(COLS_TAREA).map(([k,d])=><option key={k} value={k}>{d.label}</option>)}
+                            </select>
+                          ):(
+                            <p className="text-[9px] text-gray-300 mt-1.5 italic">Solo lectura</p>
+                          )}
                         </div>
-                      ))
-                    )}
-                    <div className="flex items-end gap-2 pt-1">
-                      <input value={comentarioPorTarea[t.id]||""} onChange={e=>setComentarioPorTarea(m=>({...m,[t.id]:e.target.value}))}
-                        onKeyDown={e=>{if(e.key==="Enter")agregarComentarioTarea(t);}}
-                        placeholder="Comentar esta tarea..."
-                        className="flex-1 px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs focus:outline-none focus:border-blue-400"/>
-                      <AdjuntoInput adjunto={adjuntoPorTarea[t.id]||null} onChange={a=>setAdjuntoPorTarea(m=>({...m,[t.id]:a}))}/>
-                      <button onClick={()=>agregarComentarioTarea(t)} disabled={!(comentarioPorTarea[t.id]||"").trim()}
-                        className="px-2.5 py-1.5 rounded-lg text-white text-[11px] font-bold transition disabled:opacity-40 flex-shrink-0" style={{background:"#2563eb"}}>
-                        Comentar
-                      </button>
-                    </div>
+                      );
+                    })}
                   </div>
                 </div>
-              ))}
-              <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
-                <div className="px-3 py-2 bg-gray-50 border-b border-gray-100">
-                  <p className="text-xs font-bold text-gray-700">Generales del proyecto</p>
-                  <p className="text-[10px] text-gray-400">No atados a ninguna tarea en particular</p>
-                </div>
-                <div className="p-3 space-y-2">
-                  {(proyectoActivo.proyecto.comentariosGenerales||[]).length===0?(
-                    <p className="text-gray-300 text-xs italic">Sin comentarios generales.</p>
-                  ):(
-                    [...proyectoActivo.proyecto.comentariosGenerales].reverse().map(c=>(
-                      <div key={c.id} className="bg-gray-50 rounded-lg px-2.5 py-1.5">
-                        <div className="flex items-center justify-between gap-2">
-                          <p className="text-[11px] font-semibold text-gray-700">{c.autor}</p>
-                          <p className="text-[9px] text-gray-400 flex-shrink-0">{new Date(c.fecha).toLocaleString("es-CL")}</p>
-                        </div>
-                        <p className="text-xs text-gray-600 mt-0.5">{c.texto}</p>
-                        <AdjuntoChip adjunto={c.adjunto}/>
-                      </div>
-                    ))
-                  )}
-                  <div className="flex items-end gap-2 pt-1">
-                    <input value={nuevoComentarioGeneral} onChange={e=>setNuevoComentarioGeneral(e.target.value)}
-                      onKeyDown={e=>{if(e.key==="Enter")agregarComentarioGeneral();}}
-                      placeholder="Comentar el proyecto en general..."
-                      className="flex-1 px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs focus:outline-none focus:border-blue-400"/>
-                    <AdjuntoInput adjunto={adjuntoGeneral} onChange={setAdjuntoGeneral}/>
-                    <button onClick={agregarComentarioGeneral} disabled={!nuevoComentarioGeneral.trim()}
-                      className="px-2.5 py-1.5 rounded-lg text-white text-[11px] font-bold transition disabled:opacity-40 flex-shrink-0" style={{background:"#2563eb"}}>
-                      Comentar
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </>)}
+              );
+            })}
           </div>
-        )}
+        </div>
         {cambioEstadoPendiente&&(
           <ModalComentarioEstado
             tareaTitulo={cambioEstadoPendiente.tarea.titulo}
@@ -26590,6 +26553,25 @@ function TareasAsignadasPanel({user,compromisos}){
             onConfirm={confirmarCambioEstado}
             onCancel={()=>setCambioEstadoPendiente(null)}
           />
+        )}
+        {tareaModalJSX}
+        {showComentariosGenerales&&(
+          <div className="absolute inset-0 flex items-center justify-center z-20 p-4" style={{background:"rgba(0,0,0,0.5)"}} onClick={()=>setShowComentariosGenerales(false)}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col" style={{maxHeight:"80vh"}} onClick={e=>e.stopPropagation()}>
+              <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
+                <div>
+                  <p className="font-bold text-gray-900">💬 Comentarios del proyecto</p>
+                  <p className="text-[10px] text-gray-400">No atados a ninguna tarea en particular</p>
+                </div>
+                <button onClick={()=>setShowComentariosGenerales(false)} className="text-gray-400 hover:text-gray-600">
+                  <X size={16}/>
+                </button>
+              </div>
+              <div className="px-5 py-4 overflow-y-auto">
+                <PanelComentarios comentarios={proyectoActivo.proyecto.comentariosGenerales} onAgregar={agregarComentarioGeneral} placeholder="Comentar el proyecto en general..."/>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     );
@@ -26609,12 +26591,15 @@ function TareasAsignadasPanel({user,compromisos}){
           <div key={t._key+"_"+t.id} className="bg-white rounded-2xl border border-gray-200 p-4">
             <div className="flex items-start justify-between gap-2">
               <div className="flex-1 min-w-0">
-                <button onClick={()=>{setProyectoAbierto({key:t._key,proyectoId:t._proyectoId});setVistaProyecto("kanban");}}
+                <button onClick={()=>{setProyectoAbierto({key:t._key,proyectoId:t._proyectoId});}}
                   className="text-[10px] text-blue-600 font-semibold uppercase tracking-wide truncate hover:underline">
                   📁 {t._proyectoNombre} — ver proyecto completo →
                 </button>
                 <p className="text-[10px] text-gray-400 mt-0.5">asignado por {t._creadoPor||"—"}</p>
-                <p className="font-bold text-gray-800 mt-0.5">{t.titulo}</p>
+                <p onClick={()=>setTareaModalAbierta(t)} className="font-bold text-gray-800 mt-0.5 cursor-pointer hover:text-blue-700 transition inline-flex items-center gap-1.5">
+                  {t.titulo}
+                  {t.comentarios?.length>0&&<span className="text-[10px] text-gray-400 font-normal">💬{t.comentarios.length}</span>}
+                </p>
                 {t.descripcion&&<p className="text-xs text-gray-500 mt-1">{t.descripcion}</p>}
               </div>
               <select value={t.col} onChange={e=>solicitarCambioEstado(t,e.target.value)}
@@ -26628,16 +26613,6 @@ function TareasAsignadasPanel({user,compromisos}){
                 📅 {new Date(t.fechaInicio+"T12:00:00").toLocaleDateString("es-CL")}{t.duracion>1&&` · ${t.duracion} día(s)`}
               </p>
             )}
-            {t.comentarios?.length>0&&(
-              <div className="mt-2 pt-2 border-t border-gray-100 space-y-1">
-                {[...t.comentarios].reverse().slice(0,3).map(c=>(
-                  <div key={c.id}>
-                    <p className="text-[10px] text-gray-500"><span className="font-semibold text-gray-600">{c.autor}:</span> {c.texto}</p>
-                    <AdjuntoChip adjunto={c.adjunto}/>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         ))
       )}
@@ -26650,6 +26625,7 @@ function TareasAsignadasPanel({user,compromisos}){
           onCancel={()=>setCambioEstadoPendiente(null)}
         />
       )}
+      {tareaModalJSX}
     </div>
   );
 }
