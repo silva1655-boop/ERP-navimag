@@ -16383,14 +16383,15 @@ function DisponibilidadUtilizacion({user,data}){
   if(!canAccessDisponibilidad(user)) return null;
 
   return(
-    <div className="p-5 space-y-5 max-w-4xl">
+    <div className="p-4 lg:p-6 space-y-5">
       <div>
-        <h1 className="text-lg font-bold text-gray-800">Disponibilidad y Utilización</h1>
-        <p className="text-gray-400 text-sm">Faena y Detenciones de tractos (Kalmar, Terberg, MOL, Liftec) — reemplaza Registro_Detenciones_Tractos.xlsx.</p>
+        <h1 className="text-xl font-bold text-gray-900">Disponibilidad y Utilización</h1>
+        <p className="text-gray-400 text-sm mt-0.5">Faena y Detenciones de tractos (Kalmar, Terberg, MOL, Liftec) — reemplaza Registro_Detenciones_Tractos.xlsx.</p>
       </div>
 
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
-        <h2 className="font-bold text-gray-800 text-sm mb-3">Configuración de Targets (buque · terminal)</h2>
+      <div className="grid xl:grid-cols-2 gap-5">
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
+        <h2 className="font-bold text-gray-800 text-base mb-3">Configuración de Targets (buque · terminal)</h2>
         <div className="flex flex-wrap gap-2 mb-3">
           <select value={nuevoTarget.buque} onChange={e=>setNuevoTarget(f=>({...f,buque:e.target.value}))}
             className="px-3 py-2 rounded-lg border border-gray-200 text-sm">
@@ -16420,9 +16421,9 @@ function DisponibilidadUtilizacion({user,data}){
             </button>
           </div>
         ):(
-          <div className="space-y-1.5">
+          <div className="grid sm:grid-cols-2 gap-2">
             {targets.map(t=>(
-              <div key={t.id} className="flex items-center gap-3 text-sm bg-gray-50 rounded-lg px-3 py-2">
+              <div key={t.id} className="flex items-center gap-3 text-sm bg-gray-50 rounded-xl px-3 py-2.5">
                 {editId===t.id?(
                   <>
                     <span className="font-semibold text-gray-700 w-28">{t.buque} · {t.terminal}</span>
@@ -16446,9 +16447,89 @@ function DisponibilidadUtilizacion({user,data}){
         )}
       </div>
 
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
-        <h2 className="font-bold text-gray-800 text-sm mb-3">{editFaenaId?"Editar Faena":"Nueva Faena"}</h2>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
+        <h2 className="font-bold text-gray-800 text-base mb-1">Importar histórico (Excel)</h2>
+        <p className="text-gray-400 text-xs mb-3">
+          Subí el Excel con hojas "Faena" y "Detenciones" (mismo formato que Registro_Detenciones_Tractos.xlsx). Volver a subir el mismo archivo reemplaza solo lo importado antes por acá — no toca nada cargado a mano.
+        </p>
+
+        <input ref={fileInputHistoricoRef} type="file" accept=".xlsx,.xls" className="hidden"
+          onChange={e=>{const f=e.target.files?.[0];e.target.value="";if(f) analizarExcelHistorico(f);}}/>
+        {!previewHistorico&&(
+          <button onClick={()=>fileInputHistoricoRef.current?.click()} disabled={analizandoHistorico}
+            className="px-3 py-2 rounded-lg text-white text-sm font-semibold transition disabled:opacity-50" style={{background:NV.blue}}>
+            {analizandoHistorico?"Analizando...":"📄 Elegir archivo Excel"}
+          </button>
+        )}
+
+        {resultadoHistorico&&(
+          <div className="mt-3 bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-800">
+            ✅ Importado: {resultadoHistorico.faenas} faena(s) y {resultadoHistorico.detenciones} detención(es) ({resultadoHistorico.preexistentesFaenas} faena(s) y {resultadoHistorico.preexistentesDet} detención(es) cargadas a mano se conservaron sin tocar).
+            {resultadoHistorico.sinMatch>0&&<> {resultadoHistorico.sinMatch} detención(es) quedaron sin Faena asignada — reasignalas editándolas en la tabla de abajo.</>}
+          </div>
+        )}
+
+        {previewHistorico&&(
+          <div className="mt-3 space-y-2.5">
+            <div className="bg-gray-50 rounded-xl p-3 text-xs text-gray-700 space-y-1">
+              <p><span className="font-bold">{previewHistorico.faenasFinal.length}</span> faena(s) y <span className="font-bold">{previewHistorico.detencionesFinal.length}</span> detención(es) leídas ({previewHistorico.totalFaenaRows} filas de Faena, {previewHistorico.totalDetRows} de Detenciones).</p>
+              <p>
+                Validación de fórmula vs. columnas del Excel: Disponibilidad Técnica {previewHistorico.coincideDisp}/{previewHistorico.faenasFinal.length} coinciden (±1pp) · Utilización {previewHistorico.coincideUtil}/{previewHistorico.faenasFinal.length}.
+                {previewHistorico.difsGrandes.length>0&&` Las ${previewHistorico.difsGrandes.length} restantes difieren porque el Excel original arrastraba errores de fórmula en esas filas — el valor calculado acá es el correcto.`}
+              </p>
+            </div>
+
+            {previewHistorico.autoResueltos.length>0&&(
+              <details className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-800">
+                <summary className="cursor-pointer font-semibold">{previewHistorico.autoResueltos.length} detención(es) emparejadas por sufijo S/N (sin match exacto, un único candidato posible)</summary>
+                <div className="mt-2 space-y-0.5">
+                  {previewHistorico.autoResueltos.map((d,i)=>(
+                    <p key={i}>fila {d.filaExcel} {d.buque} N°"{d.numeroFaena}" → Faena "{d.resuelto}"</p>
+                  ))}
+                </div>
+              </details>
+            )}
+
+            {previewHistorico.sinMatch.length>0&&(
+              <details open className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">
+                <summary className="cursor-pointer font-semibold">⚠ {previewHistorico.sinMatch.length} detención(es) sin Faena coincidente — quedan igual importadas, pero necesitan revisión manual después</summary>
+                <div className="mt-2 space-y-0.5">
+                  {previewHistorico.sinMatch.map((d,i)=>(
+                    <p key={i}>fila {d.filaExcel} {d.buque} N°"{d.numeroFaena||"(vacío)"}" — {d.motivo}</p>
+                  ))}
+                </div>
+              </details>
+            )}
+
+            {previewHistorico.duplicados.length>0&&(
+              <details className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">
+                <summary className="cursor-pointer font-semibold">⚠ {previewHistorico.duplicados.length} clave(s) buque+N°faena repetidas en la hoja Faena — se importan como faenas separadas, revisar si hay que fusionarlas</summary>
+                <div className="mt-2 space-y-0.5">
+                  {previewHistorico.duplicados.map(([k,filas],i)=>(
+                    <p key={i}>{k}: filas Excel {filas.map(f=>f.filaExcel).join(", ")}</p>
+                  ))}
+                </div>
+              </details>
+            )}
+
+            <div className="flex gap-2 pt-1">
+              <button onClick={confirmarImportarHistorico} disabled={escribiendoHistorico}
+                className="px-3 py-2 rounded-lg text-white text-sm font-bold transition disabled:opacity-50" style={{background:"#16a34a"}}>
+                {escribiendoHistorico?"Importando...":"✅ Confirmar importación"}
+              </button>
+              <button onClick={()=>setPreviewHistorico(null)} disabled={escribiendoHistorico}
+                className="px-3 py-2 rounded-lg border border-gray-200 text-gray-600 text-sm font-semibold hover:bg-gray-50 transition disabled:opacity-50">
+                Cancelar
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+      </div>
+
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
+        <h2 className="font-bold text-gray-800 text-base mb-3">{editFaenaId?"Editar Faena":"Nueva Faena"}</h2>
+        <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-3 mb-3">
           <select value={nuevaFaena.buque} onChange={e=>setNuevaFaena(f=>({...f,buque:e.target.value}))}
             className="px-3 py-2 rounded-lg border border-gray-200 text-sm">
             <option value="ESPERANZA">Esperanza</option>
@@ -16516,28 +16597,28 @@ function DisponibilidadUtilizacion({user,data}){
         </div>
       </div>
 
-      <div className="grid md:grid-cols-2 gap-5">
-        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
-          <h2 className="font-bold text-gray-800 text-sm mb-3">Promedio mensual de Disponibilidad Técnica por buque</h2>
-          <PromedioMensualChart datos={serieDisponibilidadMensual}/>
-          <div className="flex items-center gap-4 text-[10px] text-gray-500 mt-1">
+      <div className="grid xl:grid-cols-2 gap-5">
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
+          <h2 className="font-bold text-gray-800 text-base mb-3">Promedio mensual de Disponibilidad Técnica por buque</h2>
+          <PromedioMensualChart datos={serieDisponibilidadMensual} height={240}/>
+          <div className="flex items-center gap-4 text-xs text-gray-500 mt-2">
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:BUQUE_COLOR.ESPERANZA}}/>Esperanza</span>
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:BUQUE_COLOR.DALKA}}/>Dalka</span>
           </div>
         </div>
-        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
-          <h2 className="font-bold text-gray-800 text-sm mb-3">Promedio mensual de Utilización por buque</h2>
-          <PromedioMensualChart datos={serieUtilizacionMensual}/>
-          <div className="flex items-center gap-4 text-[10px] text-gray-500 mt-1">
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
+          <h2 className="font-bold text-gray-800 text-base mb-3">Promedio mensual de Utilización por buque</h2>
+          <PromedioMensualChart datos={serieUtilizacionMensual} height={240}/>
+          <div className="flex items-center gap-4 text-xs text-gray-500 mt-2">
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:BUQUE_COLOR.ESPERANZA}}/>Esperanza</span>
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:BUQUE_COLOR.DALKA}}/>Dalka</span>
           </div>
         </div>
       </div>
 
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 overflow-x-auto">
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 overflow-x-auto">
         <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-          <h2 className="font-bold text-gray-800 text-sm">Faenas registradas ({faenasFiltradas.length}/{faenas.length})</h2>
+          <h2 className="font-bold text-gray-800 text-base">Faenas registradas ({faenasFiltradas.length}/{faenas.length})</h2>
           <div className="flex flex-wrap gap-2 items-center">
             <MultiSelectFiltro label="Buque" opciones={["ESPERANZA","DALKA"]} seleccionados={filtrosBuqueTabla} onChange={setFiltrosBuqueTabla}/>
             <MultiSelectFiltro label="Terminal" opciones={["PMC","NAT","UCO"]} seleccionados={filtrosTerminalTabla} onChange={setFiltrosTerminalTabla}/>
@@ -16555,7 +16636,7 @@ function DisponibilidadUtilizacion({user,data}){
         ):faenasFiltradas.length===0?(
           <p className="text-gray-400 text-xs italic">{faenas.length===0?"Todavía no hay faenas registradas.":"Ninguna faena coincide con los filtros."}</p>
         ):(
-          <table className="w-full text-xs">
+          <table className="w-full text-sm">
             <thead>
               <tr className="text-gray-400 text-left border-b border-gray-100">
                 <th className="pb-2 pr-3">Término op.</th>
@@ -16591,9 +16672,9 @@ function DisponibilidadUtilizacion({user,data}){
         )}
       </div>
 
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
-        <h2 className="font-bold text-gray-800 text-sm mb-3">{editDetencionId?"Editar Detención":"Nueva Detención"}</h2>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
+        <h2 className="font-bold text-gray-800 text-base mb-3">{editDetencionId?"Editar Detención":"Nueva Detención"}</h2>
+        <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-3 mb-3">
           <select value={nuevaDetencion.buque}
             onChange={e=>setNuevaDetencion(f=>({...f,buque:e.target.value,faenaId:""}))}
             className="px-3 py-2 rounded-lg border border-gray-200 text-sm">
@@ -16668,14 +16749,14 @@ function DisponibilidadUtilizacion({user,data}){
         </div>
       </div>
 
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 overflow-x-auto">
-        <h2 className="font-bold text-gray-800 text-sm mb-3">Detenciones registradas ({detenciones.length})</h2>
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 overflow-x-auto">
+        <h2 className="font-bold text-gray-800 text-base mb-3">Detenciones registradas ({detenciones.length})</h2>
         {loadingDetenciones?(
           <p className="text-gray-400 text-sm">Cargando…</p>
         ):detencionesOrdenadas.length===0?(
           <p className="text-gray-400 text-xs italic">Todavía no hay detenciones registradas.</p>
         ):(
-          <table className="w-full text-xs">
+          <table className="w-full text-sm">
             <thead>
               <tr className="text-gray-400 text-left border-b border-gray-100">
                 <th className="pb-2 pr-3">Inicio</th>
@@ -16721,85 +16802,6 @@ function DisponibilidadUtilizacion({user,data}){
                   :`✅ ${recalcularTodasResult.cambios} de ${recalcularTodasResult.total} faena(s) tenían indisponibilidadHH desactualizado — ya se corrigieron.`}
               </p>
             )}
-          </div>
-        )}
-      </div>
-
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
-        <h2 className="font-bold text-gray-800 text-sm mb-1">Importar histórico (Excel)</h2>
-        <p className="text-gray-400 text-xs mb-3">
-          Subí el Excel con hojas "Faena" y "Detenciones" (mismo formato que Registro_Detenciones_Tractos.xlsx). Volver a subir el mismo archivo reemplaza solo lo importado antes por acá — no toca nada cargado a mano.
-        </p>
-
-        <input ref={fileInputHistoricoRef} type="file" accept=".xlsx,.xls" className="hidden"
-          onChange={e=>{const f=e.target.files?.[0];e.target.value="";if(f) analizarExcelHistorico(f);}}/>
-        {!previewHistorico&&(
-          <button onClick={()=>fileInputHistoricoRef.current?.click()} disabled={analizandoHistorico}
-            className="px-3 py-2 rounded-lg text-white text-sm font-semibold transition disabled:opacity-50" style={{background:NV.blue}}>
-            {analizandoHistorico?"Analizando...":"📄 Elegir archivo Excel"}
-          </button>
-        )}
-
-        {resultadoHistorico&&(
-          <div className="mt-3 bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-800">
-            ✅ Importado: {resultadoHistorico.faenas} faena(s) y {resultadoHistorico.detenciones} detención(es) ({resultadoHistorico.preexistentesFaenas} faena(s) y {resultadoHistorico.preexistentesDet} detención(es) cargadas a mano se conservaron sin tocar).
-            {resultadoHistorico.sinMatch>0&&<> {resultadoHistorico.sinMatch} detención(es) quedaron sin Faena asignada — reasignalas editándolas en la tabla de arriba.</>}
-          </div>
-        )}
-
-        {previewHistorico&&(
-          <div className="mt-3 space-y-2.5">
-            <div className="bg-gray-50 rounded-xl p-3 text-xs text-gray-700 space-y-1">
-              <p><span className="font-bold">{previewHistorico.faenasFinal.length}</span> faena(s) y <span className="font-bold">{previewHistorico.detencionesFinal.length}</span> detención(es) leídas ({previewHistorico.totalFaenaRows} filas de Faena, {previewHistorico.totalDetRows} de Detenciones).</p>
-              <p>
-                Validación de fórmula vs. columnas del Excel: Disponibilidad Técnica {previewHistorico.coincideDisp}/{previewHistorico.faenasFinal.length} coinciden (±1pp) · Utilización {previewHistorico.coincideUtil}/{previewHistorico.faenasFinal.length}.
-                {previewHistorico.difsGrandes.length>0&&` Las ${previewHistorico.difsGrandes.length} restantes difieren porque el Excel original arrastraba errores de fórmula en esas filas — el valor calculado acá es el correcto.`}
-              </p>
-            </div>
-
-            {previewHistorico.autoResueltos.length>0&&(
-              <details className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-800">
-                <summary className="cursor-pointer font-semibold">{previewHistorico.autoResueltos.length} detención(es) emparejadas por sufijo S/N (sin match exacto, un único candidato posible)</summary>
-                <div className="mt-2 space-y-0.5">
-                  {previewHistorico.autoResueltos.map((d,i)=>(
-                    <p key={i}>fila {d.filaExcel} {d.buque} N°"{d.numeroFaena}" → Faena "{d.resuelto}"</p>
-                  ))}
-                </div>
-              </details>
-            )}
-
-            {previewHistorico.sinMatch.length>0&&(
-              <details open className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">
-                <summary className="cursor-pointer font-semibold">⚠ {previewHistorico.sinMatch.length} detención(es) sin Faena coincidente — quedan igual importadas, pero necesitan revisión manual después</summary>
-                <div className="mt-2 space-y-0.5">
-                  {previewHistorico.sinMatch.map((d,i)=>(
-                    <p key={i}>fila {d.filaExcel} {d.buque} N°"{d.numeroFaena||"(vacío)"}" — {d.motivo}</p>
-                  ))}
-                </div>
-              </details>
-            )}
-
-            {previewHistorico.duplicados.length>0&&(
-              <details className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">
-                <summary className="cursor-pointer font-semibold">⚠ {previewHistorico.duplicados.length} clave(s) buque+N°faena repetidas en la hoja Faena — se importan como faenas separadas, revisar si hay que fusionarlas</summary>
-                <div className="mt-2 space-y-0.5">
-                  {previewHistorico.duplicados.map(([k,filas],i)=>(
-                    <p key={i}>{k}: filas Excel {filas.map(f=>f.filaExcel).join(", ")}</p>
-                  ))}
-                </div>
-              </details>
-            )}
-
-            <div className="flex gap-2 pt-1">
-              <button onClick={confirmarImportarHistorico} disabled={escribiendoHistorico}
-                className="px-3 py-2 rounded-lg text-white text-sm font-bold transition disabled:opacity-50" style={{background:"#16a34a"}}>
-                {escribiendoHistorico?"Importando...":"✅ Confirmar importación"}
-              </button>
-              <button onClick={()=>setPreviewHistorico(null)} disabled={escribiendoHistorico}
-                className="px-3 py-2 rounded-lg border border-gray-200 text-gray-600 text-sm font-semibold hover:bg-gray-50 transition disabled:opacity-50">
-                Cancelar
-              </button>
-            </div>
           </div>
         )}
       </div>
