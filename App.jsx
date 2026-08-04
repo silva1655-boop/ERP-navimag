@@ -13959,6 +13959,7 @@ const fmtCompactCLP=(v)=>{
   if(a>=1e3) return s+"$"+(a/1e3).toFixed(0)+"K";
   return s+"$"+Math.round(a);
 };
+const fmtCLP=(n)=>"$"+Math.round(n||0).toLocaleString("es-CL");
 
 // Series: real (sin filtrar), filtrado (con filtros en vivo), presupuesto,
 // proyectado (pronóstico, arranca del último punto filtrado). Cada una se
@@ -14206,6 +14207,7 @@ function DonutChart({items,size=132,strokeWidth=20,centerLabel="Total",centerVal
 // barras) con una línea de referencia marcada en 100% ("gastado = presupuestado"),
 // para que no se confunda con la escala de las barras a la izquierda.
 function GastoMensualChart({serie,onClickMes,mesSeleccionado,height=260,width=760}){
+  const [hoverIdx,setHoverIdx]=useState(null);
   if(!serie||serie.length===0) return(
     <div className="flex items-center justify-center h-32 text-gray-300 text-xs">Sin meses en el rango seleccionado.</div>
   );
@@ -14268,6 +14270,41 @@ function GastoMensualChart({serie,onClickMes,mesSeleccionado,height=260,width=76
           <text x={xCentro(m.idx)} y={yPct(m.pct)-8} textAnchor="middle" fontSize="9" fontWeight="700" fill={colorPct(m.pct)}>{m.pct}%</text>
         </g>
       ))}
+
+      {/* Overlay interactivo — hover resalta el mes y muestra un tooltip con
+          Real/Presupuesto/% Ejecución, independiente del click (que selecciona
+          el mes para el detalle de transacciones de abajo). */}
+      <rect x={pad.l} y={pad.t} width={cW} height={cH} fill="transparent"
+        onMouseMove={e=>{
+          const rect=e.currentTarget.getBoundingClientRect();
+          const relX=(e.clientX-rect.left)/rect.width*cW;
+          setHoverIdx(Math.max(0,Math.min(n-1,Math.floor(relX/bandW))));
+        }}
+        onMouseLeave={()=>setHoverIdx(null)}
+        onClick={()=>onClickMes&&hoverIdx!=null&&onClickMes(serie[hoverIdx].mes)}
+        style={{cursor:onClickMes?"pointer":"default"}}/>
+      {hoverIdx!=null&&(()=>{
+        const m=serie[hoverIdx];
+        if(mesSeleccionado===m.mes) return null; // ya tiene su propio resaltado de fondo
+        return <rect x={pad.l+bandW*hoverIdx} y={pad.t} width={bandW} height={cH} fill="#F3F4F6" style={{pointerEvents:"none"}}/>;
+      })()}
+      {hoverIdx!=null&&(()=>{
+        const m=serie[hoverIdx];
+        const boxW=142,boxH=m.pct!=null?58:44;
+        let boxX=xCentro(hoverIdx)-boxW/2;
+        boxX=Math.max(pad.l,Math.min(boxX,W-pad.r-boxW));
+        const boxY=pad.t+4;
+        return(
+          <g style={{pointerEvents:"none"}}>
+            <line x1={xCentro(hoverIdx)} x2={xCentro(hoverIdx)} y1={pad.t} y2={pad.t+cH} stroke="#94a3b8" strokeWidth="1" strokeDasharray="3,2"/>
+            <rect x={boxX} y={boxY} width={boxW} height={boxH} rx="6" fill="white" stroke="#E5E7EB" strokeWidth="1"/>
+            <text x={boxX+8} y={boxY+13} fontSize="9.5" fontWeight="700" fill="#111827">{m.mes}</text>
+            <text x={boxX+8} y={boxY+26} fontSize="9.5" fill="#2563eb">Real: {fmtCompactCLP(m.real)}</text>
+            <text x={boxX+8} y={boxY+38} fontSize="9.5" fill="#6B7280">Presupuesto: {fmtCompactCLP(m.presupuesto)}</text>
+            {m.pct!=null&&<text x={boxX+8} y={boxY+50} fontSize="9.5" fontWeight="700" fill={colorPct(m.pct)}>% Ejecución: {m.pct}%</text>}
+          </g>
+        );
+      })()}
     </svg>
   );
 }
@@ -14278,6 +14315,18 @@ const TRIMESTRES_DEF=[
   {label:"T3",meses:["07","08","09"]},
   {label:"T4",meses:["10","11","12"]},
 ];
+
+// Motor de reglas de Gastos y Presupuesto — compartido entre GastosPresupuesto
+// y el Informe Gerencial de Disponibilidad (que necesita el mismo "real
+// filtrado" para no divergir de lo que ya muestra la pestaña de Gastos).
+function aplicaReglaGasto(txn,regla){
+  const valorCampo=String(txn[regla.campo]??"");
+  const valores=regla.valores||[];
+  if(regla.operador==="igual") return valores.some(v=>valorCampo===v);
+  if(regla.operador==="contiene") return valores.some(v=>v&&valorCampo.toLowerCase().includes(v.toLowerCase()));
+  if(regla.operador==="en_lista") return valores.includes(valorCampo);
+  return false;
+}
 
 function GastosPresupuesto({user,data,activeModule,activeBarco}){
   const equip=data?.equip||[];
@@ -14373,14 +14422,7 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
 
   // Motor de reglas: excluir saca la fila del real filtrado y del pronóstico;
   // marcar_puntual la deja en el real filtrado pero afuera del pronóstico.
-  const aplicaRegla=(txn,regla)=>{
-    const valorCampo=String(txn[regla.campo]??"");
-    const valores=regla.valores||[];
-    if(regla.operador==="igual") return valores.some(v=>valorCampo===v);
-    if(regla.operador==="contiene") return valores.some(v=>v&&valorCampo.toLowerCase().includes(v.toLowerCase()));
-    if(regla.operador==="en_lista") return valores.includes(valorCampo);
-    return false;
-  };
+  const aplicaRegla=aplicaReglaGasto;
 
   const reglasAplicables=useMemo(()=>{
     return reglas.filter(r=>r.activo&&(r.modulo==="ambos"||r.modulo===activeModule));
@@ -14993,8 +15035,6 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
     setEliminandoImportId(null);
     alert(`✅ ${totalBorradas} fila(s) eliminada(s) de esta importación. Ya podés volver a subir el archivo corregido.`);
   };
-
-  const fmtCLP=(n)=>"$"+Math.round(n||0).toLocaleString("es-CL");
 
   // ── Mapeo orden SAP -> equipo (para "Top 5 equipos por gasto") ──
   const saveConfigEquiposOrden=async(updated)=>{
@@ -15841,12 +15881,14 @@ const BUQUE_COLOR={ESPERANZA:"#0055A4",DALKA:"#F59E0B"};
 // (mes/trimestre/semestre/año) lo decide quien arma `datos` (cada punto trae
 // su propio `key` para el React key y `label` ya formateado para el eje).
 function PromedioPeriodoChart({datos,height=180,width=620}){
+  const [hoverIdx,setHoverIdx]=useState(null);
   const pad={l:34,r:10,t:10,b:22};
   const cW=width-pad.l-pad.r, cH=height-pad.t-pad.b;
   if(!datos||datos.length===0) return <p className="text-gray-400 text-xs italic py-6 text-center">Sin datos suficientes todavía.</p>;
   const n=datos.length;
   const x=i=>pad.l+(n<=1?cW/2:i/(n-1)*cW);
   const y=v=>pad.t+cH-(v??0)*cH;
+  const bandW=n<=1?cW:cW/(n-1);
   const buildPath=buque=>{
     const pts=datos.map((d,i)=>({i,v:d[buque]})).filter(p=>p.v!=null);
     if(pts.length<1) return "";
@@ -15864,11 +15906,39 @@ function PromedioPeriodoChart({datos,height=180,width=620}){
       <path d={buildPath("DALKA")} fill="none" stroke={BUQUE_COLOR.DALKA} strokeWidth="2"/>
       {datos.map((d,i)=>(
         <g key={d.key}>
-          {d.ESPERANZA!=null&&<circle cx={x(i)} cy={y(d.ESPERANZA)} r="3" fill={BUQUE_COLOR.ESPERANZA}><title>{`Esperanza ${d.label}: ${Math.round(d.ESPERANZA*100)}%`}</title></circle>}
-          {d.DALKA!=null&&<circle cx={x(i)} cy={y(d.DALKA)} r="3" fill={BUQUE_COLOR.DALKA}><title>{`Dalka ${d.label}: ${Math.round(d.DALKA*100)}%`}</title></circle>}
+          {d.ESPERANZA!=null&&<circle cx={x(i)} cy={y(d.ESPERANZA)} r="3" fill={BUQUE_COLOR.ESPERANZA}/>}
+          {d.DALKA!=null&&<circle cx={x(i)} cy={y(d.DALKA)} r="3" fill={BUQUE_COLOR.DALKA}/>}
           <text x={x(i)} y={height-6} textAnchor="middle" fontSize="9" fill="#9CA3AF">{d.label}</text>
         </g>
       ))}
+
+      {/* Overlay interactivo — crosshair + tooltip al pasar el mouse */}
+      <rect x={pad.l-bandW/2} y={pad.t} width={cW+bandW} height={cH} fill="transparent"
+        onMouseMove={e=>{
+          const rect=e.currentTarget.getBoundingClientRect();
+          const relX=(e.clientX-rect.left)/rect.width*(cW+bandW)-bandW/2;
+          const idx=n<=1?0:Math.round(relX/bandW);
+          setHoverIdx(Math.max(0,Math.min(n-1,idx)));
+        }}
+        onMouseLeave={()=>setHoverIdx(null)} style={{cursor:"crosshair"}}/>
+      {hoverIdx!=null&&(()=>{
+        const d=datos[hoverIdx];
+        const filas=[d.ESPERANZA!=null&&{label:"Esperanza",v:d.ESPERANZA,color:BUQUE_COLOR.ESPERANZA},d.DALKA!=null&&{label:"Dalka",v:d.DALKA,color:BUQUE_COLOR.DALKA}].filter(Boolean);
+        if(filas.length===0) return null;
+        const boxW=120,boxH=16+filas.length*12;
+        let boxX=x(hoverIdx)+8;
+        if(boxX+boxW>width-4) boxX=x(hoverIdx)-boxW-8;
+        return(
+          <g style={{pointerEvents:"none"}}>
+            <line x1={x(hoverIdx)} x2={x(hoverIdx)} y1={pad.t} y2={pad.t+cH} stroke="#94a3b8" strokeWidth="1" strokeDasharray="3,2"/>
+            <rect x={boxX} y={pad.t+2} width={boxW} height={boxH} rx="6" fill="white" stroke="#E5E7EB" strokeWidth="1"/>
+            <text x={boxX+8} y={pad.t+2+13} fontSize="9.5" fontWeight="700" fill="#111827">{d.label}</text>
+            {filas.map((f,idx)=>(
+              <text key={f.label} x={boxX+8} y={pad.t+2+13+(idx+1)*12} fontSize="9.5" fill={f.color}>{f.label}: {Math.round(f.v*100)}%</text>
+            ))}
+          </g>
+        );
+      })()}
     </svg>
   );
 }
@@ -15886,6 +15956,33 @@ function DisponibilidadUtilizacion({user,data}){
   const [nuevaFaena,setNuevaFaena]=useState(FAENA_VACIA);
   const [editFaenaId,setEditFaenaId]=useState(null);
   const [granularidadPromedio,setGranularidadPromedio]=useState("mensual"); // mensual|trimestral|semestral|anual
+
+  // ── Informe Gerencial ──
+  const [vistaDisponibilidad,setVistaDisponibilidad]=useState("gestion"); // gestion|informe
+  const [informeAnio,setInformeAnio]=useState(new Date().getFullYear());
+  const [informeTrimestre,setInformeTrimestre]=useState(Math.ceil((new Date().getMonth()+1)/3)); // 1-4
+  // Presupuesto/reglas de Gastos — livianos, se leen siempre (no solo con el
+  // informe abierto) para no tener que esperar al cambiar de vista.
+  const [reglasGasto,setReglasGasto]=useState([]);
+  const [presupuestoGasto,setPresupuestoGasto]=useState([]);
+  useEffect(()=>{
+    const u1=onSnapshot(doc(db,COLL_GASTOS_REGLAS,"reglas"),snap=>setReglasGasto(snap.exists()?(snap.data().data||[]):[]));
+    const u2=onSnapshot(doc(db,COLL_GASTOS_PRESUPUESTO,"presupuesto"),snap=>setPresupuestoGasto(snap.exists()?(snap.data().data||[]):[]));
+    return()=>{u1();u2();};
+  },[]);
+  // Los meses de transacciones sí son pesados (un doc por mes) — se traen al
+  // vuelo solo para los 3 meses del trimestre elegido, no en vivo.
+  const [txnsInforme,setTxnsInforme]=useState({});
+  const [cargandoTxnsInforme,setCargandoTxnsInforme]=useState(false);
+  useEffect(()=>{
+    let cancelado=false;
+    const meses=TRIMESTRES_DEF[informeTrimestre-1].meses.map(m=>`${informeAnio}-${m}`);
+    setCargandoTxnsInforme(true);
+    Promise.all(meses.map(mes=>getDoc(doc(db,COLL_GASTOS_TXN,mes)).then(snap=>[mes,snap.exists()?(snap.data().data||[]):[]])))
+      .then(entries=>{if(!cancelado){setTxnsInforme(Object.fromEntries(entries));setCargandoTxnsInforme(false);}})
+      .catch(err=>{console.error("Informe Gerencial — error leyendo gastos:",err);if(!cancelado)setCargandoTxnsInforme(false);});
+    return()=>{cancelado=true;};
+  },[informeAnio,informeTrimestre]);
 
   const [detenciones,setDetenciones]=useState([]);
   const [loadingDetenciones,setLoadingDetenciones]=useState(true);
@@ -16110,6 +16207,87 @@ function DisponibilidadUtilizacion({user,data}){
     const{key,label}=periodoDeFecha(hoy.getFullYear(),hoy.getMonth()+1,granularidadPromedio);
     return{label,datos:promediosPorPeriodo.find(p=>p.key===key)||null};
   },[promediosPorPeriodo,granularidadPromedio]);
+
+  // ═══ Informe Gerencial ═══════════════════════════════════════════════════
+  // Trimestres SIEMPRE calendario fijo (T1=ene-feb-mar...T4=oct-nov-dic),
+  // igual criterio que TRIMESTRES_DEF en Gastos y Presupuesto — así el
+  // trimestre del informe coincide 1:1 con el de esa pestaña.
+  const faenasDelTrimestreInforme=useMemo(()=>{
+    const mesesNum=TRIMESTRES_DEF[informeTrimestre-1].meses.map(Number);
+    return faenas.filter(f=>f.anio===informeAnio&&mesesNum.includes(f.mes));
+  },[faenas,informeAnio,informeTrimestre]);
+
+  const resumenBuqueInforme=(fs)=>{
+    const n=fs.length;
+    const hhIndisp=fs.reduce((s,f)=>s+(f.indisponibilidadHH||0),0);
+    return{
+      n,hhIndisp,
+      dispProm:n>0?fs.reduce((s,f)=>s+f.disponibilidadTecnica,0)/n:null,
+      utilProm:n>0?fs.reduce((s,f)=>s+f.utilizacion,0)/n:null,
+      tractosOpProm:n>0?fs.reduce((s,f)=>s+(f.tractosOp||0),0)/n:null,
+    };
+  };
+
+  const informeKPIsTrimestre=useMemo(()=>({
+    ESPERANZA:resumenBuqueInforme(faenasDelTrimestreInforme.filter(f=>f.buque==="ESPERANZA")),
+    DALKA:resumenBuqueInforme(faenasDelTrimestreInforme.filter(f=>f.buque==="DALKA")),
+  }),[faenasDelTrimestreInforme]);
+
+  const informeMesAMes=useMemo(()=>{
+    return TRIMESTRES_DEF[informeTrimestre-1].meses.map(mesStr=>{
+      const mesNum=parseInt(mesStr);
+      const fsMes=faenasDelTrimestreInforme.filter(f=>f.mes===mesNum);
+      return{
+        mes:mesStr,
+        label:new Date(informeAnio,mesNum-1,1).toLocaleDateString("es-CL",{month:"long"}),
+        ESPERANZA:resumenBuqueInforme(fsMes.filter(f=>f.buque==="ESPERANZA")),
+        DALKA:resumenBuqueInforme(fsMes.filter(f=>f.buque==="DALKA")),
+      };
+    });
+  },[faenasDelTrimestreInforme,informeTrimestre,informeAnio]);
+
+  // Presupuesto vs. real filtrado del trimestre, por buque — mismo motor de
+  // reglas y misma convención de Var% que el Resumen Trimestral de Gastos y
+  // Presupuesto (categoría TOTAL, módulo marítimo — los tractos son de puerto).
+  const reglasAplicablesInforme=useMemo(()=>reglasGasto.filter(r=>r.activo&&(r.modulo==="ambos"||r.modulo==="maritimo")),[reglasGasto]);
+  const presupuestoInforme=useMemo(()=>{
+    const meses=TRIMESTRES_DEF[informeTrimestre-1].meses.map(m=>`${informeAnio}-${m}`);
+    const presupuestoDelMes=(mes,vId)=>{
+      const anio=parseInt(mes.slice(0,4));
+      const exacto=presupuestoGasto.find(p=>p.modulo==="maritimo"&&(p.vesselId||null)===vId&&p.categoria==="TOTAL"&&p.anio===anio&&p.mes===mes);
+      if(exacto) return exacto.montoPresupuestado||0;
+      const anual=presupuestoGasto.find(p=>p.modulo==="maritimo"&&(p.vesselId||null)===vId&&p.categoria==="TOTAL"&&p.anio===anio&&!p.mes);
+      return anual?(anual.montoPresupuestado||0)/12:0;
+    };
+    const porBuque=(buque)=>{
+      const vId=buque.toLowerCase();
+      let real=0,pres=0;
+      meses.forEach(mes=>{
+        const rows=(txnsInforme[mes]||[]).filter(t=>t.modulo==="maritimo"&&t.vesselId===vId);
+        const filtradas=rows.filter(t=>!reglasAplicablesInforme.some(r=>aplicaReglaGasto(t,r)&&r.accion==="excluir"));
+        real+=filtradas.reduce((s,t)=>s+(t.valor||0),0);
+        pres+=presupuestoDelMes(mes,vId);
+      });
+      return{real,pres,varPct:pres>0?((pres-real)/pres)*100:null};
+    };
+    return{ESPERANZA:porBuque("ESPERANZA"),DALKA:porBuque("DALKA")};
+  },[txnsInforme,reglasAplicablesInforme,presupuestoGasto,informeAnio,informeTrimestre]);
+
+  // Párrafo de análisis automático — combina disponibilidad/utilización y
+  // presupuesto vs. real del trimestre en una lectura rápida tipo informe.
+  const informeNarrativa=useMemo(()=>{
+    const trimLabel=`${TRIMESTRES_DEF[informeTrimestre-1].label} ${informeAnio}`;
+    const partes=[];
+    [["Esperanza","ESPERANZA"],["Dalka","DALKA"]].forEach(([nombre,key])=>{
+      const k=informeKPIsTrimestre[key];
+      const p=presupuestoInforme[key];
+      if(k.n===0&&p.pres===0){return;}
+      const dispTxt=k.dispProm!=null?`${Math.round(k.dispProm*100)}% de disponibilidad técnica y ${Math.round(k.utilProm*100)}% de utilización promedio (${k.n} faena${k.n===1?"":"s"})`:"sin faenas registradas";
+      const presTxt=p.pres>0?`El gasto real filtrado fue de ${fmtCLP(p.real)} contra un presupuesto de ${fmtCLP(p.pres)}${p.varPct!=null?` (${p.varPct>=0?"+":""}${p.varPct.toFixed(1)}% de variación, ${p.varPct>=0?"dentro de lo presupuestado":"sobre presupuesto"})`:""}.`:"";
+      partes.push(`${nombre} tuvo ${dispTxt} durante ${trimLabel}. ${presTxt}`);
+    });
+    return partes.join(" ")||`Sin datos suficientes para generar el análisis de ${trimLabel} todavía.`;
+  },[informeKPIsTrimestre,presupuestoInforme,informeTrimestre,informeAnio]);
 
   // Recalcula indisponibilidadHH/disponibilidadTecnica/utilizacion de una o más
   // Faenas a partir del arreglo de Detenciones actualizado, y guarda mantek_faena.
@@ -16434,11 +16612,22 @@ function DisponibilidadUtilizacion({user,data}){
 
   return(
     <div className="p-4 lg:p-6 space-y-5">
-      <div>
-        <h1 className="text-xl font-bold text-gray-900">Disponibilidad y Utilización</h1>
-        <p className="text-gray-400 text-sm mt-0.5">Faena y Detenciones de tractos (Kalmar, Terberg, MOL, Liftec) — reemplaza Registro_Detenciones_Tractos.xlsx.</p>
+      <div className="flex items-start justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-gray-900">Disponibilidad y Utilización</h1>
+          <p className="text-gray-400 text-sm mt-0.5">Faena y Detenciones de tractos (Kalmar, Terberg, MOL, Liftec) — reemplaza Registro_Detenciones_Tractos.xlsx.</p>
+        </div>
+        <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
+          {[{key:"gestion",label:"Gestión"},{key:"informe",label:"Informe Gerencial"}].map(v=>(
+            <button key={v.key} onClick={()=>setVistaDisponibilidad(v.key)}
+              className={`px-3 py-1.5 rounded-md text-xs font-semibold transition ${vistaDisponibilidad===v.key?"bg-white shadow-sm text-blue-700":"text-gray-500 hover:text-gray-700"}`}>
+              {v.label}
+            </button>
+          ))}
+        </div>
       </div>
 
+      {vistaDisponibilidad==="gestion"&&(<>
       <div className="grid xl:grid-cols-2 gap-5">
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
         <h2 className="font-bold text-gray-800 text-base mb-3">Configuración de Targets (buque · terminal)</h2>
@@ -16885,6 +17074,113 @@ function DisponibilidadUtilizacion({user,data}){
           </div>
         )}
       </div>
+      </>)}
+
+      {vistaDisponibilidad==="informe"&&(
+        <div className="space-y-5">
+          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
+            <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
+              <h2 className="font-bold text-gray-800 text-base">
+                Informe Gerencial — {TRIMESTRES_DEF[informeTrimestre-1].label} {informeAnio}
+              </h2>
+              <div className="flex items-center gap-2">
+                <select value={informeAnio} onChange={e=>setInformeAnio(parseInt(e.target.value))}
+                  className="px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs bg-white">
+                  {Array.from(new Set([...faenas.map(f=>f.anio),new Date().getFullYear()])).sort((a,b)=>b-a).map(a=>(
+                    <option key={a} value={a}>{a}</option>
+                  ))}
+                </select>
+                <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
+                  {TRIMESTRES_DEF.map((t,i)=>(
+                    <button key={t.label} onClick={()=>setInformeTrimestre(i+1)}
+                      className={`px-3 py-1.5 rounded-md text-xs font-semibold transition ${informeTrimestre===i+1?"bg-white shadow-sm text-blue-700":"text-gray-500 hover:text-gray-700"}`}>
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <p className="text-xs text-gray-400 mb-1">
+              Trimestre calendario fijo: T1 ene-feb-mar · T2 abr-may-jun · T3 jul-ago-sep · T4 oct-nov-dic.
+              {cargandoTxnsInforme&&" Cargando datos de presupuesto..."}
+            </p>
+            <p className="text-sm text-gray-700 leading-relaxed bg-blue-50 border border-blue-100 rounded-xl p-4 mt-2">
+              {informeNarrativa}
+            </p>
+          </div>
+
+          {[["Esperanza","ESPERANZA"],["Dalka","DALKA"]].map(([nombre,buque])=>{
+            const k=informeKPIsTrimestre[buque];
+            const p=presupuestoInforme[buque];
+            return(
+              <div key={buque} className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
+                <h2 className="font-bold text-gray-800 text-base mb-4 flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full inline-block" style={{background:BUQUE_COLOR[buque]}}/>
+                  {nombre} — {TRIMESTRES_DEF[informeTrimestre-1].label} {informeAnio}
+                </h2>
+
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+                  <StatCard icon={Gauge} label="Disp. Técnica trimestral" value={k.n>0?fmtPct(k.dispProm):"—"} sub={`${k.n} faena(s)`} color="blue"/>
+                  <StatCard icon={TrendingUp} label="Utilización trimestral" value={k.n>0?fmtPct(k.utilProm):"—"} sub={`${k.n} faena(s)`} color="cyan"/>
+                  <StatCard icon={Clock} label="Horas indisponibilidad" value={fmtH(k.hhIndisp)} sub="suma del trimestre" color="amber"/>
+                  <StatCard icon={Truck} label="Tractos OP promedio" value={k.n>0?k.tractosOpProm.toFixed(1):"—"} sub="por faena" color="navy"/>
+                </div>
+
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Mes a mes</p>
+                <div className="overflow-x-auto mb-5">
+                  <table className="w-full text-sm border-separate" style={{borderSpacing:0}}>
+                    <thead>
+                      <tr>
+                        <th className="pb-1.5 pr-3 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Mes</th>
+                        <th className="pb-1.5 pr-3 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Faenas</th>
+                        <th className="pb-1.5 pr-3 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Disp. Técnica</th>
+                        <th className="pb-1.5 pr-3 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Utilización</th>
+                        <th className="pb-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Hs. indisponibilidad</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {informeMesAMes.map((m,i)=>{
+                        const km=m[buque];
+                        return(
+                          <tr key={m.mes} className={`border-b border-gray-200 ${i%2===1?"bg-gray-50/70":""}`}>
+                            <td className="py-2 pr-3 font-bold text-gray-900 capitalize">{m.label}</td>
+                            <td className="py-2 pr-3 text-gray-900 font-medium">{km.n}</td>
+                            <td className="py-2 pr-3">{km.n>0?<span className={`font-semibold px-1.5 py-0.5 rounded ${semaforoClass(km.dispProm)}`}>{fmtPct(km.dispProm)}</span>:<span className="text-gray-300">—</span>}</td>
+                            <td className="py-2 pr-3">{km.n>0?<span className={`font-semibold px-1.5 py-0.5 rounded ${semaforoClass(km.utilProm)}`}>{fmtPct(km.utilProm)}</span>:<span className="text-gray-300">—</span>}</td>
+                            <td className="py-2 text-gray-700">{fmtH(km.hhIndisp)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Presupuesto vs. real filtrado (marítimo · {nombre.toLowerCase()} · categoría TOTAL)</p>
+                {p.pres===0&&p.real===0?(
+                  <p className="text-gray-400 text-xs italic">Sin presupuesto ni gasto cargado para {nombre} en este trimestre.</p>
+                ):(
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="bg-gray-50 rounded-xl p-3">
+                      <p className="text-[10px] text-gray-400 uppercase tracking-wide">Real filtrado</p>
+                      <p className="font-bold text-gray-900 text-lg">{fmtCLP(p.real)}</p>
+                    </div>
+                    <div className="bg-gray-50 rounded-xl p-3">
+                      <p className="text-[10px] text-gray-400 uppercase tracking-wide">Presupuesto</p>
+                      <p className="font-bold text-gray-900 text-lg">{fmtCLP(p.pres)}</p>
+                    </div>
+                    <div className="bg-gray-50 rounded-xl p-3">
+                      <p className="text-[10px] text-gray-400 uppercase tracking-wide">Var %</p>
+                      <p className={`font-bold text-lg ${p.varPct==null?"text-gray-300":p.varPct>=0?"text-emerald-700":"text-red-700"}`}>
+                        {p.varPct==null?"—":`${p.varPct>=0?"+":""}${p.varPct.toFixed(1)}%`}
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
