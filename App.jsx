@@ -15882,6 +15882,12 @@ function DisponibilidadUtilizacion({user,data}){
   const [recalculandoTodas,setRecalculandoTodas]=useState(false);
   const [recalcularTodasResult,setRecalcularTodasResult]=useState(null);
 
+  const [analizandoHistorico,setAnalizandoHistorico]=useState(false);
+  const [previewHistorico,setPreviewHistorico]=useState(null);
+  const [escribiendoHistorico,setEscribiendoHistorico]=useState(false);
+  const [resultadoHistorico,setResultadoHistorico]=useState(null);
+  const fileInputHistoricoRef=useRef(null);
+
   // Filtros persistidos en localStorage — antes se perdían al navegar a otra
   // pestaña y volver (el componente se desmonta al cambiar de página).
   const [filtrosBuqueTabla,setFiltrosBuqueTabla]=useState(()=>leerLSJson("mantek_dispo_filtro_buque",[]));
@@ -16167,6 +16173,211 @@ function DisponibilidadUtilizacion({user,data}){
     }
     setRecalculandoTodas(false);
     setRecalcularTodasResult({cambios,total:faenas.length});
+  };
+
+  // Normaliza espacios/mayúsculas antes de comparar números de faena — el
+  // Excel mezcla épocas con distinto criterio de captura ("191 S","6150","236 N").
+  const normEspaciosHistorico=s=>String(s||"").trim().toUpperCase().replace(/\s+/g," ");
+  // Fallback cuando no hay match exacto: separa "NUMERO"+sufijo opcional (una
+  // letra). "S" y sin sufijo comparten bucket (ambos PMC); "N" va aparte
+  // (NAT/UCO) — nunca se cruzan. Misma lógica que scripts/migrate-faena-detenciones.mjs.
+  const claveBucketHistorico=(buque,numeroFaenaNorm)=>{
+    const m=numeroFaenaNorm.match(/^(\d+)\s*([A-Z])?$/);
+    if(!m) return null;
+    return `${buque}|${m[1]}|${m[2]==="N"?"N":"S"}`;
+  };
+
+  // Lee el Excel histórico (hojas "Faena" y "Detenciones", mismo formato de
+  // Registro_Detenciones_Tractos.xlsx) y arma un preview: empareja cada
+  // Detención con su Faena (exacto, con fallback por sufijo S/N), calcula los
+  // campos derivados de cada Faena con la MISMA fórmula que usa la app en
+  // vivo, y junta el reporte de validación — sin escribir nada todavía.
+  const analizarExcelHistorico=async(file)=>{
+    setAnalizandoHistorico(true);
+    setPreviewHistorico(null);
+    setResultadoHistorico(null);
+    try{
+      const buf=await file.arrayBuffer();
+      const wb=XLSX.read(buf,{type:"array",cellDates:true});
+      const wsFaena=wb.Sheets["Faena"];
+      const wsDet=wb.Sheets["Detenciones"];
+      if(!wsFaena||!wsDet){
+        alert('El Excel debe tener hojas llamadas "Faena" y "Detenciones" (mismo formato que Registro_Detenciones_Tractos.xlsx).');
+        setAnalizandoHistorico(false);
+        return;
+      }
+      const faenaRows=XLSX.utils.sheet_to_json(wsFaena,{header:1,defval:"",raw:true}).slice(1).filter(r=>r[1]!==""&&r[1]!=null);
+      const detRows=XLSX.utils.sheet_to_json(wsDet,{header:1,defval:"",raw:true}).slice(1).filter(r=>r[3]!==""&&r[3]!=null);
+
+      const faenasRaw=faenaRows.map((r,idx)=>({
+        filaExcel:idx+2,
+        buque:normEspaciosHistorico(r[0]),
+        numeroFaena:normEspaciosHistorico(r[1]),
+        terminal:normEspaciosHistorico(r[2]),
+        inicioOp:r[3] instanceof Date?r[3]:new Date(r[3]),
+        terminoOp:r[4] instanceof Date?r[4]:new Date(r[4]),
+        capacidadOperadores:parseFloat(r[8])||0,
+        tractosOp:parseFloat(r[9])||0,
+        tractosUtilizados:parseFloat(r[10])||0,
+        refDispTec:parseFloat(r[13])||0,
+        refUtilizacion:parseFloat(r[15])||0,
+        horasDescU:parseFloat(r[20])||0,
+      }));
+
+      const clavesVistas=new Map();
+      faenasRaw.forEach(f=>{
+        const k=f.buque+"|"+f.numeroFaena;
+        if(!clavesVistas.has(k)) clavesVistas.set(k,[]);
+        clavesVistas.get(k).push(f);
+      });
+      const duplicados=[...clavesVistas.entries()].filter(([,v])=>v.length>1);
+
+      const detencionesRaw=detRows.map((r,idx)=>({
+        filaExcel:idx+2,
+        buque:normEspaciosHistorico(r[3]),
+        numeroFaena:r[4]===""||r[4]==null?"":normEspaciosHistorico(r[4]),
+        inicio:r[5] instanceof Date?r[5]:new Date(r[5]),
+        fin:r[6] instanceof Date?r[6]:new Date(r[6]),
+        equipo:String(r[8]||"").trim(),
+        componente:String(r[9]||"").trim(),
+        modoFalla:String(r[10]||"").trim(),
+        tipo:String(r[11]||"").trim(),
+        novedades:String(r[13]||"").trim(),
+        clasificacion:String(r[15]||"").trim(),
+        familiaEquipo:String(r[16]||"").trim(),
+      }));
+
+      const faenasConId=faenasRaw.map(f=>({...f,id:uid()}));
+      const indiceFaenas=new Map();
+      faenasConId.forEach(f=>{
+        const k=f.buque+"|"+f.numeroFaena;
+        if(!indiceFaenas.has(k)) indiceFaenas.set(k,f);
+      });
+      const indiceBucket=new Map();
+      faenasConId.forEach(f=>{
+        const k=claveBucketHistorico(f.buque,f.numeroFaena);
+        if(!k) return;
+        if(!indiceBucket.has(k)) indiceBucket.set(k,[]);
+        indiceBucket.get(k).push(f);
+      });
+
+      const sinMatch=[],autoResueltos=[];
+      const detencionesFinal=detencionesRaw.map(d=>{
+        let faenaId=null;
+        if(!d.numeroFaena){
+          sinMatch.push({...d,motivo:"sin N° de faena/viaje"});
+        }else{
+          const exacto=indiceFaenas.get(d.buque+"|"+d.numeroFaena);
+          if(exacto){
+            faenaId=exacto.id;
+          }else{
+            const k=claveBucketHistorico(d.buque,d.numeroFaena);
+            const candidatos=k?(indiceBucket.get(k)||[]):[];
+            if(candidatos.length===1){
+              faenaId=candidatos[0].id;
+              autoResueltos.push({...d,resuelto:candidatos[0].numeroFaena});
+            }else if(candidatos.length>1){
+              sinMatch.push({...d,motivo:`ambiguo: ${candidatos.length} faenas candidatas (${candidatos.map(x=>x.numeroFaena).join(", ")})`});
+            }else{
+              sinMatch.push({...d,motivo:"no hay Faena con ese buque+N° (ni exacta ni por sufijo S/N)"});
+            }
+          }
+        }
+        const horasReparacion=(d.fin-d.inicio)/3600000;
+        return{
+          id:uid(),fecha:d.inicio.toISOString(),buque:d.buque,faenaId,numeroFaena:d.numeroFaena,
+          inicio:d.inicio.toISOString(),fin:d.fin.toISOString(),horasReparacion,
+          equipo:d.equipo,componente:d.componente,modoFalla:d.modoFalla,tipo:d.tipo,
+          novedades:d.novedades,familiaEquipo:d.familiaEquipo,clasificacion:d.clasificacion,
+          origen:"migracion_excel",_filaExcel:d.filaExcel,
+        };
+      });
+
+      const difsGrandes=[];
+      let coincideDisp=0,coincideUtil=0;
+      const faenasFinal=faenasConId.map(f=>{
+        const hh=detencionesFinal.filter(d=>d.faenaId===f.id).reduce((s,d)=>s+d.horasReparacion,0);
+        const terminoAjustado=new Date(f.terminoOp.getTime()-f.horasDescU*3600000);
+        const derivados=calcularFaenaDerivados(
+          {buque:f.buque,terminal:f.terminal,inicioOp:f.inicioOp,terminoOp:terminoAjustado,tractosOp:f.tractosOp,tractosUtilizados:f.tractosUtilizados,capacidadOperadores:f.capacidadOperadores},
+          targets,hh
+        );
+        if(!derivados) return null;
+        const errDisp=Math.abs(derivados.disponibilidadTecnica-f.refDispTec);
+        const errUtil=Math.abs(derivados.utilizacion-f.refUtilizacion);
+        if(errDisp<=0.01) coincideDisp++;
+        if(errUtil<=0.01) coincideUtil++;
+        if(errDisp>0.01||errUtil>0.01) difsGrandes.push({buque:f.buque,numeroFaena:f.numeroFaena,filaExcel:f.filaExcel});
+        return{
+          id:f.id,buque:f.buque,terminal:f.terminal,numeroFaena:f.numeroFaena,
+          inicioOp:f.inicioOp.toISOString(),terminoOp:f.terminoOp.toISOString(),
+          tractosOp:f.tractosOp,tractosUtilizados:f.tractosUtilizados,capacidadOperadores:f.capacidadOperadores,
+          ...derivados,origen:"migracion_excel",
+          creadoPor:(user.name||user.username||"")+" (importación Excel)",creadoEn:new Date().toISOString(),recalculadoEn:new Date().toISOString(),
+        };
+      }).filter(Boolean);
+
+      if(!targets||targets.length===0){
+        alert("No hay Targets configurados (arriba en esta pantalla) — sin eso no se puede calcular disponibilidad/utilización de ninguna Faena. Configurá los targets primero y volvé a analizar el archivo.");
+        setAnalizandoHistorico(false);
+        return;
+      }
+
+      setPreviewHistorico({
+        faenasFinal,detencionesFinal,totalFaenaRows:faenaRows.length,totalDetRows:detRows.length,
+        sinMatch,autoResueltos,duplicados,coincideDisp,coincideUtil,difsGrandes,
+      });
+    }catch(err){
+      console.error("analizarExcelHistorico:",err);
+      alert("Error leyendo el Excel: "+err.message);
+    }
+    setAnalizandoHistorico(false);
+  };
+
+  // Escribe el preview en Firestore. Re-ejecutable: relee ambas colecciones
+  // primero (nunca confía en el estado local), descarta solo las filas de una
+  // importación previa (origen:"migracion_excel") y conserva todo lo cargado
+  // a mano desde la app.
+  const confirmarImportarHistorico=async()=>{
+    if(!previewHistorico) return;
+    setEscribiendoHistorico(true);
+    try{
+      const [faenaSnap,detSnap]=await Promise.all([
+        getDoc(doc(db,COLL_FAENA,"faenas")),
+        getDoc(doc(db,COLL_DETENCIONES,"detenciones")),
+      ]);
+      const faenasExistentes=faenaSnap.exists()?(faenaSnap.data().data||[]):[];
+      const detencionesExistentes=detSnap.exists()?(detSnap.data().data||[]):[];
+      const faenasSinMigracionPrevia=faenasExistentes.filter(f=>f.origen!=="migracion_excel");
+      const detencionesSinMigracionPrevia=detencionesExistentes.filter(d=>d.origen!=="migracion_excel");
+      const faenasAEscribir=[...faenasSinMigracionPrevia,...previewHistorico.faenasFinal];
+      const detencionesAEscribir=[...detencionesSinMigracionPrevia,...previewHistorico.detencionesFinal.map(({_filaExcel,...d})=>d)];
+
+      const sizeFaenasKB=Math.round(JSON.stringify({data:faenasAEscribir}).length/1024);
+      const sizeDetKB=Math.round(JSON.stringify({data:detencionesAEscribir}).length/1024);
+      if(sizeFaenasKB>1000||sizeDetKB>1000){
+        alert(`El resultado supera el límite de Firestore por documento (1MB): faenas=${sizeFaenasKB}KB, detenciones=${sizeDetKB}KB. Hay que particionar antes de importar — avisale a soporte.`);
+        setEscribiendoHistorico(false);
+        return;
+      }
+
+      await setDoc(doc(db,COLL_FAENA,"faenas"),{data:faenasAEscribir});
+      await setDoc(doc(db,COLL_DETENCIONES,"detenciones"),{data:detencionesAEscribir});
+      setFaenas(faenasAEscribir);
+      setDetenciones(detencionesAEscribir);
+      setResultadoHistorico({
+        faenas:previewHistorico.faenasFinal.length,
+        detenciones:previewHistorico.detencionesFinal.length,
+        preexistentesFaenas:faenasSinMigracionPrevia.length,
+        preexistentesDet:detencionesSinMigracionPrevia.length,
+        sinMatch:previewHistorico.sinMatch.length,
+      });
+      setPreviewHistorico(null);
+    }catch(err){
+      console.error("confirmarImportarHistorico:",err);
+      alert("Error al escribir en Firestore: "+err.message);
+    }
+    setEscribiendoHistorico(false);
   };
 
   if(!canAccessDisponibilidad(user)) return null;
@@ -16514,8 +16725,83 @@ function DisponibilidadUtilizacion({user,data}){
         )}
       </div>
 
-      <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-xs text-amber-700">
-        La migración histórica corre con <code className="bg-amber-100 px-1 rounded">node scripts/migrate-faena-detenciones.mjs Registro_Detenciones_Tractos.xlsx --write</code> (dry-run sin <code className="bg-amber-100 px-1 rounded">--write</code>). Al migrar, revisar el log de detenciones sin faena coincidente y de faenas duplicadas — quedan listadas para reasignar o fusionar a mano desde esta misma pantalla.
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+        <h2 className="font-bold text-gray-800 text-sm mb-1">Importar histórico (Excel)</h2>
+        <p className="text-gray-400 text-xs mb-3">
+          Subí el Excel con hojas "Faena" y "Detenciones" (mismo formato que Registro_Detenciones_Tractos.xlsx). Volver a subir el mismo archivo reemplaza solo lo importado antes por acá — no toca nada cargado a mano.
+        </p>
+
+        <input ref={fileInputHistoricoRef} type="file" accept=".xlsx,.xls" className="hidden"
+          onChange={e=>{const f=e.target.files?.[0];e.target.value="";if(f) analizarExcelHistorico(f);}}/>
+        {!previewHistorico&&(
+          <button onClick={()=>fileInputHistoricoRef.current?.click()} disabled={analizandoHistorico}
+            className="px-3 py-2 rounded-lg text-white text-sm font-semibold transition disabled:opacity-50" style={{background:NV.blue}}>
+            {analizandoHistorico?"Analizando...":"📄 Elegir archivo Excel"}
+          </button>
+        )}
+
+        {resultadoHistorico&&(
+          <div className="mt-3 bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-800">
+            ✅ Importado: {resultadoHistorico.faenas} faena(s) y {resultadoHistorico.detenciones} detención(es) ({resultadoHistorico.preexistentesFaenas} faena(s) y {resultadoHistorico.preexistentesDet} detención(es) cargadas a mano se conservaron sin tocar).
+            {resultadoHistorico.sinMatch>0&&<> {resultadoHistorico.sinMatch} detención(es) quedaron sin Faena asignada — reasignalas editándolas en la tabla de arriba.</>}
+          </div>
+        )}
+
+        {previewHistorico&&(
+          <div className="mt-3 space-y-2.5">
+            <div className="bg-gray-50 rounded-xl p-3 text-xs text-gray-700 space-y-1">
+              <p><span className="font-bold">{previewHistorico.faenasFinal.length}</span> faena(s) y <span className="font-bold">{previewHistorico.detencionesFinal.length}</span> detención(es) leídas ({previewHistorico.totalFaenaRows} filas de Faena, {previewHistorico.totalDetRows} de Detenciones).</p>
+              <p>
+                Validación de fórmula vs. columnas del Excel: Disponibilidad Técnica {previewHistorico.coincideDisp}/{previewHistorico.faenasFinal.length} coinciden (±1pp) · Utilización {previewHistorico.coincideUtil}/{previewHistorico.faenasFinal.length}.
+                {previewHistorico.difsGrandes.length>0&&` Las ${previewHistorico.difsGrandes.length} restantes difieren porque el Excel original arrastraba errores de fórmula en esas filas — el valor calculado acá es el correcto.`}
+              </p>
+            </div>
+
+            {previewHistorico.autoResueltos.length>0&&(
+              <details className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-800">
+                <summary className="cursor-pointer font-semibold">{previewHistorico.autoResueltos.length} detención(es) emparejadas por sufijo S/N (sin match exacto, un único candidato posible)</summary>
+                <div className="mt-2 space-y-0.5">
+                  {previewHistorico.autoResueltos.map((d,i)=>(
+                    <p key={i}>fila {d.filaExcel} {d.buque} N°"{d.numeroFaena}" → Faena "{d.resuelto}"</p>
+                  ))}
+                </div>
+              </details>
+            )}
+
+            {previewHistorico.sinMatch.length>0&&(
+              <details open className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">
+                <summary className="cursor-pointer font-semibold">⚠ {previewHistorico.sinMatch.length} detención(es) sin Faena coincidente — quedan igual importadas, pero necesitan revisión manual después</summary>
+                <div className="mt-2 space-y-0.5">
+                  {previewHistorico.sinMatch.map((d,i)=>(
+                    <p key={i}>fila {d.filaExcel} {d.buque} N°"{d.numeroFaena||"(vacío)"}" — {d.motivo}</p>
+                  ))}
+                </div>
+              </details>
+            )}
+
+            {previewHistorico.duplicados.length>0&&(
+              <details className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">
+                <summary className="cursor-pointer font-semibold">⚠ {previewHistorico.duplicados.length} clave(s) buque+N°faena repetidas en la hoja Faena — se importan como faenas separadas, revisar si hay que fusionarlas</summary>
+                <div className="mt-2 space-y-0.5">
+                  {previewHistorico.duplicados.map(([k,filas],i)=>(
+                    <p key={i}>{k}: filas Excel {filas.map(f=>f.filaExcel).join(", ")}</p>
+                  ))}
+                </div>
+              </details>
+            )}
+
+            <div className="flex gap-2 pt-1">
+              <button onClick={confirmarImportarHistorico} disabled={escribiendoHistorico}
+                className="px-3 py-2 rounded-lg text-white text-sm font-bold transition disabled:opacity-50" style={{background:"#16a34a"}}>
+                {escribiendoHistorico?"Importando...":"✅ Confirmar importación"}
+              </button>
+              <button onClick={()=>setPreviewHistorico(null)} disabled={escribiendoHistorico}
+                className="px-3 py-2 rounded-lg border border-gray-200 text-gray-600 text-sm font-semibold hover:bg-gray-50 transition disabled:opacity-50">
+                Cancelar
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
