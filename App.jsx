@@ -15304,35 +15304,35 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
       {/* ── Resumen Trimestral ── */}
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 overflow-x-auto">
         <h2 className="font-bold text-gray-800 text-sm mb-1">Resumen Trimestral — Real filtrado vs. Presupuesto</h2>
-        <p className="text-gray-300 text-[10px] mb-3">Por trimestre y acumulado entre trimestres, año {anioTrabajo} completo. Var % = (Presupuesto − Real) ÷ Presupuesto — negativo es gasto por encima de lo presupuestado.</p>
-        <table className="w-full text-xs">
+        <p className="text-gray-400 text-[10px] mb-3">Por trimestre y acumulado entre trimestres, año {anioTrabajo} completo. Var % = (Presupuesto − Real) ÷ Presupuesto — negativo es gasto por encima de lo presupuestado.</p>
+        <table className="w-full text-xs border-separate" style={{borderSpacing:0}}>
           <thead>
-            <tr className="text-gray-400 text-left">
-              <th rowSpan={2} className="pb-1.5 pr-3 align-bottom border-b border-gray-100">Período</th>
-              <th colSpan={3} className="pb-1 text-center border-b border-gray-100">Trimestre</th>
-              <th colSpan={3} className="pb-1 text-center border-b border-gray-100 border-l border-gray-100">Acumulado {anioTrabajo}</th>
+            <tr>
+              <th rowSpan={2} className="pb-2 pr-3 align-bottom border-b-2 border-gray-300 text-left text-gray-500 font-semibold">Período</th>
+              <th colSpan={3} className="py-1.5 text-center bg-blue-50 text-blue-800 font-bold border-b-2 border-blue-200 rounded-t-lg">Trimestre</th>
+              <th colSpan={3} className="py-1.5 text-center bg-indigo-50 text-indigo-800 font-bold border-b-2 border-indigo-200 border-l-2 border-l-gray-300 rounded-t-lg">Acumulado {anioTrabajo}</th>
             </tr>
-            <tr className="text-gray-400 text-left">
-              <th className="pb-1.5 pr-3 border-b border-gray-100">Real</th>
-              <th className="pb-1.5 pr-3 border-b border-gray-100">Presupuesto</th>
-              <th className="pb-1.5 pr-3 border-b border-gray-100">Var %</th>
-              <th className="pb-1.5 pr-3 border-b border-gray-100 border-l border-gray-100">Real</th>
-              <th className="pb-1.5 pr-3 border-b border-gray-100">Presupuesto</th>
-              <th className="pb-1.5 pr-3 border-b border-gray-100">Var %</th>
+            <tr>
+              <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Real</th>
+              <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Presupuesto</th>
+              <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Var %</th>
+              <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 border-l-2 border-l-gray-300 text-left text-gray-600 font-semibold">Real</th>
+              <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Presupuesto</th>
+              <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Var %</th>
             </tr>
           </thead>
           <tbody>
-            {resumenTrimestral.map(r=>(
-              <tr key={r.trimestre} className="border-b border-gray-50">
-                <td className="py-2 pr-3 font-semibold text-gray-700">{r.trimestre}</td>
-                <td className="py-2 pr-3 text-gray-700">{fmtCLP(r.realTrim)}</td>
-                <td className="py-2 pr-3 text-gray-500">{fmtCLP(r.presTrim)}</td>
-                <td className={`py-2 pr-3 font-semibold ${r.varTrim==null?"text-gray-300":r.varTrim>=0?"text-emerald-600":"text-red-600"}`}>
+            {resumenTrimestral.map((r,i)=>(
+              <tr key={r.trimestre} className={`border-b border-gray-200 ${i%2===1?"bg-gray-50/70":""}`}>
+                <td className="py-2.5 pr-3 font-bold text-gray-900">{r.trimestre}</td>
+                <td className="py-2.5 pr-3 text-gray-900 font-medium">{fmtCLP(r.realTrim)}</td>
+                <td className="py-2.5 pr-3 text-gray-600">{fmtCLP(r.presTrim)}</td>
+                <td className={`py-2.5 pr-3 font-bold ${r.varTrim==null?"text-gray-300":r.varTrim>=0?"text-emerald-700":"text-red-700"}`}>
                   {r.varTrim==null?"—":`${r.varTrim>=0?"+":""}${r.varTrim.toFixed(1)}%`}
                 </td>
-                <td className="py-2 pr-3 text-gray-700 border-l border-gray-100">{fmtCLP(r.realAcum)}</td>
-                <td className="py-2 pr-3 text-gray-500">{fmtCLP(r.presAcum)}</td>
-                <td className={`py-2 pr-3 font-semibold ${r.varAcum==null?"text-gray-300":r.varAcum>=0?"text-emerald-600":"text-red-600"}`}>
+                <td className="py-2.5 pr-3 text-gray-900 font-medium border-l-2 border-gray-300">{fmtCLP(r.realAcum)}</td>
+                <td className="py-2.5 pr-3 text-gray-600">{fmtCLP(r.presAcum)}</td>
+                <td className={`py-2.5 pr-3 font-bold ${r.varAcum==null?"text-gray-300":r.varAcum>=0?"text-emerald-700":"text-red-700"}`}>
                   {r.varAcum==null?"—":`${r.varAcum>=0?"+":""}${r.varAcum.toFixed(1)}%`}
                 </td>
               </tr>
