@@ -3118,6 +3118,54 @@ const otsCerradasOps=useMemo(()=>{
     .slice(0,10);
 },[data.wos]);
 
+// Widget de Disponibilidad y Utilización del Dashboard Operaciones — mismo
+// allowlist que el módulo completo (canAccessDisponibilidad), así que solo
+// jimunoz/csilva ven estos datos acá aunque el dashboard operativo lo vean
+// más usuarios con rol "operaciones". Se suscribe a mantek_faena solo si el
+// usuario pasa el allowlist, para no crear un listener extra al resto.
+const [faenasOps,setFaenasOps]=useState([]);
+useEffect(()=>{
+  if(!canAccessDisponibilidad(user)) return;
+  const unsub=onSnapshot(doc(db,COLL_FAENA,"faenas"),snap=>{
+    setFaenasOps(snap.exists()?(snap.data().data||[]):[]);
+  });
+  return()=>unsub();
+},[user?.username]);
+
+const dispoOpsInfo=useMemo(()=>{
+  if(!canAccessDisponibilidad(user)) return null;
+  const hoy=new Date();
+  const anioActual=hoy.getFullYear();
+  const mesActualNum=hoy.getMonth()+1;
+  const trimActualIdx=Math.ceil(mesActualNum/3);
+  let trimAnteriorIdx=trimActualIdx-1, anioTrimAnterior=anioActual;
+  if(trimAnteriorIdx<1){trimAnteriorIdx=4;anioTrimAnterior=anioActual-1;}
+  const mesFaenas=faenasOps.filter(f=>f.anio===anioActual&&f.mes===mesActualNum);
+  const mesesTrimAnt=TRIMESTRES_DEF[trimAnteriorIdx-1].meses.map(Number);
+  const trimFaenas=faenasOps.filter(f=>f.anio===anioTrimAnterior&&mesesTrimAnt.includes(f.mes));
+  const resumen=fs=>{
+    const n=fs.length;
+    return{n,disp:n>0?fs.reduce((s,f)=>s+f.disponibilidadTecnica,0)/n:null,util:n>0?fs.reduce((s,f)=>s+f.utilizacion,0)/n:null};
+  };
+  const buques=["ESPERANZA","DALKA"];
+  const terminales=["PMC","NAT","UCO"];
+  const filas=buques.map(buque=>({
+    buque,
+    total:{mes:resumen(mesFaenas.filter(f=>f.buque===buque)),trim:resumen(trimFaenas.filter(f=>f.buque===buque))},
+    porTerminal:terminales.map(terminal=>({
+      terminal,
+      mes:resumen(mesFaenas.filter(f=>f.buque===buque&&f.terminal===terminal)),
+      trim:resumen(trimFaenas.filter(f=>f.buque===buque&&f.terminal===terminal)),
+    })),
+  }));
+  return{
+    mesLabel:hoy.toLocaleDateString("es-CL",{month:"long",year:"numeric"}),
+    trimLabel:`${TRIMESTRES_DEF[trimAnteriorIdx-1].label} ${anioTrimAnterior}`,
+    filas,
+  };
+},[faenasOps,user]);
+const fmtPctOps=v=>v==null?"—":`${Math.round(v*100)}%`;
+
 if(role==="operaciones"){
   return(
   <div className="flex-1 overflow-y-auto bg-gray-50/50">
@@ -3258,6 +3306,65 @@ if(role==="operaciones"){
             )}
           </div>
         </div>
+
+        {/* Widget Disponibilidad y Utilización — solo visible para el allowlist de Gastos/Disponibilidad */}
+        {dispoOpsInfo&&(
+          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden lg:col-span-2">
+            <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between flex-wrap gap-2">
+              <p className="font-bold text-gray-800 text-sm flex items-center gap-2"><span>⚓</span> Disponibilidad y Utilización — Tractos</p>
+              <button onClick={()=>onNav("disponibilidad")} className="text-xs text-blue-600 hover:underline">Ver informe completo →</button>
+            </div>
+            <div className="px-4 pt-2 pb-1 flex items-center gap-4 flex-wrap text-[11px] text-gray-400">
+              <span>Mes actual: <span className="font-semibold text-gray-600 capitalize">{dispoOpsInfo.mesLabel}</span></span>
+              <span>Trimestre anterior: <span className="font-semibold text-gray-600">{dispoOpsInfo.trimLabel}</span></span>
+            </div>
+            <div className="p-4 pt-2 overflow-x-auto">
+              <table className="w-full text-xs border-separate" style={{borderSpacing:0}}>
+                <thead>
+                  <tr>
+                    <th rowSpan={2} className="pb-2 pr-3 align-bottom border-b-2 border-gray-300 text-left text-gray-500 font-semibold">Buque · Terminal</th>
+                    <th colSpan={3} className="py-1.5 text-center bg-blue-50 text-blue-800 font-bold border-b-2 border-blue-200 rounded-t-lg">Mes actual</th>
+                    <th colSpan={3} className="py-1.5 text-center bg-indigo-50 text-indigo-800 font-bold border-b-2 border-indigo-200 border-l-2 border-l-gray-300 rounded-t-lg">Trimestre anterior</th>
+                  </tr>
+                  <tr>
+                    <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Disp. Téc.</th>
+                    <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Utilización</th>
+                    <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">N° faenas</th>
+                    <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 border-l-2 border-l-gray-300 text-left text-gray-600 font-semibold">Disp. Téc.</th>
+                    <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Utilización</th>
+                    <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">N° faenas</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dispoOpsInfo.filas.map(f=>(
+                    <React.Fragment key={f.buque}>
+                      <tr className="bg-gray-50/70 border-b border-gray-200">
+                        <td className="py-2 pr-3 font-bold text-gray-900">{f.buque} · Total</td>
+                        <td className="py-2 pr-3 font-bold text-gray-900">{fmtPctOps(f.total.mes.disp)}</td>
+                        <td className="py-2 pr-3 font-bold text-gray-900">{fmtPctOps(f.total.mes.util)}</td>
+                        <td className="py-2 pr-3 text-gray-500">{f.total.mes.n}</td>
+                        <td className="py-2 pr-3 font-bold text-gray-900 border-l-2 border-gray-300">{fmtPctOps(f.total.trim.disp)}</td>
+                        <td className="py-2 pr-3 font-bold text-gray-900">{fmtPctOps(f.total.trim.util)}</td>
+                        <td className="py-2 pr-3 text-gray-500">{f.total.trim.n}</td>
+                      </tr>
+                      {f.porTerminal.map(pt=>(
+                        <tr key={f.buque+pt.terminal} className="border-b border-gray-100">
+                          <td className="py-1.5 pr-3 pl-4 text-gray-600">{pt.terminal}</td>
+                          <td className="py-1.5 pr-3 text-gray-700">{fmtPctOps(pt.mes.disp)}</td>
+                          <td className="py-1.5 pr-3 text-gray-700">{fmtPctOps(pt.mes.util)}</td>
+                          <td className="py-1.5 pr-3 text-gray-400">{pt.mes.n}</td>
+                          <td className="py-1.5 pr-3 text-gray-700 border-l-2 border-gray-300">{fmtPctOps(pt.trim.disp)}</td>
+                          <td className="py-1.5 pr-3 text-gray-700">{fmtPctOps(pt.trim.util)}</td>
+                          <td className="py-1.5 pr-3 text-gray-400">{pt.trim.n}</td>
+                        </tr>
+                      ))}
+                    </React.Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   </div>
@@ -14328,6 +14435,92 @@ function aplicaReglaGasto(txn,regla){
   return false;
 }
 
+// Reutilizada por la pestaña "Gestión" y por el Informe Gerencial de Gastos y
+// Presupuesto, para no mantener dos copias de la misma tabla.
+function TablaResumenTrimestral({resumenTrimestral}){
+  return(
+    <table className="w-full text-xs border-separate" style={{borderSpacing:0}}>
+      <thead>
+        <tr>
+          <th rowSpan={2} className="pb-2 pr-3 align-bottom border-b-2 border-gray-300 text-left text-gray-500 font-semibold">Período</th>
+          <th colSpan={3} className="py-1.5 text-center bg-blue-50 text-blue-800 font-bold border-b-2 border-blue-200 rounded-t-lg">Trimestre</th>
+          <th colSpan={3} className="py-1.5 text-center bg-indigo-50 text-indigo-800 font-bold border-b-2 border-indigo-200 border-l-2 border-l-gray-300 rounded-t-lg">Acumulado</th>
+        </tr>
+        <tr>
+          <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Real</th>
+          <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Presupuesto</th>
+          <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Var %</th>
+          <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 border-l-2 border-l-gray-300 text-left text-gray-600 font-semibold">Real</th>
+          <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Presupuesto</th>
+          <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Var %</th>
+        </tr>
+      </thead>
+      <tbody>
+        {resumenTrimestral.map((r,i)=>(
+          <tr key={r.trimestre} className={`border-b border-gray-200 ${i%2===1?"bg-gray-50/70":""}`}>
+            <td className="py-2.5 pr-3 font-bold text-gray-900">{r.trimestre}</td>
+            <td className="py-2.5 pr-3 text-gray-900 font-medium">{fmtCLP(r.realTrim)}</td>
+            <td className="py-2.5 pr-3 text-gray-600">{fmtCLP(r.presTrim)}</td>
+            <td className={`py-2.5 pr-3 font-bold ${r.varTrim==null?"text-gray-300":r.varTrim>=0?"text-emerald-700":"text-red-700"}`}>
+              {r.varTrim==null?"—":`${r.varTrim>=0?"+":""}${r.varTrim.toFixed(1)}%`}
+            </td>
+            <td className="py-2.5 pr-3 text-gray-900 font-medium border-l-2 border-gray-300">{fmtCLP(r.realAcum)}</td>
+            <td className="py-2.5 pr-3 text-gray-600">{fmtCLP(r.presAcum)}</td>
+            <td className={`py-2.5 pr-3 font-bold ${r.varAcum==null?"text-gray-300":r.varAcum>=0?"text-emerald-700":"text-red-700"}`}>
+              {r.varAcum==null?"—":`${r.varAcum>=0?"+":""}${r.varAcum.toFixed(1)}%`}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+// serie: mismo shape que serieAnualCompleta ({mes,real,filtrado,presupuesto}
+// por mes del año de trabajo) — el acumulado se calcula acá mismo, siempre
+// sobre datos reales (nunca proyección, a diferencia del gráfico "Acumulado
+// anual" que sí puede incluir pronóstico).
+function TablaGastoMensualAcumulado({serie}){
+  if(!serie||serie.length===0) return <p className="text-gray-400 text-xs italic">Sin datos para este año.</p>;
+  let accReal=0,accFiltrado=0,accPres=0;
+  const filas=serie.map(m=>{
+    accReal+=m.real;accFiltrado+=m.filtrado;accPres+=m.presupuesto;
+    return{...m,accReal,accFiltrado,accPres};
+  });
+  return(
+    <table className="w-full text-xs border-separate" style={{borderSpacing:0}}>
+      <thead>
+        <tr>
+          <th rowSpan={2} className="pb-2 pr-3 align-bottom border-b-2 border-gray-300 text-left text-gray-500 font-semibold">Mes</th>
+          <th colSpan={3} className="py-1.5 text-center bg-blue-50 text-blue-800 font-bold border-b-2 border-blue-200 rounded-t-lg">Mensual</th>
+          <th colSpan={3} className="py-1.5 text-center bg-indigo-50 text-indigo-800 font-bold border-b-2 border-indigo-200 border-l-2 border-l-gray-300 rounded-t-lg">Acumulado anual</th>
+        </tr>
+        <tr>
+          <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Real</th>
+          <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Filtrado</th>
+          <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Presupuesto</th>
+          <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 border-l-2 border-l-gray-300 text-left text-gray-600 font-semibold">Real</th>
+          <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Filtrado</th>
+          <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Presupuesto</th>
+        </tr>
+      </thead>
+      <tbody>
+        {filas.map((m,i)=>(
+          <tr key={m.mes} className={`border-b border-gray-200 ${i%2===1?"bg-gray-50/70":""}`}>
+            <td className="py-2 pr-3 font-bold text-gray-900">{m.mes}</td>
+            <td className="py-2 pr-3 text-gray-700">{fmtCLP(m.real)}</td>
+            <td className="py-2 pr-3 text-gray-900 font-medium">{fmtCLP(m.filtrado)}</td>
+            <td className="py-2 pr-3 text-gray-600">{fmtCLP(m.presupuesto)}</td>
+            <td className="py-2 pr-3 text-gray-700 border-l-2 border-gray-300">{fmtCLP(m.accReal)}</td>
+            <td className="py-2 pr-3 text-gray-900 font-bold">{fmtCLP(m.accFiltrado)}</td>
+            <td className="py-2 pr-3 text-gray-600">{fmtCLP(m.accPres)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 function GastosPresupuesto({user,data,activeModule,activeBarco}){
   const equip=data?.equip||[];
   const [configCentros,setConfigCentros]=useState([]);
@@ -14362,6 +14555,8 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
   const [importandoPresupuesto,setImportandoPresupuesto]=useState(false);
   const [mostrarFiltros,setMostrarFiltros]=useState(false);
   const [verTodasTxns,setVerTodasTxns]=useState(false);
+  const [vistaGastos,setVistaGastos]=useState("gestion"); // gestion|informe
+  const [usuarioExpandido,setUsuarioExpandido]=useState(null);
   const fileInputRef=useRef(null);
   const presupuestoFileRef=useRef(null);
   const vesselIdActual=activeModule==="maritimo"?(activeBarco||null):null;
@@ -14709,6 +14904,54 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
       };
     });
   },[serieAnualCompleta,anioTrabajo]);
+
+  // ═══ Informe Gerencial de Gastos y Presupuesto ═══════════════════════════
+  // "Real sin filtro" = solo acotado por el rango de meses elegido (sin reglas
+  // ni filtros de centro/categoría/usuario) — el bruto del período. "Filtrado"
+  // reusa exactamente lo que ya usa el resto del dashboard (txnsFiltradas +
+  // reglas + incluirPuntuales), para que ambos números sean comparables 1:1
+  // con las tarjetas de arriba en la pestaña Gestión.
+  const informeGastoPeriodo=useMemo(()=>{
+    const rowsSinFiltro=txnsAnotadas.filter(t=>(!filtroMesDesde||t.mes>=filtroMesDesde)&&(!filtroMesHasta||t.mes<=filtroMesHasta));
+    const rowsFiltradas=txnsFiltradas.filter(t=>!t._reglaExcluida&&(incluirPuntuales||!t._reglaPuntual));
+    const sum=arr=>arr.reduce((s,t)=>s+(t.valor||0),0);
+    return{
+      rowsSinFiltro,totalSinFiltro:sum(rowsSinFiltro),countSinFiltro:rowsSinFiltro.length,
+      rowsFiltradas,totalFiltrado:sum(rowsFiltradas),countFiltrado:rowsFiltradas.length,
+    };
+  },[txnsAnotadas,txnsFiltradas,filtroMesDesde,filtroMesHasta,incluirPuntuales]);
+
+  // Si hay centro(s) elegido(s) en Filtros, muestra sus especificaciones; si no,
+  // muestra los de mayor gasto del período (con tope de 10) para que la sección
+  // nunca quede vacía por defecto.
+  const informeCentrosSeleccionados=useMemo(()=>{
+    const codigos=filtrosCentro.length>0?filtrosCentro:centrosDisponibles;
+    const filas=codigos.map(cod=>{
+      const cfg=configCentros.find(c=>c.centroCoste===cod);
+      const rowsCentro=informeGastoPeriodo.rowsSinFiltro.filter(t=>t.centroCoste===cod);
+      return{
+        centroCoste:cod,modulo:cfg?.modulo||null,vesselId:cfg?.vesselId||null,mapeado:!!cfg,
+        count:rowsCentro.length,total:rowsCentro.reduce((s,t)=>s+(t.valor||0),0),
+      };
+    }).sort((a,b)=>b.total-a.total);
+    return filtrosCentro.length>0?filas:filas.slice(0,10);
+  },[filtrosCentro,centrosDisponibles,configCentros,informeGastoPeriodo]);
+
+  // Detalle de usuarios que asignaron gasto en el período — SIEMPRE sobre el
+  // rango de meses elegido nomás (no aplica centro/categoría/usuario en vivo),
+  // para que se vea el universo completo de usuarios del período aunque haya
+  // otros filtros activos.
+  const informeUsuarios=useMemo(()=>{
+    const porUsuario={};
+    informeGastoPeriodo.rowsSinFiltro.forEach(t=>{
+      const u=t.usuario||"(sin usuario)";
+      if(!porUsuario[u]) porUsuario[u]={usuario:u,count:0,total:0,txns:[]};
+      porUsuario[u].count++;
+      porUsuario[u].total+=(t.valor||0);
+      porUsuario[u].txns.push(t);
+    });
+    return Object.values(porUsuario).sort((a,b)=>b.total-a.total);
+  },[informeGastoPeriodo]);
 
   const txnsDetalle=useMemo(()=>{
     if(!mesDetalle) return[];
@@ -15220,6 +15463,14 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
           <p className="text-gray-400 text-sm mt-0.5">{activeModule==="maritimo"?`Marítimo${activeBarco?" · "+activeBarco:""}`:"Taller"}</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
+            {[{key:"gestion",label:"Gestión"},{key:"informe",label:"Informe Gerencial"}].map(v=>(
+              <button key={v.key} onClick={()=>setVistaGastos(v.key)}
+                className={`px-3 py-1.5 rounded-md text-xs font-semibold transition ${vistaGastos===v.key?"bg-white shadow-sm text-blue-700":"text-gray-500 hover:text-gray-700"}`}>
+                {v.label}
+              </button>
+            ))}
+          </div>
           {aniosDisponibles.length>0&&(
             <select value={anioSeleccionado} onChange={e=>cambiarAnio(e.target.value)} className="px-2.5 py-2 rounded-lg border border-gray-200 text-xs bg-white">
               {aniosDisponibles.map(a=><option key={a} value={a}>{a}</option>)}
@@ -15274,6 +15525,7 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
         </div>
       )}
 
+      {vistaGastos==="gestion"&&(<>
       {/* ── KPIs ── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4">
@@ -15864,6 +16116,131 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
         )}
         <p className="text-gray-300 text-[10px] mt-2">"Sin módulo" cuenta filas cuyo centro de costo todavía no está mapeado arriba en "Configuración de Centros de Costo" — esas filas no aparecen en las tarjetas ni en las gráficas hasta que se mapeen y se reclasifiquen.</p>
       </div>
+      </>)}
+
+      {vistaGastos==="informe"&&(<>
+      <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4">
+        <p className="text-sm text-blue-900">
+          Período del informe: <span className="font-bold">{filtroMesDesde||"—"} a {filtroMesHasta||"—"}</span>
+          {(filtrosCentro.length>0||filtrosCategoria.length>0||filtrosUsuario.length>0)&&(
+            <> · Filtros activos: {[
+              filtrosCentro.length>0&&`${filtrosCentro.length} centro(s)`,
+              filtrosCategoria.length>0&&`${filtrosCategoria.length} categoría(s)`,
+              filtrosUsuario.length>0&&`${filtrosUsuario.length} usuario(s)`,
+            ].filter(Boolean).join(", ")}</>
+          )}. Ajustalos desde el botón "Filtros" arriba.
+        </p>
+      </div>
+
+      {/* ── Gasto real sin filtro vs. gasto filtrado ── */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4">
+          <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide mb-1">Gasto real (sin filtro) — período</p>
+          <p className="text-2xl font-bold text-gray-900">{fmtCLP(informeGastoPeriodo.totalSinFiltro)}</p>
+          <p className="text-xs text-gray-400 mt-1">{informeGastoPeriodo.countSinFiltro} transacción(es) — todo lo importado del módulo en el período, sin reglas ni filtros en vivo.</p>
+        </div>
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4">
+          <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide mb-1">Gasto filtrado — período</p>
+          <p className="text-2xl font-bold text-blue-700">{fmtCLP(informeGastoPeriodo.totalFiltrado)}</p>
+          <p className="text-xs text-gray-400 mt-1">{informeGastoPeriodo.countFiltrado} transacción(es) — con reglas de exclusión y filtros de centro/categoría/usuario aplicados.</p>
+        </div>
+      </div>
+
+      {/* ── Centro(s) de costo ── */}
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 overflow-x-auto">
+        <h2 className="font-bold text-gray-800 text-sm mb-1">
+          {filtrosCentro.length>0?"Centro(s) de costo seleccionado(s)":"Centros de costo con mayor gasto en el período"}
+        </h2>
+        <p className="text-gray-400 text-[10px] mb-3">
+          {filtrosCentro.length>0?"Especificaciones del/los centro(s) elegido(s) en \"Filtros\".":'Ningún centro seleccionado en "Filtros" — se muestran los 10 de mayor actividad. Elegí uno específico ahí para acotar este bloque.'}
+        </p>
+        {informeCentrosSeleccionados.length===0?(
+          <p className="text-gray-400 text-xs italic">Sin actividad en este período.</p>
+        ):(
+          <table className="w-full text-xs">
+            <thead><tr className="text-gray-400 border-b border-gray-100">
+              <th className="text-left py-1.5 font-medium">Centro de costo</th>
+              <th className="text-left py-1.5 font-medium">Módulo</th>
+              <th className="text-left py-1.5 font-medium">Buque</th>
+              <th className="text-right py-1.5 font-medium">Transacciones</th>
+              <th className="text-right py-1.5 font-medium">Total</th>
+            </tr></thead>
+            <tbody>
+              {informeCentrosSeleccionados.map(c=>(
+                <tr key={c.centroCoste} className="border-b border-gray-50 last:border-0">
+                  <td className="py-1.5 font-mono font-bold text-gray-800">{c.centroCoste}</td>
+                  <td className="py-1.5 capitalize text-gray-600">{c.modulo||(c.mapeado?"—":<span className="text-amber-600 font-semibold">sin mapear</span>)}</td>
+                  <td className="py-1.5 text-gray-600 capitalize">{c.vesselId||"—"}</td>
+                  <td className="py-1.5 text-right">{c.count}</td>
+                  <td className="py-1.5 text-right font-semibold">{fmtCLP(c.total)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* ── Usuarios que asignaron gastos ── */}
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+        <h2 className="font-bold text-gray-800 text-sm mb-1">Usuarios que asignaron gastos en el período</h2>
+        <p className="text-gray-400 text-[10px] mb-3">Click en un usuario para ver el detalle de sus transacciones.</p>
+        {informeUsuarios.length===0?(
+          <p className="text-gray-400 text-xs italic">Sin transacciones en este período.</p>
+        ):(
+          <div className="space-y-1.5">
+            {informeUsuarios.map(u=>(
+              <div key={u.usuario} className="border border-gray-100 rounded-xl overflow-hidden">
+                <button onClick={()=>setUsuarioExpandido(x=>x===u.usuario?null:u.usuario)}
+                  className="w-full flex items-center gap-3 text-sm px-3 py-2.5 bg-gray-50 hover:bg-gray-100 transition text-left">
+                  <span className="font-semibold text-gray-800 flex-1">{u.usuario}</span>
+                  <span className="text-gray-400 text-xs">{u.count} transacción(es)</span>
+                  <span className="font-bold text-gray-900">{fmtCLP(u.total)}</span>
+                  <span className="text-gray-300 text-[10px]">{usuarioExpandido===u.usuario?"▲":"▼"}</span>
+                </button>
+                {usuarioExpandido===u.usuario&&(
+                  <div className="overflow-x-auto max-h-64 overflow-y-auto">
+                    <table className="w-full text-xs">
+                      <thead><tr className="text-gray-400 border-b border-gray-100 sticky top-0 bg-white">
+                        <th className="text-left py-1.5 px-3 font-medium">Fecha</th>
+                        <th className="text-left py-1.5 font-medium">Documento</th>
+                        <th className="text-left py-1.5 font-medium">Centro</th>
+                        <th className="text-left py-1.5 font-medium">Categoría</th>
+                        <th className="text-right py-1.5 px-3 font-medium">Monto</th>
+                      </tr></thead>
+                      <tbody>
+                        {[...u.txns].sort((a,b)=>(b.fechaContabilizacion||"").localeCompare(a.fechaContabilizacion||"")).map((t,i)=>(
+                          <tr key={i} className="border-b border-gray-50 last:border-0">
+                            <td className="py-1.5 px-3 font-mono text-gray-500 whitespace-nowrap">{t.fechaContabilizacion?t.fechaContabilizacion.slice(0,10):"—"}</td>
+                            <td className="py-1.5 font-mono text-blue-600">{t.documentoCabecera||"—"}</td>
+                            <td className="py-1.5 font-mono text-gray-500">{t.centroCoste}</td>
+                            <td className="py-1.5">{t.descripClaseCoste}</td>
+                            <td className="py-1.5 px-3 text-right font-semibold">{fmtCLP(t.valor)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ── Resumen Trimestral ── */}
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 overflow-x-auto">
+        <h2 className="font-bold text-gray-800 text-sm mb-1">Resumen Trimestral — Real filtrado vs. Presupuesto</h2>
+        <p className="text-gray-400 text-[10px] mb-3">Por trimestre y acumulado entre trimestres, año {anioTrabajo} completo. Var % = (Presupuesto − Real) ÷ Presupuesto — negativo es gasto por encima de lo presupuestado.</p>
+        <TablaResumenTrimestral resumenTrimestral={resumenTrimestral}/>
+      </div>
+
+      {/* ── Gasto mensual - acumulado anual ── */}
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 overflow-x-auto">
+        <h2 className="font-bold text-gray-800 text-sm mb-1">Gasto mensual — acumulado anual {anioTrabajo}</h2>
+        <p className="text-gray-400 text-[10px] mb-3">Real, filtrado y presupuesto por mes, con acumulado corrido del año {anioTrabajo} completo.</p>
+        <TablaGastoMensualAcumulado serie={serieAnualCompleta}/>
+      </div>
+      </>)}
     </div>
   );
 }
