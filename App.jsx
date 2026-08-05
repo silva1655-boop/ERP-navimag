@@ -31481,6 +31481,9 @@ const [user,setUser]=useState(null);
               avgPreference:fs2.avgPreference||'learned',
               ...au,
               deleted:false,
+              // Preservar permisos y rol modificados localmente en Firestore
+              permisos:fs2.permisos||au.permisos||{},
+              role:fs2.role||au.role||'operador',
             };
           });
         return{...prev,users:merged};
