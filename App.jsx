@@ -9408,12 +9408,13 @@ const confirmAssignOT=()=>{
   alert(`✅ OT ${otCode} generada`);
 };
 
-// "Vencido" y "Vencido crítico" se consolidaron en un solo estado "Crítico"
-// (decisión explícita: simplificar a solo Crítico/Próximo para lo vencido).
+// "Vencido" y "Vencido crítico" se consolidaron en un solo estado, mostrado
+// como "Vencido" (antes decía "Crítico" — la clave interna sigue siendo
+// "critico", solo cambia el label visible).
 const STATUS_ASSIGN={
   vigente:          {label:"Vigente",          cls:"text-emerald-700 bg-emerald-50 border-emerald-200"},
   proximo:          {label:"Próximo",           cls:"text-amber-700 bg-amber-50 border-amber-200"},
-  critico:          {label:"Crítico",           cls:"text-white bg-red-600 border-red-700"},
+  critico:          {label:"Vencido",           cls:"text-white bg-red-600 border-red-700"},
   bloqueado_ot_abierta:{label:"OT abierta",     cls:"text-blue-700 bg-blue-50 border-blue-200"},
   inactivo:         {label:"Inactivo",          cls:"text-gray-400 bg-gray-50 border-gray-200"},
   sin_datos_horometro:{label:"Sin datos",       cls:"text-gray-400 bg-gray-50 border-gray-200"},
@@ -9474,7 +9475,7 @@ if(isMaritimo){
           <option value="">Todos los estados</option>
           <option value="vigente">Vigente</option>
           <option value="proximo">Próximo</option>
-          <option value="critico">Crítico</option>
+          <option value="critico">Vencido</option>
           <option value="bloqueado_ot_abierta">OT abierta</option>
           <option value="inactivo">Inactivo</option>
         </select>
@@ -9550,7 +9551,7 @@ if(isMaritimo){
                       <span className="font-mono text-xs font-bold" style={{color:NV.blue}}>{assign.code}</span>
                       <span className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold ${stCfg.cls}`}>{stCfg.label}</span>
                       {(assign.criticidad||assign.criticidadPlan)&&(
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold border ${(assign.criticidad||assign.criticidadPlan||"").toLowerCase()==="alta"?"bg-red-50 text-red-700 border-red-200":(assign.criticidad||assign.criticidadPlan||"").toLowerCase()==="media"?"bg-amber-50 text-amber-700 border-amber-200":"bg-gray-50 text-gray-600 border-gray-200"}`}>
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold border capitalize ${(assign.criticidad||assign.criticidadPlan||"").toLowerCase()==="alta"?"bg-red-50 text-red-700 border-red-200":(assign.criticidad||assign.criticidadPlan||"").toLowerCase()==="media"?"bg-amber-50 text-amber-700 border-amber-200":"bg-gray-50 text-gray-600 border-gray-200"}`}>
                           {assign.criticidad||assign.criticidadPlan}
                         </span>
                       )}
@@ -9957,7 +9958,7 @@ if(isMaritimo){
           </div>
           <div className="bg-gray-50 rounded-xl p-3 border border-gray-100">
             <p className="text-gray-400 text-xs mb-0.5">Criticidad</p>
-            <span className={`text-sm font-semibold ${(selectedAssignDetail.criticidad||"").toLowerCase()==="alta"?"text-red-600":(selectedAssignDetail.criticidad||"").toLowerCase()==="media"?"text-amber-600":"text-gray-600"}`}>
+            <span className={`text-sm font-semibold capitalize ${(selectedAssignDetail.criticidad||"").toLowerCase()==="alta"?"text-red-600":(selectedAssignDetail.criticidad||"").toLowerCase()==="media"?"text-amber-600":"text-gray-600"}`}>
               {selectedAssignDetail.criticidad||"—"}
             </span>
           </div>
