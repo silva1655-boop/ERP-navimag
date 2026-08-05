@@ -5202,8 +5202,8 @@ if(wizardOT){
     const eqW=equip.find(e=>e.id===wizardOT.equipId);
     const techW=users.find(u=>u.id===wizardOT.assignedTo);
     return(
-      <div className="min-h-screen bg-gray-100">
-        <div className="sticky top-0 z-30 flex items-center justify-between px-4 py-3 shadow-sm" style={{background:NV.navy}}>
+      <div className="h-screen flex flex-col bg-gray-100 overflow-hidden">
+        <div className="flex-shrink-0 flex items-center justify-between px-4 py-3 shadow-sm z-30" style={{background:NV.navy}}>
           <div>
             <button onClick={closeWizard} className="flex items-center gap-1.5 text-blue-200 hover:text-white text-sm transition mb-0.5">
               <ChevronRight size={14} className="rotate-180"/>Volver
@@ -5224,34 +5224,262 @@ if(wizardOT){
           </div>
         </div>
         {saveMsg&&(
-          <div className="bg-emerald-500 text-white text-sm font-semibold text-center py-2 px-4 animate-pulse">
+          <div className="flex-shrink-0 bg-emerald-500 text-white text-sm font-semibold text-center py-1.5 px-4 animate-pulse">
             {saveMsg}
           </div>
         )}
-        <div className="max-w-2xl mx-auto px-4 py-5 space-y-5">
+
+        {/* Grid principal 2 columnas — en md+ cada columna scrollea internamente
+            y no hay scroll de página; en mobile (<768px) vuelve a 1 columna con
+            scroll normal en este contenedor. */}
+        <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-3 p-3 min-h-0 overflow-y-auto md:overflow-hidden">
+
+          {/* COLUMNA IZQUIERDA */}
+          <div className="flex flex-col gap-3 md:overflow-y-auto md:min-h-0 md:pr-1">
+
+            {/* FECHAS Y HORAS */}
+            <div className={card+" p-3 flex-shrink-0"}>
+              <p className="text-gray-700 font-bold text-xs mb-2">📅 Fecha y hora</p>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-gray-400 text-[10px] font-semibold uppercase mb-1 block">Fecha inicio</label>
+                  <input type="date" value={wz.startDateTime?.slice(0,10)||new Date().toISOString().slice(0,10)} onChange={e=>setWz(w=>({...w,startDateTime:e.target.value+"T"+(wz.startDateTime?.slice(11,16)||new Date().toTimeString().slice(0,5))}))} className={iCls}/>
+                </div>
+                <div>
+                  <label className="text-gray-400 text-[10px] font-semibold uppercase mb-1 block">Hora inicio</label>
+                  <div className="flex gap-1">
+                    <input type="time" value={wz.startDateTime?.slice(11,16)||""} onChange={e=>setWz(w=>({...w,startDateTime:(wz.startDateTime?.slice(0,10)||new Date().toISOString().slice(0,10))+"T"+e.target.value}))} className={iCls+" flex-1"}/>
+                    <button onClick={()=>{const n=new Date();setWz(w=>({...w,startDateTime:n.toISOString().slice(0,16)}));}} className="px-2 py-1.5 rounded-lg bg-blue-50 border border-blue-200 text-blue-700 text-xs font-bold hover:bg-blue-100 flex-shrink-0">📍</button>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-gray-400 text-[10px] font-semibold uppercase mb-1 block">Fecha término</label>
+                  <input type="date" value={wz.horaTerminoReal?.slice(0,10)||""} onChange={e=>setWz(w=>({...w,horaTerminoReal:e.target.value+"T"+(wz.horaTerminoReal?.slice(11,16)||"00:00")}))} className={iCls}/>
+                </div>
+                <div>
+                  <label className="text-gray-400 text-[10px] font-semibold uppercase mb-1 block">Hora término</label>
+                  <div className="flex gap-1">
+                    <input type="time" value={wz.horaTerminoReal?.slice(11,16)||""} onChange={e=>setWz(w=>({...w,horaTerminoReal:(wz.horaTerminoReal?.slice(0,10)||new Date().toISOString().slice(0,10))+"T"+e.target.value}))} className={iCls+" flex-1"}/>
+                    <button onClick={()=>{const n=new Date();setWz(w=>({...w,horaTerminoReal:n.toISOString().slice(0,16)}));}} className="px-2 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-bold hover:bg-emerald-100 flex-shrink-0">📍</button>
+                  </div>
+                </div>
+              </div>
+              {wz.startDateTime&&wz.horaTerminoReal&&(()=>{
+                const diff=(new Date(wz.horaTerminoReal)-new Date(wz.startDateTime))/(1000*60*60);
+                if(diff<=0) return null;
+                return <div className="mt-2 bg-blue-50 border border-blue-200 rounded-lg px-3 py-1.5"><span className="text-blue-700 text-xs font-bold">⏱️ {diff.toFixed(2)} horas de trabajo</span></div>;
+              })()}
+            </div>
+
+            {/* FOTO ESTADO ACTUAL */}
+            <div className={card+" p-3 flex-shrink-0"}>
+              <p className="text-gray-700 font-bold text-xs mb-2">📷 Foto estado actual / falla</p>
+              <div className="flex flex-wrap gap-2">
+                {(wz.fotosAntes||[]).map((src,i)=>(
+                  <div key={i} className="relative w-16 h-16 rounded-xl overflow-hidden border border-gray-200 group flex-shrink-0">
+                    <img src={typeof src==="string"?src:src.url} className="w-full h-full object-cover"/>
+                    <button onClick={()=>setWz(w=>({...w,fotosAntes:(w.fotosAntes||[]).filter((_,j)=>j!==i)}))} className="absolute top-0.5 right-0.5 bg-red-500 rounded-full w-5 h-5 flex items-center justify-center opacity-0 group-hover:opacity-100 transition"><X size={9} className="text-white"/></button>
+                  </div>
+                ))}
+                {(wz.fotosAntes||[]).length<4&&(
+                  <label className="w-16 h-16 border-2 border-dashed border-red-300 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:border-red-400 hover:bg-red-50 text-red-400 transition flex-shrink-0">
+                    <Camera size={16}/><span className="text-[10px] mt-0.5">Agregar</span>
+                    <input type="file" accept="image/*" capture="environment" className="hidden" onChange={e=>{Array.from(e.target.files||[]).forEach(f=>{const r=new FileReader();r.onload=ev=>{const img=new Image();img.onload=()=>{const mW=800;let w=img.width,h=img.height;if(w>mW){h=Math.round(h*mW/w);w=mW;}const c=document.createElement("canvas");c.width=w;c.height=h;c.getContext("2d").drawImage(img,0,0,w,h);setWz(wz=>({...wz,fotosAntes:[...(wz.fotosAntes||[]),c.toDataURL("image/jpeg",0.7)]}));};img.src=ev.target.result;};r.readAsDataURL(f);});e.target.value="";}}/>
+                  </label>
+                )}
+              </div>
+            </div>
+
+            {/* DESCRIPCIÓN */}
+            <div className={card+" p-3 flex-1 flex flex-col min-h-0"}>
+              <p className="text-gray-700 font-bold text-xs mb-2">📝 Descripción del trabajo</p>
+              <textarea value={wz.trabajoRealizado||""} onChange={e=>setWz(w=>({...w,trabajoRealizado:e.target.value,diagnostico:e.target.value,observations:e.target.value}))} placeholder="Describe la falla encontrada y el trabajo realizado..." className={`${iCls} resize-none flex-1 min-h-20`}/>
+            </div>
+          </div>
+
+          {/* COLUMNA DERECHA */}
+          <div className="flex flex-col gap-3 md:overflow-y-auto md:min-h-0 md:pr-1">
+
+            {/* REPUESTOS */}
+            <div className={card+" p-3 flex-shrink-0"}>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-gray-700 font-bold text-xs">🔩 Repuestos utilizados</p>
+                <button onClick={()=>setShowRepSearch(true)} className="text-xs px-2.5 py-1 rounded-lg bg-blue-50 border border-blue-200 text-blue-700 font-semibold hover:bg-blue-100 transition">🔍 Buscar SAP</button>
+              </div>
+              {(wz.repuestos||[]).length===0?(<p className="text-gray-400 text-xs italic text-center py-3">Sin repuestos — usa "Buscar SAP" para agregar</p>):(
+                <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                  {(wz.repuestos||[]).map((rep,i)=>(
+                    <div key={i} className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-2.5 py-1.5">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-semibold text-gray-800 truncate">{rep.descripcion||rep.name||"Sin descripción"}</p>
+                        <p className="text-[10px] text-gray-400 font-mono">{rep.codigo||rep.sku||"—"}</p>
+                      </div>
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <button onClick={()=>setWz(w=>({...w,repuestos:w.repuestos.map((r,j)=>j===i?{...r,cantidad:Math.max(1,(parseFloat(r.cantidad)||1)-1)}:r)}))} className="w-6 h-6 rounded-lg bg-gray-200 hover:bg-gray-300 font-bold text-gray-700 text-xs flex items-center justify-center">−</button>
+                        <span className="w-6 text-center font-bold text-xs">{rep.cantidad||1}</span>
+                        <button onClick={()=>setWz(w=>({...w,repuestos:w.repuestos.map((r,j)=>j===i?{...r,cantidad:(parseFloat(r.cantidad)||1)+1}:r)}))} className="w-6 h-6 rounded-lg bg-gray-200 hover:bg-gray-300 font-bold text-gray-700 text-xs flex items-center justify-center">+</button>
+                        <button onClick={()=>setWz(w=>({...w,repuestos:w.repuestos.filter((_,j)=>j!==i)}))} className="text-red-400 hover:text-red-600 ml-0.5 p-1"><X size={13}/></button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {showRepSearch&&(
+                <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-4">
+                  <div className="bg-white rounded-2xl w-full max-w-lg max-h-[80vh] flex flex-col shadow-2xl">
+                    <div className="p-4 border-b border-gray-100">
+                      <div className="flex items-center gap-2 mb-3">
+                        <p className="font-bold text-gray-800">Buscar repuesto</p>
+                        <button onClick={()=>{setShowRepSearch(false);setBusqRep("");}} className="ml-auto text-gray-400 hover:text-gray-600"><X size={18}/></button>
+                      </div>
+                      <input value={busqRep} onChange={e=>setBusqRep(e.target.value)} autoFocus placeholder="Código o nombre..." className={iCls}/>
+                    </div>
+                    <div className="overflow-y-auto flex-1 p-2">
+                      {(data.repuestos||[]).filter(r=>{if(!busqRep.trim())return true;const q=busqRep.toLowerCase();return(r.codigo||r.sku||"").toLowerCase().includes(q)||(r.nombre||r.name||r.descripcion||"").toLowerCase().includes(q);}).slice(0,30).map(r=>(
+                        <button key={r.id||r.codigo} onClick={()=>{setWz(w=>({...w,repuestos:[...(w.repuestos||[]),{codigo:r.codigo||r.sku||"",descripcion:r.nombre||r.name||r.descripcion||"",cantidad:1,unidad:r.unidad||"und",costoUnitario:parseFloat(r.precio||r.costo||0),bodega:r.bodega||"",observacion:"",pendiente:false}]}));setShowRepSearch(false);setBusqRep("");}} className="w-full text-left flex items-center gap-3 p-3 rounded-xl hover:bg-blue-50 transition mb-1">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-semibold text-gray-800 truncate">{r.nombre||r.name||r.descripcion||"Sin nombre"}</p>
+                            <p className="text-xs text-gray-400 font-mono">{r.codigo||r.sku||"—"} · Stock: {r.stockActual??r.stock??"—"} {r.unidad}</p>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* HORÓMETRO */}
+            <div className={card+" p-3 flex-shrink-0"}>
+              <p className="text-gray-700 font-bold text-xs mb-2">⏱️ Horómetro al cierre <span className="font-normal text-gray-400 text-[10px] ml-1">Actual: {eqW?.hours?.toLocaleString()||"—"} h</span></p>
+              <input type="number" value={wz.horometroCierre||""} onChange={e=>setWz(w=>({...w,horometroCierre:e.target.value}))} className={iCls} placeholder={String(eqW?.hours||"")}/>
+              {wz.horometroCierre&&parseFloat(wz.horometroCierre)<(eqW?.hours||0)&&(<p className="text-amber-600 text-xs mt-1">⚠️ Menor al horómetro registrado ({eqW?.hours}h)</p>)}
+            </div>
+
+            {/* FOTO FINAL */}
+            <div className={card+" p-3 flex-shrink-0"}>
+              <p className="text-gray-700 font-bold text-xs mb-2">📷 Foto resultado final</p>
+              <div className="flex flex-wrap gap-2">
+                {(wz.fotosDespues||[]).map((src,i)=>(
+                  <div key={i} className="relative w-16 h-16 rounded-xl overflow-hidden border border-gray-200 group flex-shrink-0">
+                    <img src={typeof src==="string"?src:src.url} className="w-full h-full object-cover"/>
+                    <button onClick={()=>setWz(w=>({...w,fotosDespues:(w.fotosDespues||[]).filter((_,j)=>j!==i)}))} className="absolute top-0.5 right-0.5 bg-red-500 rounded-full w-5 h-5 flex items-center justify-center opacity-0 group-hover:opacity-100 transition"><X size={9} className="text-white"/></button>
+                  </div>
+                ))}
+                {(wz.fotosDespues||[]).length<4&&(
+                  <label className="w-16 h-16 border-2 border-dashed border-emerald-300 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:border-emerald-400 hover:bg-emerald-50 text-emerald-400 transition flex-shrink-0">
+                    <Camera size={16}/><span className="text-[10px] mt-0.5">Agregar</span>
+                    <input type="file" accept="image/*" capture="environment" className="hidden" onChange={e=>{Array.from(e.target.files||[]).forEach(f=>{const r=new FileReader();r.onload=ev=>{const img=new Image();img.onload=()=>{const mW=800;let w=img.width,h=img.height;if(w>mW){h=Math.round(h*mW/w);w=mW;}const c=document.createElement("canvas");c.width=w;c.height=h;c.getContext("2d").drawImage(img,0,0,w,h);setWz(wz=>({...wz,fotosDespues:[...(wz.fotosDespues||[]),c.toDataURL("image/jpeg",0.7)]}));};img.src=ev.target.result;};r.readAsDataURL(f);});e.target.value="";}}/>
+                  </label>
+                )}
+              </div>
+            </div>
+
+            {/* FIRMA */}
+            <div className={card+" p-3 flex-1 flex flex-col min-h-0"}>
+              <p className="text-gray-700 font-bold text-xs mb-2">✍️ Firma del técnico</p>
+              {wz.techSignature?(
+                <div className="flex items-center gap-3 bg-gray-50 border border-gray-200 rounded-xl p-2.5">
+                  <img src={wz.techSignature} className="h-12 object-contain flex-shrink-0"/>
+                  <div className="flex-1">
+                    <p className="text-xs text-gray-500">{techW?.name||user?.name||"Técnico"}</p>
+                    {wz.techSignedAt&&<p className="text-[10px] text-gray-400">{new Date(wz.techSignedAt).toLocaleString("es-CL")}</p>}
+                  </div>
+                  <button onClick={()=>setWz(w=>({...w,techSignature:null,techSignedAt:null}))} className="text-xs text-red-500 underline flex-shrink-0">Borrar</button>
+                </div>
+              ):(
+                <button onClick={()=>setShowSig(true)} className="w-full flex-1 min-h-16 border-2 border-dashed border-gray-300 rounded-xl text-gray-400 text-sm hover:border-blue-400 hover:text-blue-500 transition flex items-center justify-center gap-2">✍️ Toque para firmar</button>
+              )}
+              {showSig&&(
+                <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+                  <div className="bg-white rounded-2xl p-4 w-full max-w-sm shadow-2xl">
+                    <p className="font-semibold text-sm mb-3 text-center text-gray-700">Firma del técnico</p>
+                    <SignaturePad onSave={sig=>{setWz(w=>({...w,techSignature:sig,techSignedAt:new Date().toISOString()}));setShowSig(false);}} onCancel={()=>setShowSig(false)}/>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── FORMULARIO MARÍTIMO ────────────────────────────────────
+  const eqM=equip.find(e=>e.id===wizardOT.equipId);
+  const techM=users.find(u=>u.id===wizardOT.assignedTo||u.name===wizardOT.assignedTo);
+  const planM=plans.find(p=>p.id===wizardOT.planId)||null;
+  const assignM=(data.planAssignments||[]).find(a=>a.id===wizardOT.assignmentId)||null;
+  const tareasPlan=(planM?.tasks||[]).map(t=>typeof t==="string"?t:(t.name||t.description||"")).filter(Boolean);
+  const procM=assignM?.procedimientoId?(data.procedimientos||[]).find(p=>p.id===assignM.procedimientoId):null;
+  const pasosPlan=procM?.pasos||tareasPlan||[];
+
+  return(
+    <div className="h-screen flex flex-col bg-gray-100 overflow-hidden">
+
+      {/* HEADER FIJO */}
+      <div className="flex-shrink-0 shadow-sm z-30" style={{background:NV.navy}}>
+        <div className="flex items-center justify-between px-4 py-3">
+          <div>
+            <button onClick={closeWizard} className="flex items-center gap-1.5 text-blue-200 hover:text-white text-xs transition mb-0.5">
+              <ChevronRight size={13} className="rotate-180"/>Volver
+            </button>
+            <p className="text-white font-bold text-sm">{wizardOT.code} — {eqM?.code} {eqM?.name}</p>
+            {planM&&(
+              <p className="text-blue-300 text-xs mt-0.5">
+                📋 {planM.name}{planM.frequency&&` · cada ${planM.frequency} ${planM.unidad||"h"}`}
+              </p>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <button onClick={()=>finalizeWizard(false)} disabled={isSavingWizard}
+              className={`text-xs font-bold px-3 py-2 rounded-lg text-white transition ${isSavingWizard?"bg-gray-400 cursor-not-allowed opacity-60":"bg-amber-500 hover:bg-amber-600"}`}>
+              {isSavingWizard?"Guardando...":"💾 Guardar"}
+            </button>
+            <button onClick={()=>{if(isSavingWizard)return;if(!wz.techSignature){alert("Se requiere firma del técnico para cerrar la OT");return;}finalizeWizard(true);}}
+              disabled={isSavingWizard}
+              className={`text-xs font-bold px-3 py-2 rounded-lg text-white transition ${isSavingWizard?"opacity-60 cursor-not-allowed":""}`}
+              style={{background:isSavingWizard?"#6b7280":"#16a34a"}}>
+              {isSavingWizard?"Guardando...":"✅ Cerrar OT"}
+            </button>
+          </div>
+        </div>
+        {saveMsg&&(
+          <div className="bg-emerald-500 text-white text-xs font-semibold text-center py-1.5 px-4">{saveMsg}</div>
+        )}
+      </div>
+
+      {/* Grid principal 2 columnas — en md+ cada columna scrollea internamente
+          y no hay scroll de página; en mobile (<768px) vuelve a 1 columna con
+          scroll normal en este contenedor. Los campos propios de Marítimo
+          (tareas del plan) quedan en la columna izquierda. */}
+      <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-3 p-3 min-h-0 overflow-y-auto md:overflow-hidden">
+
+        {/* COLUMNA IZQUIERDA */}
+        <div className="flex flex-col gap-3 md:overflow-y-auto md:min-h-0 md:pr-1">
 
           {/* FECHAS Y HORAS */}
-          <div className={card+" p-4"}>
-            <p className="text-gray-700 font-bold text-sm mb-3">📅 Fecha y hora</p>
-            <div className="grid grid-cols-2 gap-3">
+          <div className={card+" p-3 flex-shrink-0"}>
+            <p className="text-gray-700 font-bold text-xs mb-2">📅 Fecha y hora</p>
+            <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="text-gray-400 text-xs font-semibold uppercase mb-1 block">Fecha inicio</label>
+                <label className="text-gray-400 text-[10px] font-semibold uppercase mb-1 block">Fecha inicio</label>
                 <input type="date" value={wz.startDateTime?.slice(0,10)||new Date().toISOString().slice(0,10)} onChange={e=>setWz(w=>({...w,startDateTime:e.target.value+"T"+(wz.startDateTime?.slice(11,16)||new Date().toTimeString().slice(0,5))}))} className={iCls}/>
               </div>
               <div>
-                <label className="text-gray-400 text-xs font-semibold uppercase mb-1 block">Hora inicio</label>
-                <div className="flex gap-1.5">
+                <label className="text-gray-400 text-[10px] font-semibold uppercase mb-1 block">Hora inicio</label>
+                <div className="flex gap-1">
                   <input type="time" value={wz.startDateTime?.slice(11,16)||""} onChange={e=>setWz(w=>({...w,startDateTime:(wz.startDateTime?.slice(0,10)||new Date().toISOString().slice(0,10))+"T"+e.target.value}))} className={iCls+" flex-1"}/>
                   <button onClick={()=>{const n=new Date();setWz(w=>({...w,startDateTime:n.toISOString().slice(0,16)}));}} className="px-2 py-1.5 rounded-lg bg-blue-50 border border-blue-200 text-blue-700 text-xs font-bold hover:bg-blue-100 flex-shrink-0">📍</button>
                 </div>
               </div>
               <div>
-                <label className="text-gray-400 text-xs font-semibold uppercase mb-1 block">Fecha término</label>
+                <label className="text-gray-400 text-[10px] font-semibold uppercase mb-1 block">Fecha término</label>
                 <input type="date" value={wz.horaTerminoReal?.slice(0,10)||""} onChange={e=>setWz(w=>({...w,horaTerminoReal:e.target.value+"T"+(wz.horaTerminoReal?.slice(11,16)||"00:00")}))} className={iCls}/>
               </div>
               <div>
-                <label className="text-gray-400 text-xs font-semibold uppercase mb-1 block">Hora término</label>
-                <div className="flex gap-1.5">
+                <label className="text-gray-400 text-[10px] font-semibold uppercase mb-1 block">Hora término</label>
+                <div className="flex gap-1">
                   <input type="time" value={wz.horaTerminoReal?.slice(11,16)||""} onChange={e=>setWz(w=>({...w,horaTerminoReal:(wz.horaTerminoReal?.slice(0,10)||new Date().toISOString().slice(0,10))+"T"+e.target.value}))} className={iCls+" flex-1"}/>
                   <button onClick={()=>{const n=new Date();setWz(w=>({...w,horaTerminoReal:n.toISOString().slice(0,16)}));}} className="px-2 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-bold hover:bg-emerald-100 flex-shrink-0">📍</button>
                 </div>
@@ -5260,54 +5488,89 @@ if(wizardOT){
             {wz.startDateTime&&wz.horaTerminoReal&&(()=>{
               const diff=(new Date(wz.horaTerminoReal)-new Date(wz.startDateTime))/(1000*60*60);
               if(diff<=0) return null;
-              return <div className="mt-2 bg-blue-50 border border-blue-200 rounded-lg px-3 py-1.5"><span className="text-blue-700 text-xs font-bold">⏱️ {diff.toFixed(2)} horas de trabajo</span></div>;
+              return(<div className="mt-2 bg-blue-50 border border-blue-200 rounded-lg px-3 py-1.5"><span className="text-blue-700 text-xs font-bold">⏱️ {diff.toFixed(2)} horas de trabajo</span></div>);
             })()}
           </div>
 
+          {/* TAREAS DEL PLAN */}
+          {pasosPlan.length>0&&(
+            <div className={card+" p-3 flex-shrink-0"}>
+              <p className="text-gray-700 font-bold text-xs mb-2">
+                📋 Tareas del plan preventivo
+                <span className="ml-2 text-gray-400 font-normal text-[10px]">{(wz.tareasPMCompletadas||[]).length}/{pasosPlan.length} completadas</span>
+              </p>
+              <div className="space-y-1.5 max-h-52 overflow-y-auto">
+                {pasosPlan.map((tarea,i)=>{
+                  const completada=(wz.tareasPMCompletadas||[]).includes(tarea);
+                  return(
+                    <label key={i} className={`flex items-start gap-2 p-2 rounded-xl border-2 cursor-pointer transition select-none ${completada?"border-emerald-400 bg-emerald-50":"border-gray-200 hover:bg-gray-50"}`}>
+                      <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-0.5 transition ${completada?"bg-emerald-500 border-emerald-500":"border-gray-300 bg-white"}`}>
+                        {completada&&<Check size={11} className="text-white"/>}
+                      </div>
+                      <div className="flex-1">
+                        <span className={`text-xs font-medium ${completada?"text-emerald-800 line-through":"text-gray-700"}`}>{i+1}. {tarea}</span>
+                      </div>
+                      <input type="checkbox" className="hidden" checked={completada} onChange={()=>setWz(w=>({...w,tareasPMCompletadas:completada?(w.tareasPMCompletadas||[]).filter(t=>t!==tarea):[...(w.tareasPMCompletadas||[]),tarea]}))}/>
+                    </label>
+                  );
+                })}
+              </div>
+              <div className="mt-2">
+                <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                  <div className="h-full rounded-full transition-all" style={{width:`${Math.round(((wz.tareasPMCompletadas||[]).length/pasosPlan.length)*100)}%`,background:(wz.tareasPMCompletadas||[]).length===pasosPlan.length?"#16a34a":"#3B82F6"}}/>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* FOTO ESTADO ACTUAL */}
-          <div className={card+" p-4"}>
-            <p className="text-gray-700 font-bold text-sm mb-3">📷 Foto estado actual / falla</p>
+          <div className={card+" p-3 flex-shrink-0"}>
+            <p className="text-gray-700 font-bold text-xs mb-2">📷 Foto estado actual del equipo</p>
             <div className="flex flex-wrap gap-2">
               {(wz.fotosAntes||[]).map((src,i)=>(
-                <div key={i} className="relative w-20 h-20 rounded-xl overflow-hidden border border-gray-200 group flex-shrink-0">
+                <div key={i} className="relative w-16 h-16 rounded-xl overflow-hidden border border-gray-200 group flex-shrink-0">
                   <img src={typeof src==="string"?src:src.url} className="w-full h-full object-cover"/>
                   <button onClick={()=>setWz(w=>({...w,fotosAntes:(w.fotosAntes||[]).filter((_,j)=>j!==i)}))} className="absolute top-0.5 right-0.5 bg-red-500 rounded-full w-5 h-5 flex items-center justify-center opacity-0 group-hover:opacity-100 transition"><X size={9} className="text-white"/></button>
                 </div>
               ))}
               {(wz.fotosAntes||[]).length<4&&(
-                <label className="w-20 h-20 border-2 border-dashed border-red-300 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:border-red-400 hover:bg-red-50 text-red-400 transition flex-shrink-0">
-                  <Camera size={18}/><span className="text-xs mt-0.5">Agregar</span>
+                <label className="w-16 h-16 border-2 border-dashed border-red-300 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:border-red-400 hover:bg-red-50 text-red-400 transition flex-shrink-0">
+                  <Camera size={16}/><span className="text-[10px] mt-0.5">Agregar</span>
                   <input type="file" accept="image/*" capture="environment" className="hidden" onChange={e=>{Array.from(e.target.files||[]).forEach(f=>{const r=new FileReader();r.onload=ev=>{const img=new Image();img.onload=()=>{const mW=800;let w=img.width,h=img.height;if(w>mW){h=Math.round(h*mW/w);w=mW;}const c=document.createElement("canvas");c.width=w;c.height=h;c.getContext("2d").drawImage(img,0,0,w,h);setWz(wz=>({...wz,fotosAntes:[...(wz.fotosAntes||[]),c.toDataURL("image/jpeg",0.7)]}));};img.src=ev.target.result;};r.readAsDataURL(f);});e.target.value="";}}/>
                 </label>
               )}
             </div>
           </div>
 
-          {/* DESCRIPCIÓN */}
-          <div className={card+" p-4"}>
-            <p className="text-gray-700 font-bold text-sm mb-3">📝 Descripción del trabajo</p>
-            <textarea value={wz.trabajoRealizado||""} onChange={e=>setWz(w=>({...w,trabajoRealizado:e.target.value,diagnostico:e.target.value,observations:e.target.value}))} rows={4} placeholder="Describe la falla encontrada y el trabajo realizado..." className={`${iCls} resize-none`}/>
+          {/* OBSERVACIONES */}
+          <div className={card+" p-3 flex-1 flex flex-col min-h-0"}>
+            <p className="text-gray-700 font-bold text-xs mb-2">📝 Observaciones y trabajo realizado</p>
+            <textarea value={wz.trabajoRealizado||""} onChange={e=>setWz(w=>({...w,trabajoRealizado:e.target.value,diagnostico:e.target.value,observations:e.target.value}))} placeholder="Describe lo realizado, hallazgos, anomalías encontradas durante la intervención..." className={`${iCls} resize-none flex-1 min-h-20`}/>
           </div>
+        </div>
+
+        {/* COLUMNA DERECHA */}
+        <div className="flex flex-col gap-3 md:overflow-y-auto md:min-h-0 md:pr-1">
 
           {/* REPUESTOS */}
-          <div className={card+" p-4"}>
-            <div className="flex items-center justify-between mb-3">
-              <p className="text-gray-700 font-bold text-sm">🔩 Repuestos utilizados</p>
-              <button onClick={()=>setShowRepSearch(true)} className="text-xs px-3 py-1.5 rounded-lg bg-blue-50 border border-blue-200 text-blue-700 font-semibold hover:bg-blue-100 transition">🔍 Buscar SAP</button>
+          <div className={card+" p-3 flex-shrink-0"}>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-gray-700 font-bold text-xs">🔩 Repuestos y materiales utilizados</p>
+              <button onClick={()=>setShowRepSearch(true)} className="text-xs px-2.5 py-1 rounded-lg bg-blue-50 border border-blue-200 text-blue-700 font-semibold hover:bg-blue-100 transition">🔍 Buscar SAP</button>
             </div>
             {(wz.repuestos||[]).length===0?(<p className="text-gray-400 text-xs italic text-center py-3">Sin repuestos — usa "Buscar SAP" para agregar</p>):(
-              <div className="space-y-2">
+              <div className="space-y-1.5 max-h-40 overflow-y-auto">
                 {(wz.repuestos||[]).map((rep,i)=>(
-                  <div key={i} className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2">
+                  <div key={i} className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-2.5 py-1.5">
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold text-gray-800 truncate">{rep.descripcion||rep.name||"Sin descripción"}</p>
-                      <p className="text-xs text-gray-400 font-mono">{rep.codigo||rep.sku||"—"}</p>
+                      <p className="text-xs font-semibold text-gray-800 truncate">{rep.descripcion||rep.name||"Sin descripción"}</p>
+                      <p className="text-[10px] text-gray-400 font-mono">{rep.codigo||rep.sku||"—"}</p>
                     </div>
-                    <div className="flex items-center gap-1.5 flex-shrink-0">
-                      <button onClick={()=>setWz(w=>({...w,repuestos:w.repuestos.map((r,j)=>j===i?{...r,cantidad:Math.max(1,(parseFloat(r.cantidad)||1)-1)}:r)}))} className="w-7 h-7 rounded-lg bg-gray-200 hover:bg-gray-300 font-bold text-gray-700 text-sm flex items-center justify-center">−</button>
-                      <span className="w-7 text-center font-bold text-sm">{rep.cantidad||1}</span>
-                      <button onClick={()=>setWz(w=>({...w,repuestos:w.repuestos.map((r,j)=>j===i?{...r,cantidad:(parseFloat(r.cantidad)||1)+1}:r)}))} className="w-7 h-7 rounded-lg bg-gray-200 hover:bg-gray-300 font-bold text-gray-700 text-sm flex items-center justify-center">+</button>
-                      <button onClick={()=>setWz(w=>({...w,repuestos:w.repuestos.filter((_,j)=>j!==i)}))} className="text-red-400 hover:text-red-600 ml-1 p-1"><X size={14}/></button>
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <button onClick={()=>setWz(w=>({...w,repuestos:w.repuestos.map((r,j)=>j===i?{...r,cantidad:Math.max(1,(parseFloat(r.cantidad)||1)-1)}:r)}))} className="w-6 h-6 rounded-lg bg-gray-200 hover:bg-gray-300 font-bold text-gray-700 text-xs flex items-center justify-center">−</button>
+                      <span className="w-6 text-center font-bold text-xs">{rep.cantidad||1}</span>
+                      <button onClick={()=>setWz(w=>({...w,repuestos:w.repuestos.map((r,j)=>j===i?{...r,cantidad:(parseFloat(r.cantidad)||1)+1}:r)}))} className="w-6 h-6 rounded-lg bg-gray-200 hover:bg-gray-300 font-bold text-gray-700 text-xs flex items-center justify-center">+</button>
+                      <button onClick={()=>setWz(w=>({...w,repuestos:w.repuestos.filter((_,j)=>j!==i)}))} className="text-red-400 hover:text-red-600 ml-0.5 p-1"><X size={13}/></button>
                     </div>
                   </div>
                 ))}
@@ -5339,45 +5602,110 @@ if(wizardOT){
           </div>
 
           {/* HORÓMETRO */}
-          <div className={card+" p-4"}>
-            <p className="text-gray-700 font-bold text-sm mb-3">⏱️ Horómetro al cierre <span className="font-normal text-gray-400 text-xs ml-1">Actual: {eqW?.hours?.toLocaleString()||"—"} h</span></p>
-            <input type="number" value={wz.horometroCierre||""} onChange={e=>setWz(w=>({...w,horometroCierre:e.target.value}))} className={iCls} placeholder={String(eqW?.hours||"")}/>
-            {wz.horometroCierre&&parseFloat(wz.horometroCierre)<(eqW?.hours||0)&&(<p className="text-amber-600 text-xs mt-1">⚠️ Menor al horómetro registrado ({eqW?.hours}h)</p>)}
+          <div className={card+" p-3 flex-shrink-0"}>
+            <p className="text-gray-700 font-bold text-xs mb-2">
+              ⏱️ Horómetro del equipo al cierre
+              <span className="ml-2 text-gray-400 font-normal text-[10px]">Actual: {eqM?.hours?.toLocaleString()||"—"} h{planM?.frequency&&` · Próximo: ${((parseFloat(eqM?.hours)||0)+parseFloat(planM.frequency)).toLocaleString()} h`}</span>
+            </p>
+            <input type="number" value={wz.horometroCierre||""} onChange={e=>setWz(w=>({...w,horometroCierre:e.target.value}))} className={iCls} placeholder={String(eqM?.hours||"")}/>
+            {wz.horometroCierre&&parseFloat(wz.horometroCierre)<(eqM?.hours||0)&&(<p className="text-amber-600 text-xs mt-1">⚠️ Menor al horómetro registrado ({eqM?.hours}h)</p>)}
+            {wz.horometroCierre&&planM?.frequency&&(
+              <div className="mt-2 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+                <p className="text-blue-700 text-xs font-semibold">📅 Próxima intervención estimada: {(parseFloat(wz.horometroCierre||0)+parseFloat(planM.frequency)).toLocaleString()} h</p>
+              </div>
+            )}
           </div>
 
-          {/* FOTO FINAL */}
-          <div className={card+" p-4"}>
-            <p className="text-gray-700 font-bold text-sm mb-3">📷 Foto resultado final</p>
+          {/* FOTO RESULTADO FINAL */}
+          <div className={card+" p-3 flex-shrink-0"}>
+            <p className="text-gray-700 font-bold text-xs mb-2">📷 Foto resultado final</p>
             <div className="flex flex-wrap gap-2">
               {(wz.fotosDespues||[]).map((src,i)=>(
-                <div key={i} className="relative w-20 h-20 rounded-xl overflow-hidden border border-gray-200 group flex-shrink-0">
+                <div key={i} className="relative w-16 h-16 rounded-xl overflow-hidden border border-gray-200 group flex-shrink-0">
                   <img src={typeof src==="string"?src:src.url} className="w-full h-full object-cover"/>
                   <button onClick={()=>setWz(w=>({...w,fotosDespues:(w.fotosDespues||[]).filter((_,j)=>j!==i)}))} className="absolute top-0.5 right-0.5 bg-red-500 rounded-full w-5 h-5 flex items-center justify-center opacity-0 group-hover:opacity-100 transition"><X size={9} className="text-white"/></button>
                 </div>
               ))}
               {(wz.fotosDespues||[]).length<4&&(
-                <label className="w-20 h-20 border-2 border-dashed border-emerald-300 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:border-emerald-400 hover:bg-emerald-50 text-emerald-400 transition flex-shrink-0">
-                  <Camera size={18}/><span className="text-xs mt-0.5">Agregar</span>
+                <label className="w-16 h-16 border-2 border-dashed border-emerald-300 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:border-emerald-400 hover:bg-emerald-50 text-emerald-400 transition flex-shrink-0">
+                  <Camera size={16}/><span className="text-[10px] mt-0.5">Agregar</span>
                   <input type="file" accept="image/*" capture="environment" className="hidden" onChange={e=>{Array.from(e.target.files||[]).forEach(f=>{const r=new FileReader();r.onload=ev=>{const img=new Image();img.onload=()=>{const mW=800;let w=img.width,h=img.height;if(w>mW){h=Math.round(h*mW/w);w=mW;}const c=document.createElement("canvas");c.width=w;c.height=h;c.getContext("2d").drawImage(img,0,0,w,h);setWz(wz=>({...wz,fotosDespues:[...(wz.fotosDespues||[]),c.toDataURL("image/jpeg",0.7)]}));};img.src=ev.target.result;};r.readAsDataURL(f);});e.target.value="";}}/>
                 </label>
               )}
             </div>
           </div>
 
+          {/* MANTENIMIENTO EJECUTADO POR */}
+          <div className={card+" p-3 flex-shrink-0"}>
+            <p className="text-gray-700 font-bold text-xs mb-2">👷 Mantenimiento ejecutado por</p>
+            <p className="text-gray-400 text-[10px] mb-1.5">Agrega todos los técnicos que participaron</p>
+            <div className="space-y-1.5 mb-1.5 max-h-24 overflow-y-auto">
+              {(wz.ejecutadoPor||[]).map((nombre,i)=>(
+                <div key={i} className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-2.5 py-1.5">
+                  <span className="flex-1 text-xs text-gray-700">{nombre}</span>
+                  <button onClick={()=>setWz(w=>({...w,ejecutadoPor:(w.ejecutadoPor||[]).filter((_,j)=>j!==i)}))} className="text-red-400 hover:text-red-600"><X size={13}/></button>
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <input id="inputEjecutadoPor" type="text" placeholder="Nombre del técnico..." className={iCls+" flex-1"}
+                onKeyDown={e=>{if(e.key==="Enter"){const v=e.target.value.trim();if(v){setWz(w=>({...w,ejecutadoPor:[...(w.ejecutadoPor||[]),v]}));e.target.value=""}}}}/>
+              <button onClick={()=>{const inp=document.getElementById("inputEjecutadoPor");const v=(inp?.value||"").trim();if(v){setWz(w=>({...w,ejecutadoPor:[...(w.ejecutadoPor||[]),v]}));if(inp)inp.value="";}}}
+                className="px-3 py-2 rounded-lg text-white text-xs font-bold flex-shrink-0" style={{background:NV.blue}}>+ Agregar</button>
+            </div>
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              {users.filter(u=>!u.deleted&&!["supervisor","operaciones"].includes(u.role)&&!(wz.ejecutadoPor||[]).includes(u.name)).map(u=>(
+                <button key={u.id} onClick={()=>setWz(w=>({...w,ejecutadoPor:[...(w.ejecutadoPor||[]),u.name]}))}
+                  className="text-xs px-2 py-1 rounded-full bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 transition">+ {u.name}</button>
+              ))}
+            </div>
+          </div>
+
+          {/* PRUEBA REALIZADA POR */}
+          <div className={card+" p-3 flex-shrink-0"}>
+            <p className="text-gray-700 font-bold text-xs mb-2">🧪 Prueba realizada por</p>
+            <p className="text-gray-400 text-[10px] mb-1.5">Agrega todos los que verificaron el funcionamiento</p>
+            <div className="space-y-1.5 mb-1.5 max-h-24 overflow-y-auto">
+              {(wz.pruebaRealizadaPor||[]).map((nombre,i)=>(
+                <div key={i} className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-2.5 py-1.5">
+                  <span className="flex-1 text-xs text-gray-700">{nombre}</span>
+                  <button onClick={()=>setWz(w=>({...w,pruebaRealizadaPor:(w.pruebaRealizadaPor||[]).filter((_,j)=>j!==i)}))} className="text-red-400 hover:text-red-600"><X size={13}/></button>
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <input id="inputPruebaRealizadaPor" type="text" placeholder="Nombre..." className={iCls+" flex-1"}
+                onKeyDown={e=>{if(e.key==="Enter"){const v=e.target.value.trim();if(v){setWz(w=>({...w,pruebaRealizadaPor:[...(w.pruebaRealizadaPor||[]),v]}));e.target.value=""}}}}/>
+              <button onClick={()=>{const inp=document.getElementById("inputPruebaRealizadaPor");const v=(inp?.value||"").trim();if(v){setWz(w=>({...w,pruebaRealizadaPor:[...(w.pruebaRealizadaPor||[]),v]}));if(inp)inp.value="";}}}
+                className="px-3 py-2 rounded-lg text-white text-xs font-bold flex-shrink-0" style={{background:NV.blue}}>+ Agregar</button>
+            </div>
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              {users.filter(u=>!u.deleted&&!(wz.pruebaRealizadaPor||[]).includes(u.name)).map(u=>(
+                <button key={u.id} onClick={()=>setWz(w=>({...w,pruebaRealizadaPor:[...(w.pruebaRealizadaPor||[]),u.name]}))}
+                  className="text-xs px-2 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 hover:bg-emerald-100 transition">+ {u.name}</button>
+              ))}
+            </div>
+            <div className="mt-2">
+              <label className="text-gray-400 text-[10px] font-semibold uppercase mb-1 block">Observaciones de la prueba</label>
+              <textarea value={wz.observacionesPrueba||""} onChange={e=>setWz(w=>({...w,observacionesPrueba:e.target.value}))}
+                rows={2} placeholder="Resultado de la prueba, parámetros verificados..." className={`${iCls} resize-none`}/>
+            </div>
+          </div>
+
           {/* FIRMA */}
-          <div className={card+" p-4"}>
-            <p className="text-gray-700 font-bold text-sm mb-3">✍️ Firma del técnico</p>
+          <div className={card+" p-3 flex-1 flex flex-col min-h-0"}>
+            <p className="text-gray-700 font-bold text-xs mb-2">✍️ Firma del técnico</p>
             {wz.techSignature?(
-              <div className="flex items-center gap-3 bg-gray-50 border border-gray-200 rounded-xl p-3">
-                <img src={wz.techSignature} className="h-14 object-contain flex-shrink-0"/>
+              <div className="flex items-center gap-3 bg-gray-50 border border-gray-200 rounded-xl p-2.5">
+                <img src={wz.techSignature} className="h-12 object-contain flex-shrink-0"/>
                 <div className="flex-1">
-                  <p className="text-xs text-gray-500">{techW?.name||user?.name||"Técnico"}</p>
-                  {wz.techSignedAt&&<p className="text-xs text-gray-400">{new Date(wz.techSignedAt).toLocaleString("es-CL")}</p>}
+                  <p className="text-xs text-gray-500">{techM?.name||user?.name||"Técnico"}</p>
+                  {wz.techSignedAt&&<p className="text-[10px] text-gray-400">{new Date(wz.techSignedAt).toLocaleString("es-CL")}</p>}
                 </div>
                 <button onClick={()=>setWz(w=>({...w,techSignature:null,techSignedAt:null}))} className="text-xs text-red-500 underline flex-shrink-0">Borrar</button>
               </div>
             ):(
-              <button onClick={()=>setShowSig(true)} className="w-full h-16 border-2 border-dashed border-gray-300 rounded-xl text-gray-400 text-sm hover:border-blue-400 hover:text-blue-500 transition flex items-center justify-center gap-2">✍️ Toque para firmar</button>
+              <button onClick={()=>setShowSig(true)} className="w-full flex-1 min-h-16 border-2 border-dashed border-gray-300 rounded-xl text-gray-400 text-sm hover:border-blue-400 hover:text-blue-500 transition flex items-center justify-center gap-2">✍️ Toque para firmar</button>
             )}
             {showSig&&(
               <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
@@ -5388,315 +5716,7 @@ if(wizardOT){
               </div>
             )}
           </div>
-
-          <div className="h-6"/>
         </div>
-      </div>
-    );
-  }
-
-  // ── FORMULARIO MARÍTIMO ────────────────────────────────────
-  const eqM=equip.find(e=>e.id===wizardOT.equipId);
-  const techM=users.find(u=>u.id===wizardOT.assignedTo||u.name===wizardOT.assignedTo);
-  const planM=plans.find(p=>p.id===wizardOT.planId)||null;
-  const assignM=(data.planAssignments||[]).find(a=>a.id===wizardOT.assignmentId)||null;
-  const tareasPlan=(planM?.tasks||[]).map(t=>typeof t==="string"?t:(t.name||t.description||"")).filter(Boolean);
-  const procM=assignM?.procedimientoId?(data.procedimientos||[]).find(p=>p.id===assignM.procedimientoId):null;
-  const pasosPlan=procM?.pasos||tareasPlan||[];
-
-  return(
-    <div className="min-h-screen bg-gray-100">
-
-      {/* HEADER FIJO */}
-      <div className="sticky top-0 z-30 shadow-sm flex-shrink-0" style={{background:NV.navy}}>
-        <div className="flex items-center justify-between px-4 py-3">
-          <div>
-            <button onClick={closeWizard} className="flex items-center gap-1.5 text-blue-200 hover:text-white text-xs transition mb-0.5">
-              <ChevronRight size={13} className="rotate-180"/>Volver
-            </button>
-            <p className="text-white font-bold text-sm">{wizardOT.code} — {eqM?.code} {eqM?.name}</p>
-            {planM&&(
-              <p className="text-blue-300 text-xs mt-0.5">
-                📋 {planM.name}{planM.frequency&&` · cada ${planM.frequency} ${planM.unidad||"h"}`}
-              </p>
-            )}
-          </div>
-          <div className="flex gap-2">
-            <button onClick={()=>finalizeWizard(false)} disabled={isSavingWizard}
-              className={`text-xs font-bold px-3 py-2 rounded-lg text-white transition ${isSavingWizard?"bg-gray-400 cursor-not-allowed opacity-60":"bg-amber-500 hover:bg-amber-600"}`}>
-              {isSavingWizard?"Guardando...":"💾 Guardar"}
-            </button>
-            <button onClick={()=>{if(isSavingWizard)return;if(!wz.techSignature){alert("Se requiere firma del técnico para cerrar la OT");return;}finalizeWizard(true);}}
-              disabled={isSavingWizard}
-              className={`text-xs font-bold px-3 py-2 rounded-lg text-white transition ${isSavingWizard?"opacity-60 cursor-not-allowed":""}`}
-              style={{background:isSavingWizard?"#6b7280":"#16a34a"}}>
-              {isSavingWizard?"Guardando...":"✅ Cerrar OT"}
-            </button>
-          </div>
-        </div>
-        {saveMsg&&(
-          <div className="bg-emerald-500 text-white text-xs font-semibold text-center py-1.5 px-4">{saveMsg}</div>
-        )}
-      </div>
-
-      <div className="max-w-2xl mx-auto px-4 py-5 space-y-4">
-
-        {/* 1. FECHAS Y HORAS */}
-        <div className={card+" p-4"}>
-          <p className="text-gray-700 font-bold text-sm mb-3">📅 Fecha y hora</p>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-gray-400 text-xs font-semibold uppercase mb-1 block">Fecha inicio</label>
-              <input type="date" value={wz.startDateTime?.slice(0,10)||new Date().toISOString().slice(0,10)} onChange={e=>setWz(w=>({...w,startDateTime:e.target.value+"T"+(wz.startDateTime?.slice(11,16)||new Date().toTimeString().slice(0,5))}))} className={iCls}/>
-            </div>
-            <div>
-              <label className="text-gray-400 text-xs font-semibold uppercase mb-1 block">Hora inicio</label>
-              <div className="flex gap-1.5">
-                <input type="time" value={wz.startDateTime?.slice(11,16)||""} onChange={e=>setWz(w=>({...w,startDateTime:(wz.startDateTime?.slice(0,10)||new Date().toISOString().slice(0,10))+"T"+e.target.value}))} className={iCls+" flex-1"}/>
-                <button onClick={()=>{const n=new Date();setWz(w=>({...w,startDateTime:n.toISOString().slice(0,16)}));}} className="px-2 py-1.5 rounded-lg bg-blue-50 border border-blue-200 text-blue-700 text-xs font-bold hover:bg-blue-100 flex-shrink-0">📍</button>
-              </div>
-            </div>
-            <div>
-              <label className="text-gray-400 text-xs font-semibold uppercase mb-1 block">Fecha término</label>
-              <input type="date" value={wz.horaTerminoReal?.slice(0,10)||""} onChange={e=>setWz(w=>({...w,horaTerminoReal:e.target.value+"T"+(wz.horaTerminoReal?.slice(11,16)||"00:00")}))} className={iCls}/>
-            </div>
-            <div>
-              <label className="text-gray-400 text-xs font-semibold uppercase mb-1 block">Hora término</label>
-              <div className="flex gap-1.5">
-                <input type="time" value={wz.horaTerminoReal?.slice(11,16)||""} onChange={e=>setWz(w=>({...w,horaTerminoReal:(wz.horaTerminoReal?.slice(0,10)||new Date().toISOString().slice(0,10))+"T"+e.target.value}))} className={iCls+" flex-1"}/>
-                <button onClick={()=>{const n=new Date();setWz(w=>({...w,horaTerminoReal:n.toISOString().slice(0,16)}));}} className="px-2 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-bold hover:bg-emerald-100 flex-shrink-0">📍</button>
-              </div>
-            </div>
-          </div>
-          {wz.startDateTime&&wz.horaTerminoReal&&(()=>{
-            const diff=(new Date(wz.horaTerminoReal)-new Date(wz.startDateTime))/(1000*60*60);
-            if(diff<=0) return null;
-            return(<div className="mt-2 bg-blue-50 border border-blue-200 rounded-lg px-3 py-1.5"><span className="text-blue-700 text-xs font-bold">⏱️ {diff.toFixed(2)} horas de trabajo</span></div>);
-          })()}
-        </div>
-
-        {/* 2. TAREAS DEL PLAN */}
-        {pasosPlan.length>0&&(
-          <div className={card+" p-4"}>
-            <p className="text-gray-700 font-bold text-sm mb-3">
-              📋 Tareas del plan preventivo
-              <span className="ml-2 text-gray-400 font-normal text-xs">{(wz.tareasPMCompletadas||[]).length}/{pasosPlan.length} completadas</span>
-            </p>
-            <div className="space-y-2">
-              {pasosPlan.map((tarea,i)=>{
-                const completada=(wz.tareasPMCompletadas||[]).includes(tarea);
-                return(
-                  <label key={i} className={`flex items-start gap-3 p-3 rounded-xl border-2 cursor-pointer transition select-none ${completada?"border-emerald-400 bg-emerald-50":"border-gray-200 hover:bg-gray-50"}`}>
-                    <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-0.5 transition ${completada?"bg-emerald-500 border-emerald-500":"border-gray-300 bg-white"}`}>
-                      {completada&&<Check size={13} className="text-white"/>}
-                    </div>
-                    <div className="flex-1">
-                      <span className={`text-sm font-medium ${completada?"text-emerald-800 line-through":"text-gray-700"}`}>{i+1}. {tarea}</span>
-                    </div>
-                    <input type="checkbox" className="hidden" checked={completada} onChange={()=>setWz(w=>({...w,tareasPMCompletadas:completada?(w.tareasPMCompletadas||[]).filter(t=>t!==tarea):[...(w.tareasPMCompletadas||[]),tarea]}))}/>
-                  </label>
-                );
-              })}
-            </div>
-            <div className="mt-3">
-              <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-                <div className="h-full rounded-full transition-all" style={{width:`${Math.round(((wz.tareasPMCompletadas||[]).length/pasosPlan.length)*100)}%`,background:(wz.tareasPMCompletadas||[]).length===pasosPlan.length?"#16a34a":"#3B82F6"}}/>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* 3. FOTO ESTADO ACTUAL */}
-        <div className={card+" p-4"}>
-          <p className="text-gray-700 font-bold text-sm mb-3">📷 Foto estado actual del equipo</p>
-          <div className="flex flex-wrap gap-2">
-            {(wz.fotosAntes||[]).map((src,i)=>(
-              <div key={i} className="relative w-20 h-20 rounded-xl overflow-hidden border border-gray-200 group flex-shrink-0">
-                <img src={typeof src==="string"?src:src.url} className="w-full h-full object-cover"/>
-                <button onClick={()=>setWz(w=>({...w,fotosAntes:(w.fotosAntes||[]).filter((_,j)=>j!==i)}))} className="absolute top-0.5 right-0.5 bg-red-500 rounded-full w-5 h-5 flex items-center justify-center opacity-0 group-hover:opacity-100 transition"><X size={9} className="text-white"/></button>
-              </div>
-            ))}
-            {(wz.fotosAntes||[]).length<4&&(
-              <label className="w-20 h-20 border-2 border-dashed border-red-300 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:border-red-400 hover:bg-red-50 text-red-400 transition flex-shrink-0">
-                <Camera size={18}/><span className="text-xs mt-0.5">Agregar</span>
-                <input type="file" accept="image/*" capture="environment" className="hidden" onChange={e=>{Array.from(e.target.files||[]).forEach(f=>{const r=new FileReader();r.onload=ev=>{const img=new Image();img.onload=()=>{const mW=800;let w=img.width,h=img.height;if(w>mW){h=Math.round(h*mW/w);w=mW;}const c=document.createElement("canvas");c.width=w;c.height=h;c.getContext("2d").drawImage(img,0,0,w,h);setWz(wz=>({...wz,fotosAntes:[...(wz.fotosAntes||[]),c.toDataURL("image/jpeg",0.7)]}));};img.src=ev.target.result;};r.readAsDataURL(f);});e.target.value="";}}/>
-              </label>
-            )}
-          </div>
-        </div>
-
-        {/* 4. OBSERVACIONES */}
-        <div className={card+" p-4"}>
-          <p className="text-gray-700 font-bold text-sm mb-3">📝 Observaciones y trabajo realizado</p>
-          <textarea value={wz.trabajoRealizado||""} onChange={e=>setWz(w=>({...w,trabajoRealizado:e.target.value,diagnostico:e.target.value,observations:e.target.value}))} rows={4} placeholder="Describe lo realizado, hallazgos, anomalías encontradas durante la intervención..." className={`${iCls} resize-none`}/>
-        </div>
-
-        {/* 5. REPUESTOS */}
-        <div className={card+" p-4"}>
-          <div className="flex items-center justify-between mb-3">
-            <p className="text-gray-700 font-bold text-sm">🔩 Repuestos y materiales utilizados</p>
-            <button onClick={()=>setShowRepSearch(true)} className="text-xs px-3 py-1.5 rounded-lg bg-blue-50 border border-blue-200 text-blue-700 font-semibold hover:bg-blue-100 transition">🔍 Buscar SAP</button>
-          </div>
-          {(wz.repuestos||[]).length===0?(<p className="text-gray-400 text-xs italic text-center py-3">Sin repuestos — usa "Buscar SAP" para agregar</p>):(
-            <div className="space-y-2">
-              {(wz.repuestos||[]).map((rep,i)=>(
-                <div key={i} className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-gray-800 truncate">{rep.descripcion||rep.name||"Sin descripción"}</p>
-                    <p className="text-xs text-gray-400 font-mono">{rep.codigo||rep.sku||"—"}</p>
-                  </div>
-                  <div className="flex items-center gap-1.5 flex-shrink-0">
-                    <button onClick={()=>setWz(w=>({...w,repuestos:w.repuestos.map((r,j)=>j===i?{...r,cantidad:Math.max(1,(parseFloat(r.cantidad)||1)-1)}:r)}))} className="w-7 h-7 rounded-lg bg-gray-200 hover:bg-gray-300 font-bold text-gray-700 text-sm flex items-center justify-center">−</button>
-                    <span className="w-7 text-center font-bold text-sm">{rep.cantidad||1}</span>
-                    <button onClick={()=>setWz(w=>({...w,repuestos:w.repuestos.map((r,j)=>j===i?{...r,cantidad:(parseFloat(r.cantidad)||1)+1}:r)}))} className="w-7 h-7 rounded-lg bg-gray-200 hover:bg-gray-300 font-bold text-gray-700 text-sm flex items-center justify-center">+</button>
-                    <button onClick={()=>setWz(w=>({...w,repuestos:w.repuestos.filter((_,j)=>j!==i)}))} className="text-red-400 hover:text-red-600 ml-1 p-1"><X size={14}/></button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-          {showRepSearch&&(
-            <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-4">
-              <div className="bg-white rounded-2xl w-full max-w-lg max-h-[80vh] flex flex-col shadow-2xl">
-                <div className="p-4 border-b border-gray-100">
-                  <div className="flex items-center gap-2 mb-3">
-                    <p className="font-bold text-gray-800">Buscar repuesto</p>
-                    <button onClick={()=>{setShowRepSearch(false);setBusqRep("");}} className="ml-auto text-gray-400 hover:text-gray-600"><X size={18}/></button>
-                  </div>
-                  <input value={busqRep} onChange={e=>setBusqRep(e.target.value)} autoFocus placeholder="Código o nombre..." className={iCls}/>
-                </div>
-                <div className="overflow-y-auto flex-1 p-2">
-                  {(data.repuestos||[]).filter(r=>{if(!busqRep.trim())return true;const q=busqRep.toLowerCase();return(r.codigo||r.sku||"").toLowerCase().includes(q)||(r.nombre||r.name||r.descripcion||"").toLowerCase().includes(q);}).slice(0,30).map(r=>(
-                    <button key={r.id||r.codigo} onClick={()=>{setWz(w=>({...w,repuestos:[...(w.repuestos||[]),{codigo:r.codigo||r.sku||"",descripcion:r.nombre||r.name||r.descripcion||"",cantidad:1,unidad:r.unidad||"und",costoUnitario:parseFloat(r.precio||r.costo||0),bodega:r.bodega||"",observacion:"",pendiente:false}]}));setShowRepSearch(false);setBusqRep("");}} className="w-full text-left flex items-center gap-3 p-3 rounded-xl hover:bg-blue-50 transition mb-1">
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-gray-800 truncate">{r.nombre||r.name||r.descripcion||"Sin nombre"}</p>
-                        <p className="text-xs text-gray-400 font-mono">{r.codigo||r.sku||"—"} · Stock: {r.stockActual??r.stock??"—"} {r.unidad}</p>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* 6. HORÓMETRO */}
-        <div className={card+" p-4"}>
-          <p className="text-gray-700 font-bold text-sm mb-3">
-            ⏱️ Horómetro del equipo al cierre
-            <span className="ml-2 text-gray-400 font-normal text-xs">Actual: {eqM?.hours?.toLocaleString()||"—"} h{planM?.frequency&&` · Próximo: ${((parseFloat(eqM?.hours)||0)+parseFloat(planM.frequency)).toLocaleString()} h`}</span>
-          </p>
-          <input type="number" value={wz.horometroCierre||""} onChange={e=>setWz(w=>({...w,horometroCierre:e.target.value}))} className={iCls} placeholder={String(eqM?.hours||"")}/>
-          {wz.horometroCierre&&parseFloat(wz.horometroCierre)<(eqM?.hours||0)&&(<p className="text-amber-600 text-xs mt-1">⚠️ Menor al horómetro registrado ({eqM?.hours}h)</p>)}
-          {wz.horometroCierre&&planM?.frequency&&(
-            <div className="mt-2 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
-              <p className="text-blue-700 text-xs font-semibold">📅 Próxima intervención estimada: {(parseFloat(wz.horometroCierre||0)+parseFloat(planM.frequency)).toLocaleString()} h</p>
-            </div>
-          )}
-        </div>
-
-        {/* 7. FOTO RESULTADO FINAL */}
-        <div className={card+" p-4"}>
-          <p className="text-gray-700 font-bold text-sm mb-3">📷 Foto resultado final</p>
-          <div className="flex flex-wrap gap-2">
-            {(wz.fotosDespues||[]).map((src,i)=>(
-              <div key={i} className="relative w-20 h-20 rounded-xl overflow-hidden border border-gray-200 group flex-shrink-0">
-                <img src={typeof src==="string"?src:src.url} className="w-full h-full object-cover"/>
-                <button onClick={()=>setWz(w=>({...w,fotosDespues:(w.fotosDespues||[]).filter((_,j)=>j!==i)}))} className="absolute top-0.5 right-0.5 bg-red-500 rounded-full w-5 h-5 flex items-center justify-center opacity-0 group-hover:opacity-100 transition"><X size={9} className="text-white"/></button>
-              </div>
-            ))}
-            {(wz.fotosDespues||[]).length<4&&(
-              <label className="w-20 h-20 border-2 border-dashed border-emerald-300 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:border-emerald-400 hover:bg-emerald-50 text-emerald-400 transition flex-shrink-0">
-                <Camera size={18}/><span className="text-xs mt-0.5">Agregar</span>
-                <input type="file" accept="image/*" capture="environment" className="hidden" onChange={e=>{Array.from(e.target.files||[]).forEach(f=>{const r=new FileReader();r.onload=ev=>{const img=new Image();img.onload=()=>{const mW=800;let w=img.width,h=img.height;if(w>mW){h=Math.round(h*mW/w);w=mW;}const c=document.createElement("canvas");c.width=w;c.height=h;c.getContext("2d").drawImage(img,0,0,w,h);setWz(wz=>({...wz,fotosDespues:[...(wz.fotosDespues||[]),c.toDataURL("image/jpeg",0.7)]}));};img.src=ev.target.result;};r.readAsDataURL(f);});e.target.value="";}}/>
-              </label>
-            )}
-          </div>
-        </div>
-
-        {/* MANTENIMIENTO EJECUTADO POR */}
-        <div className={card+" p-4"}>
-          <p className="text-gray-700 font-bold text-sm mb-3">👷 Mantenimiento ejecutado por</p>
-          <p className="text-gray-400 text-xs mb-2">Agrega todos los técnicos que participaron</p>
-          <div className="space-y-2 mb-2">
-            {(wz.ejecutadoPor||[]).map((nombre,i)=>(
-              <div key={i} className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2">
-                <span className="flex-1 text-sm text-gray-700">{nombre}</span>
-                <button onClick={()=>setWz(w=>({...w,ejecutadoPor:(w.ejecutadoPor||[]).filter((_,j)=>j!==i)}))} className="text-red-400 hover:text-red-600"><X size={14}/></button>
-              </div>
-            ))}
-          </div>
-          <div className="flex gap-2">
-            <input id="inputEjecutadoPor" type="text" placeholder="Nombre del técnico..." className={iCls+" flex-1"}
-              onKeyDown={e=>{if(e.key==="Enter"){const v=e.target.value.trim();if(v){setWz(w=>({...w,ejecutadoPor:[...(w.ejecutadoPor||[]),v]}));e.target.value=""}}}}/>
-            <button onClick={()=>{const inp=document.getElementById("inputEjecutadoPor");const v=(inp?.value||"").trim();if(v){setWz(w=>({...w,ejecutadoPor:[...(w.ejecutadoPor||[]),v]}));if(inp)inp.value="";}}}
-              className="px-3 py-2 rounded-lg text-white text-xs font-bold flex-shrink-0" style={{background:NV.blue}}>+ Agregar</button>
-          </div>
-          <div className="flex flex-wrap gap-1.5 mt-2">
-            {users.filter(u=>!u.deleted&&!["supervisor","operaciones"].includes(u.role)&&!(wz.ejecutadoPor||[]).includes(u.name)).map(u=>(
-              <button key={u.id} onClick={()=>setWz(w=>({...w,ejecutadoPor:[...(w.ejecutadoPor||[]),u.name]}))}
-                className="text-xs px-2 py-1 rounded-full bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 transition">+ {u.name}</button>
-            ))}
-          </div>
-        </div>
-
-        {/* PRUEBA REALIZADA POR */}
-        <div className={card+" p-4"}>
-          <p className="text-gray-700 font-bold text-sm mb-3">🧪 Prueba realizada por</p>
-          <p className="text-gray-400 text-xs mb-2">Agrega todos los que verificaron el funcionamiento</p>
-          <div className="space-y-2 mb-2">
-            {(wz.pruebaRealizadaPor||[]).map((nombre,i)=>(
-              <div key={i} className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2">
-                <span className="flex-1 text-sm text-gray-700">{nombre}</span>
-                <button onClick={()=>setWz(w=>({...w,pruebaRealizadaPor:(w.pruebaRealizadaPor||[]).filter((_,j)=>j!==i)}))} className="text-red-400 hover:text-red-600"><X size={14}/></button>
-              </div>
-            ))}
-          </div>
-          <div className="flex gap-2">
-            <input id="inputPruebaRealizadaPor" type="text" placeholder="Nombre..." className={iCls+" flex-1"}
-              onKeyDown={e=>{if(e.key==="Enter"){const v=e.target.value.trim();if(v){setWz(w=>({...w,pruebaRealizadaPor:[...(w.pruebaRealizadaPor||[]),v]}));e.target.value=""}}}}/>
-            <button onClick={()=>{const inp=document.getElementById("inputPruebaRealizadaPor");const v=(inp?.value||"").trim();if(v){setWz(w=>({...w,pruebaRealizadaPor:[...(w.pruebaRealizadaPor||[]),v]}));if(inp)inp.value="";}}}
-              className="px-3 py-2 rounded-lg text-white text-xs font-bold flex-shrink-0" style={{background:NV.blue}}>+ Agregar</button>
-          </div>
-          <div className="flex flex-wrap gap-1.5 mt-2">
-            {users.filter(u=>!u.deleted&&!(wz.pruebaRealizadaPor||[]).includes(u.name)).map(u=>(
-              <button key={u.id} onClick={()=>setWz(w=>({...w,pruebaRealizadaPor:[...(w.pruebaRealizadaPor||[]),u.name]}))}
-                className="text-xs px-2 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 hover:bg-emerald-100 transition">+ {u.name}</button>
-            ))}
-          </div>
-          <div className="mt-3">
-            <label className="text-gray-400 text-xs font-semibold uppercase mb-1 block">Observaciones de la prueba</label>
-            <textarea value={wz.observacionesPrueba||""} onChange={e=>setWz(w=>({...w,observacionesPrueba:e.target.value}))}
-              rows={2} placeholder="Resultado de la prueba, parámetros verificados..." className={`${iCls} resize-none`}/>
-          </div>
-        </div>
-
-        {/* 8. FIRMA */}
-        <div className={card+" p-4"}>
-          <p className="text-gray-700 font-bold text-sm mb-3">✍️ Firma del técnico</p>
-          {wz.techSignature?(
-            <div className="flex items-center gap-3 bg-gray-50 border border-gray-200 rounded-xl p-3">
-              <img src={wz.techSignature} className="h-14 object-contain flex-shrink-0"/>
-              <div className="flex-1">
-                <p className="text-xs text-gray-500">{techM?.name||user?.name||"Técnico"}</p>
-                {wz.techSignedAt&&<p className="text-xs text-gray-400">{new Date(wz.techSignedAt).toLocaleString("es-CL")}</p>}
-              </div>
-              <button onClick={()=>setWz(w=>({...w,techSignature:null,techSignedAt:null}))} className="text-xs text-red-500 underline flex-shrink-0">Borrar</button>
-            </div>
-          ):(
-            <button onClick={()=>setShowSig(true)} className="w-full h-16 border-2 border-dashed border-gray-300 rounded-xl text-gray-400 text-sm hover:border-blue-400 hover:text-blue-500 transition flex items-center justify-center gap-2">✍️ Toque para firmar</button>
-          )}
-          {showSig&&(
-            <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-              <div className="bg-white rounded-2xl p-4 w-full max-w-sm shadow-2xl">
-                <p className="font-semibold text-sm mb-3 text-center text-gray-700">Firma del técnico</p>
-                <SignaturePad onSave={sig=>{setWz(w=>({...w,techSignature:sig,techSignedAt:new Date().toISOString()}));setShowSig(false);}} onCancel={()=>setShowSig(false)}/>
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="h-6"/>
       </div>
     </div>
   );
