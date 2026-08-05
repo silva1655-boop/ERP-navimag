@@ -31467,18 +31467,22 @@ const [user,setUser]=useState(null);
           firestoreUsers.map(u=>
             [(u.username||u.name||'').toLowerCase(),u])
         );
-        const merged=d.data.map(au=>{
-          const fs2=
-            byEmail.get((au.email||'').toLowerCase())||
-            byUsername.get((au.username||'').toLowerCase())||{};
-          return{
-            avgOperatingHours:fs2.avgOperatingHours||null,
-            avgOperatingHoursLearned:fs2.avgOperatingHoursLearned||null,
-            avgPreference:fs2.avgPreference||'learned',
-            ...au,
-            deleted:false,
-          };
-        });
+        const deletedIds=new Set(
+          firestoreUsers.filter(u=>u.deleted===true).map(u=>u.id)
+        );
+        const merged=d.data
+          .map(au=>{
+            const fs2=
+              byEmail.get((au.email||'').toLowerCase())||
+              byUsername.get((au.username||'').toLowerCase())||{};
+            return{
+              avgOperatingHours:fs2.avgOperatingHours||null,
+              avgOperatingHoursLearned:fs2.avgOperatingHoursLearned||null,
+              avgPreference:fs2.avgPreference||'learned',
+              ...au,
+              deleted:false,
+            };
+          });
         return{...prev,users:merged};
       });
     }catch(e){
