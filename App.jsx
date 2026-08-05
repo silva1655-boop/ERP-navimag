@@ -2607,11 +2607,12 @@ return(
             </div>
             <div className="px-4 py-3 border-b border-gray-100">
               <p className="text-gray-500 text-xs font-medium mb-2">Tamaño de letra</p>
-              <div className="grid grid-cols-3 gap-1">
+              <div className="grid grid-cols-4 gap-1">
                 {[
                   {key:"normal",label:"A",size:"text-xs"},
                   {key:"grande",label:"A",size:"text-sm"},
                   {key:"muy_grande",label:"A",size:"text-base"},
+                  {key:"tablet",label:"A",size:"text-lg"},
                 ].map(({key,label,size})=>(
                   <button key={key} onClick={()=>setFontSize(key)}
                     className={`py-1.5 rounded-lg font-bold transition-all ${size}
@@ -31507,7 +31508,7 @@ const [fontSize,setFontSize]=useState(()=>{
   try{return localStorage.getItem("mantek_fontsize")||"normal";}catch(e){return "normal";}
 });
 useEffect(()=>{
-  const sizes={normal:"15px",grande:"17px",muy_grande:"19px"};
+  const sizes={normal:"15px",grande:"17px",muy_grande:"19px",tablet:"21px"};
   document.documentElement.style.fontSize=sizes[fontSize]||sizes.normal;
   try{localStorage.setItem("mantek_fontsize",fontSize);}catch(e){}
 },[fontSize]);
