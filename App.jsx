@@ -10288,7 +10288,7 @@ if(isMaritimo){
             onChange={e=>setPlanForm(f=>({...f,responsable:e.target.value,responsableLibre:""}))}
             className={sCls}>
             <option value="">— Seleccionar responsable —</option>
-            {(users||[]).map(u=><option key={u.id} value={u.name}>{u.name} ({u.role})</option>)}
+            {getUsersByModule(users||[],activeModule).map(u=><option key={u.id} value={u.name}>{u.name} ({u.role})</option>)}
             <option value="__otro__">✏️ Nombre no registrado...</option>
           </select>
           {planForm.responsable==="__otro__"&&(
