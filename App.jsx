@@ -10284,7 +10284,7 @@ if(isMaritimo){
           <input value={planForm.area} onChange={e=>setPlanForm(f=>({...f,area:e.target.value}))} className={iCls} placeholder="Sala de Máquinas"/>
         </div>
         <div><label className="text-gray-500 text-xs font-medium mb-1.5 block">RESPONSABLE *</label>
-          <select value={planForm.responsable==="__otro__"?"__otro__":(users.find(u=>u.name===planForm.responsable)?"":"__otro__")||planForm.responsable}
+          <select value={planForm.responsable||""} 
             onChange={e=>setPlanForm(f=>({...f,responsable:e.target.value,responsableLibre:""}))}
             className={sCls}>
             <option value="">— Seleccionar responsable —</option>
