@@ -21387,20 +21387,17 @@ style={sel?{background:NV.blue}:{}}>{v}</button>;
 {activeModule==="taller"&&(
   <div>
     <label className="text-gray-500 text-xs font-medium mb-2 block">NAVE *</label>
-    {(setup.puerto==="PMC"||!setup.puerto)?(
-      <div className="grid grid-cols-2 gap-2">
-        {["Esperanza","Dalka"].map(n=>(
-          <button key={n} onClick={()=>setSetup(s=>({...s,nave:n}))}
-            className={`py-2.5 rounded-xl border-2 text-sm font-semibold transition
-              ${setup.nave===n?"border-blue-400 bg-blue-50 text-blue-700":"border-gray-200 text-gray-500 hover:border-gray-300"}`}>
-            🚢 {n}
-          </button>
-        ))}
-      </div>
-    ):(
-      <div className="py-2.5 px-3 rounded-xl border-2 border-blue-200 bg-blue-50 text-blue-700 text-sm font-semibold">
-        🚢 {setup.nave} <span className="text-blue-400 font-normal text-xs">(automático según puerto)</span>
-      </div>
+    <div className="grid grid-cols-3 gap-2">
+      {["Esperanza","Dalka","Faena de patio"].map(n=>(
+        <button key={n} onClick={()=>setSetup(s=>({...s,nave:n}))}
+          className={`py-2.5 px-1 rounded-xl border-2 text-xs sm:text-sm font-semibold transition leading-tight
+            ${setup.nave===n?"border-blue-400 bg-blue-50 text-blue-700":"border-gray-200 text-gray-500 hover:border-gray-300"}`}>
+          {n==="Faena de patio"?"🏗️":"🚢"} {n}
+        </button>
+      ))}
+    </div>
+    {setup.puerto&&setup.puerto!=="PMC"&&(
+      <p className="text-gray-400 text-xs mt-1">Pre-seleccionado según puerto — cambialo si corresponde a otra nave o a faena de patio.</p>
     )}
   </div>
 )}
