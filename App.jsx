@@ -26253,6 +26253,7 @@ function TareasAsignadasPanel({user,compromisos}){
   const [proyectoAbierto,setProyectoAbierto]=useState(null); // {key,proyectoId}
   const [tareaModalAbierta,setTareaModalAbierta]=useState(null); // tarea anotada, o null
   const [showComentariosGenerales,setShowComentariosGenerales]=useState(false);
+  const [proyectoFiltro,setProyectoFiltro]=useState(""); // "" = todos los proyectos · si no, "key|proyectoId"
 
   const fuentesUnicas=useMemo(()=>{
     const vistos=new Map();
@@ -26296,6 +26297,21 @@ function TareasAsignadasPanel({user,compromisos}){
     proyectosConMiTarea.flatMap(pr=>pr.proyecto.tareas.filter(t=>(t.responsables||[]).includes(miNombre)))
       .sort((a,b)=>(a.fechaInicio||"9999").localeCompare(b.fechaInicio||"9999")),
   [proyectosConMiTarea,miNombre]);
+
+  // Un proyecto por selector — así "Asignadas" queda organizado por proyecto
+  // (elegís uno y ves solo esas tareas) en vez de una lista larga con todo
+  // mezclado de todos los proyectos donde te asignaron algo.
+  const proyectosDisponibles=useMemo(()=>proyectosConMiTarea.map(pr=>({
+    filtroKey:pr.key+"|"+pr.proyecto.id,
+    nombre:pr.proyecto.nombre,
+    creadoPor:pr.creadoPor,
+    cantidad:pr.proyecto.tareas.filter(t=>(t.responsables||[]).includes(miNombre)).length,
+  })),[proyectosConMiTarea,miNombre]);
+
+  const misTareasFiltradas=useMemo(()=>{
+    if(!proyectoFiltro) return misTareas;
+    return misTareas.filter(t=>(t._key+"|"+t._proyectoId)===proyectoFiltro);
+  },[misTareas,proyectoFiltro]);
 
   const proyectoActivo=useMemo(()=>{
     if(!proyectoAbierto) return null;
@@ -26574,7 +26590,7 @@ function TareasAsignadasPanel({user,compromisos}){
     );
   }
 
-  // ── Vista por defecto: lista de mis tareas asignadas ──
+  // ── Vista por defecto: lista de mis tareas asignadas, organizadas por proyecto ──
   return(
     <div className="p-4 space-y-3">
       {misTareas.length===0?(
@@ -26583,8 +26599,21 @@ function TareasAsignadasPanel({user,compromisos}){
           <p className="text-gray-500 text-sm font-semibold">Sin tareas asignadas</p>
           <p className="text-gray-400 text-xs mt-1">Acá aparecen las tareas de proyectos de otras personas donde figurás como responsable.</p>
         </div>
-      ):(
-        misTareas.map(t=>(
+      ):(<>
+        <div>
+          <label className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide block mb-1">Proyecto</label>
+          <select value={proyectoFiltro} onChange={e=>setProyectoFiltro(e.target.value)}
+            className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm bg-white focus:outline-none focus:border-blue-400">
+            <option value="">📋 Todos los proyectos ({misTareas.length})</option>
+            {proyectosDisponibles.map(p=>(
+              <option key={p.filtroKey} value={p.filtroKey}>📁 {p.nombre} — {p.creadoPor||"—"} ({p.cantidad})</option>
+            ))}
+          </select>
+        </div>
+        {misTareasFiltradas.length===0&&(
+          <p className="text-gray-400 text-xs italic text-center py-6">Sin tareas asignadas en este proyecto.</p>
+        )}
+        {misTareasFiltradas.map(t=>(
           <div key={t._key+"_"+t.id} className="bg-white rounded-2xl border border-gray-200 p-4">
             <div className="flex items-start justify-between gap-2">
               <div className="flex-1 min-w-0">
@@ -26611,8 +26640,8 @@ function TareasAsignadasPanel({user,compromisos}){
               </p>
             )}
           </div>
-        ))
-      )}
+        ))}
+      </>)}
       {cambioEstadoPendiente&&(
         <ModalComentarioEstado
           tareaTitulo={cambioEstadoPendiente.tarea.titulo}
