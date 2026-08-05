@@ -1600,7 +1600,7 @@ const ROLE_DEFAULT_PERMS={
     checklist:true, historial_postop:true, deviaciones:true, reports:true,
     users:true, accesos:true, notifications:true,
     vessels:true, voyages:true, repuestos:true,
-    dashboard_checklist:true, operadores:true, config_reportes:true
+    dashboard_checklist:true, operadores:true, config_reportes:true, faena_activa:true
   },
   supervisor:{
     dashboard:true, workorders:true, equipment:true,
@@ -1608,14 +1608,15 @@ const ROLE_DEFAULT_PERMS={
     checklist:true, historial_postop:true, deviaciones:true, reports:true,
     users:true, accesos:true, notifications:false,
     vessels:true, voyages:true, repuestos:true, dashboard_checklist:true, operadores:true,
-    config_reportes:true
+    config_reportes:true, faena_activa:true
   },
   operaciones:{
     dashboard:true, workorders:false, equipment:false,
     plans:true, indicadores:false, requests:true,
     checklist:true, historial_postop:true, deviaciones:false, reports:false,
     users:false, accesos:false, notifications:true,
-    vessels:true, voyages:true, repuestos:false, dashboard_checklist:true, operadores:true
+    vessels:true, voyages:true, repuestos:false, dashboard_checklist:true, operadores:true,
+    faena_activa:true
   },
   mecanico:{
     dashboard:true, workorders:true, equipment:false,
@@ -1680,6 +1681,7 @@ const NAV_CATEGORIAS={
     paginas:[
       {key:"checklist",        label:"Checklist Pre-op"},
       {key:"historial_postop", label:"Historial Post-Op"},
+      {key:"faena_activa",     label:"Faena en Curso"},
     ],
   },
   mantenimiento:{
@@ -16381,6 +16383,415 @@ function PromedioPeriodoChart({datos,height=180,width=620}){
   );
 }
 
+// ─── FAENA EN CURSO (flujo operador) ─────────────────────────────────────────
+// Página nueva y separada de Disponibilidad y Utilización — a propósito NO
+// pasa por canAccessDisponibilidad (esa sigue siendo solo csilva/jimunoz).
+// Visible por rol (supervisor/operaciones/admin, ver ROLE_DEFAULT_PERMS) a
+// quien tenga el permiso "faena_activa" — csilva y jmunoz ya son "supervisor"
+// en Taller, así que entran acá también sin allowlist aparte. Escribe en las
+// MISMAS colecciones (mantek_faena/mantek_detenciones) que lee Disponibilidad,
+// pero solo csilva/jimunoz (canAccessDisponibilidad) pueden eliminar faenas o
+// detenciones desde acá — pensado para poder borrar pruebas.
+const TRACTO_GRUPOS_VALIDOS=["Mol","Kalmar","Terberg","Liftec"];
+function FaenaActivaPage({user,data}){
+  const equip=data?.equip||[];
+  const quien=user.name||user.username||"";
+  const puedeEliminar=canAccessDisponibilidad(user);
+
+  const [faenas,setFaenas]=useState([]);
+  const [detenciones,setDetenciones]=useState([]);
+  const [targets,setTargets]=useState([]);
+  const [loading,setLoading]=useState(true);
+
+  useEffect(()=>{
+    const u1=onSnapshot(doc(db,COLL_FAENA,"faenas"),snap=>{setFaenas(snap.exists()?(snap.data().data||[]):[]);setLoading(false);});
+    const u2=onSnapshot(doc(db,COLL_DETENCIONES,"detenciones"),snap=>setDetenciones(snap.exists()?(snap.data().data||[]):[]));
+    const u3=onSnapshot(doc(db,COLL_FAENA_TARGETS,"config"),snap=>setTargets(snap.exists()?(snap.data().data||[]):[]));
+    return()=>{u1();u2();u3();};
+  },[]);
+
+  const hoy=new Date().toISOString().slice(0,10);
+  // La faena activa del usuario NO se acota a "hoy" — si quedó abierta de un
+  // turno anterior (ej. faena nocturna sin cerrar), tiene que seguir
+  // apareciendo acá para poder cerrarla, no esconderse al pasar la medianoche.
+  const faenaActiva=faenas.find(f=>f.estado==="activa"&&f.creadoPor===quien);
+
+  const [vista,setVista]=useState("inicio");
+  const [form,setForm]=useState({
+    buque:"ESPERANZA",terminal:"PMC",numeroBase:"",sector:"S",
+    inicioOp:new Date().toISOString().slice(0,16),
+    tractosEnServicio:[],tractosUtilizados:"",capacidadOperadores:"",
+  });
+  const [showFormDetencion,setShowFormDetencion]=useState(false);
+  const [formDet,setFormDet]=useState({equipo:"",inicio:"",fin:"",tipo:"DM",novedades:""});
+  const [horaFin,setHoraFin]=useState("");
+
+  const tractosTerminal=equip.filter(e=>!e.deleted&&TRACTO_GRUPOS_VALIDOS.includes(getGroup(e)));
+  const detencionesActiva=detenciones.filter(d=>faenaActiva&&d.faenaId===faenaActiva.id);
+  const totalHorasDet=detencionesActiva.reduce((s,d)=>s+(d.horasReparacion||0),0);
+  const targetActual=targets.find(t=>t.buque===form.buque&&t.terminal===form.terminal);
+
+  const guardarFaenas=async(actualizadas)=>{setFaenas(actualizadas);await setDoc(doc(db,COLL_FAENA,"faenas"),{data:actualizadas});};
+  const guardarDetenciones=async(actualizadas)=>{setDetenciones(actualizadas);await setDoc(doc(db,COLL_DETENCIONES,"detenciones"),{data:actualizadas});};
+
+  const iniciarFaena=async()=>{
+    if(!form.numeroBase.trim()||!form.inicioOp||!form.capacidadOperadores||!form.tractosUtilizados){
+      alert("Completa los campos obligatorios.");return;
+    }
+    if(!targetActual){alert(`No hay target configurado para ${form.buque} · ${form.terminal}. Pídele a un supervisor que lo agregue en Disponibilidad y Utilización antes de iniciar.`);return;}
+    const numeroFaena=`${form.numeroBase.trim()} ${form.sector}`;
+    const dup=faenas.find(f=>f.buque===form.buque&&f.numeroFaena.trim().toUpperCase()===numeroFaena.toUpperCase());
+    if(dup&&!window.confirm(`Ya existe una faena ${form.buque} N°"${dup.numeroFaena}" (${dup.estado==="activa"?"en curso":"cerrada"}). ¿Iniciar igual?`)) return;
+    const nueva={
+      id:uid(),buque:form.buque,terminal:form.terminal,numeroFaena,sector:form.sector,
+      inicioOp:new Date(form.inicioOp).toISOString(),terminoOp:"",
+      tractosOp:form.tractosEnServicio.length||parseInt(form.tractosUtilizados)||0,
+      tractosUtilizados:parseInt(form.tractosUtilizados)||0,
+      capacidadOperadores:parseInt(form.capacidadOperadores)||0,
+      tractosEnServicio:form.tractosEnServicio,
+      estado:"activa",creadoPor:quien,creadoEn:new Date().toISOString(),
+    };
+    await guardarFaenas([...faenas,nueva]);
+    setForm(f=>({...f,numeroBase:"",tractosEnServicio:[],tractosUtilizados:"",capacidadOperadores:""}));
+    setVista("faena_abierta");
+  };
+
+  const cerrarFaena=async()=>{
+    if(!horaFin){alert("Ingresa la hora de término.");return;}
+    if(detencionesActiva.some(d=>!d.fin)){alert("Completa la hora de reposición de todos los tractos detenidos antes de cerrar.");return;}
+    const terminoOp=new Date(horaFin).toISOString();
+    const indisp=detencionesActiva.reduce((s,d)=>s+(d.horasReparacion||0),0);
+    const derivados=calcularFaenaDerivados({...faenaActiva,terminoOp},targets,indisp);
+    if(!derivados){alert("No se pudo calcular la faena — revisa que el horario de término sea posterior al de inicio y que exista un target configurado.");return;}
+    const cerrada={...faenaActiva,terminoOp,estado:"cerrada",indisponibilidadHH:indisp,...derivados,cerradoPor:quien,cerradoEn:new Date().toISOString()};
+    await guardarFaenas(faenas.map(f=>f.id===faenaActiva.id?cerrada:f));
+    setHoraFin("");
+    setVista("inicio");
+  };
+
+  const registrarDetencion=async()=>{
+    if(!formDet.equipo||!formDet.inicio){alert("Selecciona el tracto y la hora de falla.");return;}
+    const eq=equip.find(e=>e.id===formDet.equipo);
+    const inicioISO=new Date(formDet.inicio).toISOString();
+    const finISO=formDet.fin?new Date(formDet.fin).toISOString():"";
+    const nueva={
+      id:uid(),fecha:inicioISO,buque:faenaActiva.buque,faenaId:faenaActiva.id,numeroFaena:faenaActiva.numeroFaena,
+      inicio:inicioISO,fin:finISO,
+      horasReparacion:finISO?(new Date(finISO)-new Date(inicioISO))/3600000:0,
+      equipo:eq?.code||formDet.equipo,componente:"",modoFalla:"",
+      tipo:formDet.tipo,novedades:formDet.novedades.trim(),
+      familiaEquipo:eq?(getGroup(eq)==="Grúa"?"OTROS":getGroup(eq).toUpperCase()):"KALMAR",
+      clasificacion:formDet.tipo==="DE"?"ELECTRICA":formDet.tipo==="DO"?"OPERACIONAL":"MECANICA",
+      creadoPor:quien,creadoEn:new Date().toISOString(),
+    };
+    await guardarDetenciones([...detenciones,nueva]);
+    setShowFormDetencion(false);
+    setFormDet({equipo:"",inicio:"",fin:"",tipo:"DM",novedades:""});
+  };
+
+  const reponerDetencion=async(d,finVal)=>{
+    if(!finVal) return;
+    const finISO=new Date(finVal).toISOString();
+    const actualizada={...d,fin:finISO,horasReparacion:(new Date(finISO)-new Date(d.inicio))/3600000};
+    await guardarDetenciones(detenciones.map(x=>x.id===d.id?actualizada:x));
+  };
+
+  const eliminarFaenaPrueba=async(f)=>{
+    if(!puedeEliminar) return;
+    if(!window.confirm(`¿Eliminar la faena ${f.numeroFaena}? Esto borra también sus detenciones asociadas.`)) return;
+    await guardarDetenciones(detenciones.filter(d=>d.faenaId!==f.id));
+    await guardarFaenas(faenas.filter(x=>x.id!==f.id));
+    if(faenaActiva?.id===f.id) setVista("inicio");
+  };
+
+  if(!getUserPerms(user).faena_activa) return null;
+  if(loading) return <div className="flex-1 flex items-center justify-center p-10 text-gray-400 text-sm">Cargando…</div>;
+
+  const iCls="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-blue-400";
+  const sCls="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm bg-white focus:outline-none focus:border-blue-400";
+
+  // ── VISTA: sin faena activa (o el usuario volvió a "inicio" manualmente) ──
+  if(!faenaActiva||vista==="inicio"){
+    const faenasHoy=faenas.filter(f=>(f.inicioOp||"").slice(0,10)===hoy).sort((a,b)=>new Date(b.inicioOp)-new Date(a.inicioOp));
+    return(
+      <div className="flex-1 overflow-y-auto p-4 space-y-5">
+        <div className="bg-white rounded-2xl border border-gray-200 p-5">
+          <p className="text-lg font-bold text-gray-900 flex items-center gap-2"><span>🚢</span> Iniciar Faena</p>
+          <p className="text-gray-400 text-sm mt-0.5">{new Date().toLocaleDateString("es-CL",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}</p>
+        </div>
+
+        <div className="bg-white rounded-2xl border border-gray-200 p-5 space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1.5">Buque</label>
+              <select value={form.buque} onChange={e=>setForm(f=>({...f,buque:e.target.value}))} className={sCls}>
+                <option value="ESPERANZA">Esperanza</option>
+                <option value="DALKA">Dalka</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1.5">Terminal</label>
+              <select value={form.terminal} onChange={e=>setForm(f=>({...f,terminal:e.target.value}))} className={sCls}>
+                <option value="PMC">PMC — Puerto Montt</option>
+                <option value="NAT">NAT — Puerto Natales</option>
+                <option value="UCO">UCO — Chacabuco</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1.5">N° de Faena *</label>
+            <div className="flex gap-2">
+              <input type="number" value={form.numeroBase} onChange={e=>setForm(f=>({...f,numeroBase:e.target.value}))} className={iCls+" flex-1"} placeholder="Ej: 238"/>
+              <div className="flex gap-1">
+                {["S","N"].map(s=>(
+                  <button key={s} onClick={()=>setForm(f=>({...f,sector:s}))}
+                    className={`px-4 py-2 rounded-xl font-bold text-sm border transition ${form.sector===s?"bg-blue-600 text-white border-blue-600":"bg-white text-gray-600 border-gray-300 hover:border-blue-400"}`}>
+                    {s==="S"?"SUR":"NORTE"}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {form.numeroBase&&<p className="text-xs text-blue-600 mt-1 font-semibold">Faena: {form.numeroBase} {form.sector}</p>}
+            {!targetActual&&<p className="text-xs text-red-500 mt-1">⚠ Sin target configurado para {form.buque} · {form.terminal}.</p>}
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1.5">Inicio de Faena *</label>
+            <input type="datetime-local" value={form.inicioOp} onChange={e=>setForm(f=>({...f,inicioOp:e.target.value}))} className={iCls}/>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1.5">N° Operadores *</label>
+              <input type="number" min="1" value={form.capacidadOperadores} onChange={e=>setForm(f=>({...f,capacidadOperadores:e.target.value}))} className={iCls} placeholder="Ej: 10"/>
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1.5">Tractos Utilizados *</label>
+              <input type="number" min="1" value={form.tractosUtilizados} onChange={e=>setForm(f=>({...f,tractosUtilizados:e.target.value}))} className={iCls} placeholder="Ej: 8"/>
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1.5">
+              Tractos en Servicio<span className="ml-1.5 text-gray-400 font-normal normal-case">({form.tractosEnServicio.length} seleccionados)</span>
+            </label>
+            <div className="border border-gray-200 rounded-xl p-3 max-h-48 overflow-y-auto">
+              {tractosTerminal.length===0?(
+                <p className="text-gray-400 text-sm text-center py-2">Sin equipos registrados</p>
+              ):(
+                <div className="grid grid-cols-2 gap-1.5">
+                  {tractosTerminal.sort((a,b)=>(a.code||"").localeCompare(b.code||"")).map(e=>{
+                    const sel=form.tractosEnServicio.includes(e.id);
+                    return(
+                      <button key={e.id}
+                        onClick={()=>setForm(f=>({...f,tractosEnServicio:sel?f.tractosEnServicio.filter(id=>id!==e.id):[...f.tractosEnServicio,e.id]}))}
+                        className={`text-left px-3 py-2 rounded-lg border text-xs font-semibold transition ${sel?"bg-blue-50 border-blue-400 text-blue-800":"bg-gray-50 border-gray-200 text-gray-600 hover:border-blue-300"}`}>
+                        {e.code}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <button onClick={iniciarFaena}
+          className="w-full py-4 rounded-2xl text-white text-base font-bold transition shadow-lg hover:opacity-90 flex items-center justify-center gap-2"
+          style={{background:"linear-gradient(135deg,#2563eb,#1d4ed8)"}}>
+          🚀 Iniciar Faena
+        </button>
+
+        {faenasHoy.length>0&&(
+          <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+            <div className="px-4 py-3 border-b border-gray-100"><p className="font-bold text-gray-800 text-sm">Faenas de hoy</p></div>
+            <div className="divide-y divide-gray-50">
+              {faenasHoy.map(f=>(
+                <div key={f.id} className="flex items-center gap-3 px-4 py-3">
+                  <div className={`w-2 h-2 rounded-full flex-shrink-0 ${f.estado==="activa"?"bg-emerald-500":"bg-gray-300"}`}/>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-gray-800">Faena {f.numeroFaena}</p>
+                    <p className="text-xs text-gray-400">{f.buque} · {f.terminal} · {f.estado==="activa"?"En curso":"Cerrada"}{f.creadoPor?` · ${f.creadoPor}`:""}</p>
+                  </div>
+                  {f.estado==="activa"&&f.creadoPor===quien&&(
+                    <button onClick={()=>setVista("faena_abierta")} className="text-xs px-3 py-1.5 rounded-xl bg-blue-600 text-white font-semibold hover:bg-blue-700 transition">Continuar →</button>
+                  )}
+                  {puedeEliminar&&(
+                    <button onClick={()=>eliminarFaenaPrueba(f)} className="text-gray-300 hover:text-red-500" title="Eliminar (solo csilva/jimunoz)"><Trash2 size={14}/></button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── VISTA: faena activa — registrar detenciones y cerrar ──
+  return(
+    <div className="flex-1 overflow-y-auto">
+      <div className="px-4 pt-4 pb-3 bg-white border-b border-gray-200 sticky top-0 z-10">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"/>
+              <p className="font-bold text-gray-900">Faena {faenaActiva.numeroFaena}</p>
+            </div>
+            <p className="text-xs text-gray-400 mt-0.5">
+              {faenaActiva.buque} · {faenaActiva.terminal} · Inicio: {new Date(faenaActiva.inicioOp).toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit"})}
+            </p>
+          </div>
+          <div className="text-right">
+            <p className="text-xs text-gray-500">Operadores: <strong>{faenaActiva.capacidadOperadores}</strong></p>
+            <p className="text-xs text-gray-500">Tractos: <strong>{faenaActiva.tractosUtilizados}</strong></p>
+          </div>
+        </div>
+        {detencionesActiva.length>0&&(
+          <div className="mt-2 flex items-center gap-3 bg-red-50 border border-red-200 rounded-xl px-3 py-2">
+            <span className="text-red-500 text-sm">⚠️</span>
+            <p className="text-xs text-red-700 font-semibold">{detencionesActiva.length} detención{detencionesActiva.length>1?"es":""} · {totalHorasDet.toFixed(2)} hrs total</p>
+          </div>
+        )}
+      </div>
+
+      <div className="p-4 space-y-3">
+        {detencionesActiva.length===0?(
+          <div className="text-center py-10">
+            <p className="text-4xl mb-2">✅</p>
+            <p className="text-gray-500 font-semibold text-sm">Sin detenciones registradas</p>
+            <p className="text-gray-400 text-xs mt-1">Presiona "Agregar detención" si un tracto falla</p>
+          </div>
+        ):(
+          detencionesActiva.map(d=>{
+            const eq=equip.find(e=>e.id===d.equipo||e.code===d.equipo);
+            const durMin=d.horasReparacion?Math.round(d.horasReparacion*60):null;
+            return(
+              <div key={d.id} className="bg-white rounded-2xl border border-red-200 p-4 shadow-sm">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="font-bold text-gray-900 text-sm flex items-center gap-2"><span className="text-red-500">⚠️</span>{eq?.code||d.equipo||"Equipo"}</p>
+                    <div className="flex gap-3 mt-1">
+                      <span className="text-xs text-gray-500">🕐 {(d.inicio||"").slice(11,16)}{d.fin&&` → ${(d.fin||"").slice(11,16)}`}</span>
+                      {durMin&&<span className="text-xs font-bold text-red-600">{durMin} min</span>}
+                    </div>
+                    {d.novedades&&<p className="text-xs text-gray-500 mt-1">{d.novedades}</p>}
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${d.tipo==="DM"?"bg-red-100 text-red-700":d.tipo==="DE"?"bg-blue-100 text-blue-700":"bg-amber-100 text-amber-700"}`}>{d.tipo}</span>
+                    {puedeEliminar&&(
+                      <button onClick={async()=>{if(window.confirm("¿Eliminar esta detención?"))await guardarDetenciones(detenciones.filter(x=>x.id!==d.id));}}
+                        className="text-gray-300 hover:text-red-500" title="Eliminar (solo csilva/jimunoz)"><Trash2 size={13}/></button>
+                    )}
+                  </div>
+                </div>
+                {!d.fin&&(
+                  <div className="mt-3 pt-3 border-t border-red-100">
+                    <p className="text-xs text-red-600 font-semibold mb-1.5">⏳ Tracto aún detenido — ingresa hora de reposición:</p>
+                    <div className="flex gap-2">
+                      <input type="datetime-local" className={iCls+" flex-1 text-xs"} defaultValue={new Date().toISOString().slice(0,16)} id={`fin_${d.id}`}/>
+                      <button onClick={()=>reponerDetencion(d,document.getElementById(`fin_${d.id}`)?.value)}
+                        className="px-3 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 transition whitespace-nowrap">
+                        Reponer ✓
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )}
+
+        <button onClick={()=>setShowFormDetencion(true)}
+          className="w-full py-3 rounded-2xl border-2 border-dashed border-red-300 text-red-500 text-sm font-bold hover:bg-red-50 transition flex items-center justify-center gap-2">
+          ⚠️ Agregar detención de tracto
+        </button>
+
+        <div className="border-t border-gray-200 my-2"/>
+
+        <div className="bg-white rounded-2xl border border-gray-200 p-4 space-y-3">
+          <p className="font-semibold text-gray-800 text-sm">Cerrar faena</p>
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1.5">Hora de término *</label>
+            <input type="datetime-local" value={horaFin} onChange={e=>setHoraFin(e.target.value)} min={faenaActiva.inicioOp?.slice(0,16)} className={iCls}/>
+          </div>
+          {detencionesActiva.some(d=>!d.fin)&&(
+            <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+              <p className="text-xs text-amber-700 font-semibold">⚠️ Hay {detencionesActiva.filter(d=>!d.fin).length} tracto(s) sin hora de reposición. Completa antes de cerrar.</p>
+            </div>
+          )}
+          <button onClick={cerrarFaena} disabled={!horaFin||detencionesActiva.some(d=>!d.fin)}
+            className="w-full py-3.5 rounded-2xl text-white font-bold text-sm transition disabled:opacity-40 disabled:cursor-not-allowed"
+            style={{background:"#CC0000"}}>
+            🔒 Cerrar y guardar faena
+          </button>
+        </div>
+      </div>
+
+      {showFormDetencion&&(
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4" style={{background:"rgba(0,0,0,0.5)"}}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+            <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+              <p className="font-bold text-gray-900">⚠️ Nueva detención</p>
+              <button onClick={()=>setShowFormDetencion(false)} className="text-gray-400 text-xl hover:text-gray-600">×</button>
+            </div>
+            <div className="px-5 py-4 space-y-3">
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1.5">Tracto en falla *</label>
+                <select value={formDet.equipo} onChange={e=>setFormDet(f=>({...f,equipo:e.target.value}))} className={sCls}>
+                  <option value="">Seleccionar tracto...</option>
+                  {(faenaActiva.tractosEnServicio?.length>0
+                    ?faenaActiva.tractosEnServicio.map(id=>equip.find(e=>e.id===id)).filter(Boolean)
+                    :tractosTerminal
+                  ).sort((a,b)=>(a.code||"").localeCompare(b.code||"")).map(e=>(
+                    <option key={e.id} value={e.id}>{e.code}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1.5">Hora de falla *</label>
+                <input type="datetime-local" value={formDet.inicio} min={faenaActiva.inicioOp?.slice(0,16)} onChange={e=>setFormDet(f=>({...f,inicio:e.target.value}))} className={iCls}/>
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1.5">
+                  Hora de reposición<span className="ml-1 text-gray-400 font-normal normal-case">(opcional, se puede agregar después)</span>
+                </label>
+                <input type="datetime-local" value={formDet.fin} min={formDet.inicio||faenaActiva.inicioOp?.slice(0,16)} onChange={e=>setFormDet(f=>({...f,fin:e.target.value}))} className={iCls}/>
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1.5">Tipo de detención</label>
+                <div className="flex gap-2">
+                  {[{v:"DM",l:"Mecánica"},{v:"DE",l:"Eléctrica"},{v:"DO",l:"Operacional"}].map(({v,l})=>(
+                    <button key={v} onClick={()=>setFormDet(f=>({...f,tipo:v}))}
+                      className={`flex-1 py-2 rounded-xl text-xs font-bold border transition ${formDet.tipo===v?"bg-red-600 text-white border-red-600":"bg-gray-50 text-gray-600 border-gray-200 hover:border-red-300"}`}>
+                      {v}<br/><span className="font-normal">{l}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1.5">Descripción / Novedades</label>
+                <textarea value={formDet.novedades} onChange={e=>setFormDet(f=>({...f,novedades:e.target.value}))} className={iCls+" resize-none"} rows={2} placeholder="Describe brevemente la falla..."/>
+              </div>
+              <div className="flex gap-3 pt-1">
+                <button onClick={()=>{setShowFormDetencion(false);setFormDet({equipo:"",inicio:"",fin:"",tipo:"DM",novedades:""});}}
+                  className="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-600 text-sm font-semibold hover:bg-gray-50 transition">
+                  Cancelar
+                </button>
+                <button onClick={registrarDetencion} disabled={!formDet.equipo||!formDet.inicio}
+                  className="flex-1 py-2.5 rounded-xl text-white text-sm font-bold transition disabled:opacity-40" style={{background:"#CC0000"}}>
+                  Registrar detención
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DisponibilidadUtilizacion({user,data}){
   const equip=data?.equip||[];
   const [targets,setTargets]=useState([]);
@@ -16621,7 +17032,11 @@ function DisponibilidadUtilizacion({user,data}){
   };
   const promediosPorPeriodo=useMemo(()=>{
     const grupos={};
-    faenas.forEach(f=>{
+    // Excluye faenas "activas" (iniciadas desde Faena en Curso, todavía sin
+    // cerrar) — no tienen anio/mes/disponibilidadTecnica calculados todavía
+    // (calcularFaenaDerivados requiere terminoOp), así que sumarlas acá
+    // metería un grupo "undefined-undefined" con NaN en el gráfico.
+    faenas.filter(f=>f.estado!=="activa").forEach(f=>{
       const{key,label}=periodoDeFecha(f.anio,f.mes,granularidadPromedio);
       if(!grupos[key]) grupos[key]={key,label,ESPERANZA:{d:0,u:0,n:0},DALKA:{d:0,u:0,n:0}};
       const g=grupos[key][f.buque];
@@ -17524,7 +17939,7 @@ function DisponibilidadUtilizacion({user,data}){
               <div className="flex items-center gap-2">
                 <select value={informeAnio} onChange={e=>setInformeAnio(parseInt(e.target.value))}
                   className="px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs bg-white">
-                  {Array.from(new Set([...faenas.map(f=>f.anio),new Date().getFullYear()])).sort((a,b)=>b-a).map(a=>(
+                  {Array.from(new Set([...faenas.map(f=>f.anio).filter(Boolean),new Date().getFullYear()])).sort((a,b)=>b-a).map(a=>(
                     <option key={a} value={a}>{a}</option>
                   ))}
                 </select>
@@ -32145,6 +32560,7 @@ repuestos:     <RepuestosPage user={user} data={data} setData={setData} saveData
 config_reportes:<ConfigReportes user={user}/>,
 gastos:        <GastosPresupuesto user={user} data={data} activeModule={activeModule} activeBarco={activeBarco}/>,
 disponibilidad:<DisponibilidadUtilizacion user={user} data={data}/>,
+faena_activa:  <FaenaActivaPage user={user} data={data}/>,
 };
 
 return(
