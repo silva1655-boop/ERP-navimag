@@ -9268,6 +9268,7 @@ const updateAssignmentResponsable=(assign,userId)=>{
 // ── Editar plan (legacy: edita el plan directo · basado en plantilla: edita solo esa asignación) ──
 const openEditPlanAssign=(assign)=>{
   const tplA=assign._isLegacy?null:planTemplates.find(t=>t.id===assign.templateId);
+  const refLegacy=assign._planRef;
   setEditPlanAssign(assign);
   setEditPlanAssignForm({
     nombre:assign._isLegacy?assign._nombre:(assign.nombreOverride||tplA?.name||""),
@@ -9277,6 +9278,13 @@ const openEditPlanAssign=(assign)=>{
     area:assign.area||"",
     responsable:assign.responsable||"",
     estimatedHours:String(assign._isLegacy?(assign._estimatedHours||""):(assign.estimatedHoursOverride??tplA?.estimatedHours??"")),
+    // Estos 5 campos existen en el modal de creación (EMPTY_PLAN_FORM) pero
+    // faltaban acá — mismo bug que en el plan legacy, esta era la otra mitad.
+    fechaUltima:assign._isLegacy?(refLegacy?.fechaUltima||""):(assign.fechaUltima||assign.lastExecutionDate||""),
+    pctAnticipacion:assign._isLegacy?(refLegacy?.pctAnticipacion??20):(assign.pctAnticipacion??tplA?.pctAnticipacion??20),
+    valorRepuesto:String(assign._isLegacy?(refLegacy?.valorRepuesto||""):(assign.valorRepuesto||"")),
+    valorServicio:String(assign._isLegacy?(refLegacy?.valorServicio||""):(assign.valorServicio||"")),
+    moneda:(assign._isLegacy?refLegacy?.moneda:assign.moneda)||"USD",
     materialesAsociados:assign._isLegacy?(assign._planRef?.materialesAsociados||[]):(assign.materialesAsociados||[]),
   });
   setShowEditPlanAssign(true);
@@ -9299,7 +9307,12 @@ const saveEditPlanAssign=()=>{
     pushCambio("Criticidad",pl.criticidad,f.criticidad);
     pushCambio("Área",pl.area,f.area);
     pushCambio("Responsable",pl.responsable,f.responsable);
-    const nextDueDateCalc=tipoPlanNorm==="calendario"?(()=>{const base=pl.fechaUltima||new Date().toISOString().slice(0,10);const d=new Date(base);d.setDate(d.getDate()+freq);return d.toISOString().slice(0,10);})():null;
+    pushCambio("Fecha última OT",pl.fechaUltima,f.fechaUltima);
+    // La base de "próximo PM" (solo calendario) usa la fecha última YA
+    // corregida en este mismo guardado, no la anterior — si se edita acá
+    // para arreglar un desfase, el próximo vencimiento tiene que recalcularse
+    // desde el valor corregido, no desde el que se está reemplazando.
+    const nextDueDateCalc=tipoPlanNorm==="calendario"?(()=>{const base=f.fechaUltima||pl.fechaUltima||new Date().toISOString().slice(0,10);const d=new Date(base);d.setDate(d.getDate()+freq);return d.toISOString().slice(0,10);})():null;
     const updatedPlan={
       ...pl,
       name:f.nombre,
@@ -9313,6 +9326,12 @@ const saveEditPlanAssign=()=>{
       responsablePlan:f.responsable,
       technician:f.responsable,
       estimatedHours:parseFloat(f.estimatedHours)||0,
+      fechaUltima:f.fechaUltima||pl.fechaUltima,
+      lastExecutionDate:f.fechaUltima||pl.lastExecutionDate,
+      pctAnticipacion:parseFloat(f.pctAnticipacion)||20,
+      valorRepuesto:parseFloat(f.valorRepuesto)||0,
+      valorServicio:parseFloat(f.valorServicio)||0,
+      moneda:f.moneda||"USD",
       materialesAsociados:f.materialesAsociados||[],
       ...(tipoPlanNorm==="horometro"
         ?{horometroTarget:(parseFloat(pl.lastHorometro)||0)+freq,nextDueDate:null,proximaFecha:""}
@@ -9335,7 +9354,10 @@ const saveEditPlanAssign=()=>{
     pushCambio("Criticidad",a0.criticidad,f.criticidad);
     pushCambio("Área",a0.area,f.area);
     pushCambio("Responsable",a0.responsable,f.responsable);
-    const nextDueDateCalc=tipoPlanNorm==="calendario"?(()=>{const base=a0.lastExecutionDate||new Date().toISOString().slice(0,10);const d=new Date(base);d.setDate(d.getDate()+freq);return d.toISOString().slice(0,10);})():null;
+    pushCambio("Fecha última OT",a0.fechaUltima||a0.lastExecutionDate,f.fechaUltima);
+    // Misma razón que en la rama legacy: recalcular desde f.fechaUltima
+    // (el valor recién corregido), no desde a0.lastExecutionDate (el viejo).
+    const nextDueDateCalc=tipoPlanNorm==="calendario"?(()=>{const base=f.fechaUltima||a0.lastExecutionDate||new Date().toISOString().slice(0,10);const d=new Date(base);d.setDate(d.getDate()+freq);return d.toISOString().slice(0,10);})():null;
     const upd=planAssignments.map(a=>a.id===a0.id?{
       ...a,
       nombreOverride:f.nombre,
@@ -9345,10 +9367,15 @@ const saveEditPlanAssign=()=>{
       area:f.area,
       responsable:f.responsable,
       estimatedHoursOverride:parseFloat(f.estimatedHours)||0,
+      fechaUltima:f.fechaUltima||a0.fechaUltima,
+      pctAnticipacion:parseFloat(f.pctAnticipacion)||20,
+      valorRepuesto:parseFloat(f.valorRepuesto)||0,
+      valorServicio:parseFloat(f.valorServicio)||0,
+      moneda:f.moneda||"USD",
       materialesAsociados:f.materialesAsociados||[],
       ...(tipoPlanNorm==="horometro"
         ?{nextDueHours:(parseFloat(a.lastBaseHours)||0)+freq,nextDueDate:null}
-        :{nextDueHours:null,nextDueDate:nextDueDateCalc,lastExecutionDate:a.lastExecutionDate||new Date().toISOString().slice(0,10)}),
+        :{nextDueHours:null,nextDueDate:nextDueDateCalc,lastExecutionDate:f.fechaUltima||a.lastExecutionDate||new Date().toISOString().slice(0,10)}),
       historialCambios:[
         {ts:new Date().toISOString(),usuario:user.name,accion:"editado",detalle:cambios.length>0?cambios.join(" · "):"Guardado sin cambios"},
         ...(a.historialCambios||[]),
@@ -9641,6 +9668,27 @@ if(isMaritimo){
           </select>
         </div>
         <div>
+          <label className={lbl}>FECHA ÚLTIMA OT</label>
+          <input type="date" value={editPlanAssignForm.fechaUltima||""} onChange={e=>setEditPlanAssignForm(f=>({...f,fechaUltima:e.target.value}))} className={iCls}/>
+        </div>
+        <div>
+          <label className={lbl}>% ANTICIPACIÓN PARA GENERAR OT <span className="text-blue-500 font-bold">{parseFloat(editPlanAssignForm.pctAnticipacion)||20}%</span></label>
+          <input type="range" min="0" max="50" step="5" value={parseFloat(editPlanAssignForm.pctAnticipacion)||20} onChange={e=>setEditPlanAssignForm(f=>({...f,pctAnticipacion:parseFloat(e.target.value)}))} className="w-full accent-blue-600"/>
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          <div><label className={lbl}>VALOR REPUESTO</label>
+            <input type="number" value={editPlanAssignForm.valorRepuesto} onChange={e=>setEditPlanAssignForm(f=>({...f,valorRepuesto:e.target.value}))} className={iCls} placeholder="0"/>
+          </div>
+          <div><label className={lbl}>VALOR SERVICIO</label>
+            <input type="number" value={editPlanAssignForm.valorServicio} onChange={e=>setEditPlanAssignForm(f=>({...f,valorServicio:e.target.value}))} className={iCls} placeholder="0"/>
+          </div>
+          <div><label className={lbl}>MONEDA</label>
+            <select value={editPlanAssignForm.moneda} onChange={e=>setEditPlanAssignForm(f=>({...f,moneda:e.target.value}))} className={sCls}>
+              <option value="USD">USD</option><option value="CLP">CLP</option><option value="EUR">EUR</option>
+            </select>
+          </div>
+        </div>
+        <div>
           <MaterialesEquipoQuickPick
             equipId={editPlanAssign.equipId}
             materialesEquipo={materialesEquipo}
@@ -9743,6 +9791,30 @@ if(isMaritimo){
     const barColor=esCalSel
       ?(daysLeftSel!==null&&daysLeftSel<0?"#dc2626":daysLeftSel!==null&&daysLeftSel<=Math.round(freq*0.2)?"#f59e0b":"#16a34a")
       :(remaining<0?"#dc2626":remaining<=100?"#f59e0b":"#16a34a");
+    // Fecha real de última ejecución — SIEMPRE desde la OT cerrada más
+    // reciente asociada al plan (nunca desde el campo guardado a secas), y
+    // usada por TODOS los lugares del panel que muestran "Última ejecución"
+    // (arriba, en Progreso calendario, y abajo en el bloque verde) para que
+    // nunca puedan mostrar fechas distintas. Antes el bloque de arriba leía
+    // selectedAssignDetail.lastExecutionDate directo y el verde recalculaba
+    // por su cuenta filtrando solo por assignmentId — eso dejaba a los planes
+    // legacy (cuyas OTs usan planId, no assignmentId) sin match nunca, y
+    // permitía que ambos bloques quedaran desincronizados si el campo
+    // guardado se editaba manualmente sin pasar por el cierre de una OT.
+    const ultimaOTCerradaSel=(wos||[])
+      .filter(w=>(selectedAssignDetail._isLegacy?w.planId===selectedAssignDetail.id:w.assignmentId===selectedAssignDetail.id)&&w.status==="completada")
+      .sort((a,b)=>new Date(b.horaTerminoReal||b.closedAt||b.createdAt||0)-new Date(a.horaTerminoReal||a.closedAt||a.createdAt||0))[0];
+    const fechaUltimaReal=ultimaOTCerradaSel?.horaTerminoReal||ultimaOTCerradaSel?.closedAt
+      ||selectedAssignDetail.fechaUltima||selectedAssignDetail.lastExecutionDate||null;
+    // Fechas planas "YYYY-MM-DD" (sin hora) las parsea Date() como medianoche
+    // UTC — en un huso negativo (Chile) eso puede mostrar el día anterior.
+    // fmt() genérico no corrige esto; acá sí, igual que hacía antes el
+    // bloque verde con su fechaFmt local.
+    const fmtFechaReal=iso=>{
+      if(!iso) return "—";
+      const isoFull=iso.length===10?iso+"T12:00:00":iso;
+      return new Date(isoFull).toLocaleDateString("es-CL",{day:"2-digit",month:"2-digit",year:"numeric"});
+    };
     return(
     <DetailPanel onClose={()=>setSelectedAssignDetail(null)}>
       <div className="flex items-center justify-between p-4 border-b border-gray-100 flex-shrink-0">
@@ -9771,7 +9843,7 @@ if(isMaritimo){
           {esCalSel?(<>
             <div className="flex justify-between text-sm">
               <span className="text-gray-500">Última ejecución</span>
-              <span className="font-mono font-bold text-gray-800">{selectedAssignDetail.lastExecutionDate?fmt(selectedAssignDetail.lastExecutionDate):"—"}</span>
+              <span className="font-mono font-bold text-gray-800">{fmtFechaReal(fechaUltimaReal)}</span>
             </div>
             <div className="flex justify-between text-sm">
               <span className="text-gray-500">Próximo PM</span>
@@ -9789,7 +9861,7 @@ if(isMaritimo){
                 <div className="h-full rounded-full transition-all" style={{width:`${barPct}%`,background:barColor}}/>
               </div>
               <div className="flex justify-between text-xs text-gray-400 mt-1">
-                <span>{selectedAssignDetail.lastExecutionDate?fmt(selectedAssignDetail.lastExecutionDate):"—"}</span>
+                <span>{fmtFechaReal(fechaUltimaReal)}</span>
                 <span>{selectedAssignDetail.nextDueDate?fmt(selectedAssignDetail.nextDueDate):"—"}</span>
               </div>
             </div>
@@ -9829,45 +9901,33 @@ if(isMaritimo){
           <p className="text-xs mt-0.5" style={{color:"#3B82F6"}}>{openOT.title}</p>
         </div>
         )}
-        {/* Última ejecución real — nunca new Date() sin corregir timezone */}
-        {(()=>{
-          const ultimaOT=(wos||[])
-            .filter(w=>w.assignmentId===selectedAssignDetail.id&&w.status==="completada")
-            .sort((a,b)=>new Date(b.horaTerminoReal||b.closedAt||b.createdAt||0)-new Date(a.horaTerminoReal||a.closedAt||a.createdAt||0))[0];
-          const fechaReal=ultimaOT?.horaTerminoReal||ultimaOT?.fechaTermino||selectedAssignDetail.fechaUltima||selectedAssignDetail.lastExecutionDate||null;
-          if(!fechaReal) return null;
-          const fechaFmt=iso=>{
-            if(!iso) return "—";
-            const isoFull=iso.length===10?iso+"T12:00:00":iso;
-            return new Date(isoFull).toLocaleDateString("es-CL",{day:"2-digit",month:"2-digit",year:"numeric"});
-          };
-          return(
-            <div className="rounded-xl p-3 border border-emerald-100" style={{background:"#F0FDF4"}}>
-              <p className="text-emerald-600 text-xs font-semibold uppercase mb-2 flex items-center gap-1.5">
-                <CheckCircle size={10}/>Última ejecución
-              </p>
-              <div className="space-y-1.5">
-                <div className="flex justify-between text-xs">
-                  <span className="text-gray-500">Fecha</span>
-                  <span className="font-semibold text-gray-800 font-mono">{fechaFmt(fechaReal)}</span>
-                </div>
-                {ultimaOT?.horometroCierre&&(
-                  <div className="flex justify-between text-xs">
-                    <span className="text-gray-500">Horómetro</span>
-                    <span className="font-mono font-semibold text-gray-800">{parseFloat(ultimaOT.horometroCierre).toLocaleString()}h</span>
-                  </div>
-                )}
-                {ultimaOT?.assignedToName&&(
-                  <div className="flex justify-between text-xs">
-                    <span className="text-gray-500">Técnico</span>
-                    <span className="text-gray-700">{ultimaOT.assignedToName}</span>
-                  </div>
-                )}
-                {ultimaOT?.code&&(<p className="text-[10px] font-mono text-blue-500 mt-1">{ultimaOT.code}</p>)}
+        {/* Última ejecución real — misma fuente que el bloque de arriba (fechaUltimaReal/ultimaOTCerradaSel), nunca new Date() sin corregir timezone */}
+        {fechaUltimaReal&&(
+          <div className="rounded-xl p-3 border border-emerald-100" style={{background:"#F0FDF4"}}>
+            <p className="text-emerald-600 text-xs font-semibold uppercase mb-2 flex items-center gap-1.5">
+              <CheckCircle size={10}/>Última ejecución
+            </p>
+            <div className="space-y-1.5">
+              <div className="flex justify-between text-xs">
+                <span className="text-gray-500">Fecha</span>
+                <span className="font-semibold text-gray-800 font-mono">{fmtFechaReal(fechaUltimaReal)}</span>
               </div>
+              {ultimaOTCerradaSel?.horometroCierre&&(
+                <div className="flex justify-between text-xs">
+                  <span className="text-gray-500">Horómetro</span>
+                  <span className="font-mono font-semibold text-gray-800">{parseFloat(ultimaOTCerradaSel.horometroCierre).toLocaleString()}h</span>
+                </div>
+              )}
+              {ultimaOTCerradaSel?.assignedToName&&(
+                <div className="flex justify-between text-xs">
+                  <span className="text-gray-500">Técnico</span>
+                  <span className="text-gray-700">{ultimaOTCerradaSel.assignedToName}</span>
+                </div>
+              )}
+              {ultimaOTCerradaSel?.code&&(<p className="text-[10px] font-mono text-blue-500 mt-1">{ultimaOTCerradaSel.code}</p>)}
             </div>
-          );
-        })()}
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-3">
           <div className="bg-gray-50 rounded-xl p-3 border border-gray-100">
             <p className="text-gray-400 text-xs mb-0.5">Área</p>
