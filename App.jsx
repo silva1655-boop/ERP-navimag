@@ -31662,7 +31662,7 @@ const [user,setUser]=useState(null);
   },[]);
   useEffect(()=>{
     checkForUpdate();
-    const iv=setInterval(checkForUpdate,5*60*1000);
+    const iv=setInterval(checkForUpdate,30*1000);
     const onVisible=()=>{if(document.visibilityState==="visible")checkForUpdate();};
     document.addEventListener("visibilitychange",onVisible);
     return()=>{clearInterval(iv);document.removeEventListener("visibilitychange",onVisible);};
