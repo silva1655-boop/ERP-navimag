@@ -9,7 +9,7 @@ Check, RefreshCw, Activity, ArrowRight, Edit2, Trash2,
 TrendingUp, Layers, Info, Wifi, WifiOff, Gauge, Key, FileWarning,
 Printer, Filter, Eye, EyeOff, Copy, Link, ChevronDown, Camera, Download, FileDown, Menu,
 ClipboardCheck, ZoomIn, ChevronLeft, Save, Play, HelpCircle, ChevronUp, MessageCircle, Truck, Upload, Send, RotateCcw,
-Hash, Tag, UserCheck, User as UserIcon, MessageSquare, ExternalLink, PieChart, TrendingDown, MapPin
+Hash, Tag, UserCheck, User as UserIcon, MessageSquare, ExternalLink, PieChart, TrendingDown, MapPin, BookOpen
 } from "lucide-react";
 import { db, storage } from "./firebase.js";
 import { ref, uploadString, getDownloadURL } from "firebase/storage";
@@ -1615,7 +1615,7 @@ const ROLE_DEFAULT_PERMS={
     checklist:true, historial_postop:true, deviaciones:true, reports:true,
     users:true, accesos:true, notifications:true,
     vessels:true, voyages:true, repuestos:true,
-    dashboard_checklist:true, operadores:true, config_reportes:true, faena_activa:true, estado_tractos:true
+    dashboard_checklist:true, operadores:true, config_reportes:true, faena_activa:true, estado_tractos:true, manuales:true
   },
   supervisor:{
     dashboard:true, workorders:true, equipment:true,
@@ -1623,7 +1623,7 @@ const ROLE_DEFAULT_PERMS={
     checklist:true, historial_postop:true, deviaciones:true, reports:true,
     users:true, accesos:true, notifications:false,
     vessels:true, voyages:true, repuestos:true, dashboard_checklist:true, operadores:true,
-    config_reportes:true, faena_activa:true, estado_tractos:true
+    config_reportes:true, faena_activa:true, estado_tractos:true, manuales:true
   },
   operaciones:{
     dashboard:true, workorders:false, equipment:false,
@@ -1631,33 +1631,33 @@ const ROLE_DEFAULT_PERMS={
     checklist:true, historial_postop:true, deviaciones:false, reports:false,
     users:false, accesos:false, notifications:true,
     vessels:true, voyages:true, repuestos:false, dashboard_checklist:true, operadores:true,
-    faena_activa:true, estado_tractos:true
+    faena_activa:true, estado_tractos:true, manuales:true
   },
   mecanico:{
     dashboard:true, workorders:true, equipment:false,
     plans:false, indicadores:false, requests:false,
     checklist:true, historial_postop:true, deviaciones:true, reports:true,
-    users:false, accesos:false, notifications:false, repuestos:false, estado_tractos:true
+    users:false, accesos:false, notifications:false, repuestos:false, estado_tractos:true, manuales:true
   },
   operador:{
     dashboard:true, workorders:false, equipment:false,
     plans:false, indicadores:false, requests:false,
     checklist:true, historial_postop:true, deviaciones:false, reports:false,
-    users:false, accesos:false, notifications:true, repuestos:false
+    users:false, accesos:false, notifications:true, repuestos:false, manuales:true
   },
   bodega:{
     dashboard:true, workorders:false, equipment:false,
     plans:false, indicadores:false, requests:false,
     checklist:false, historial_postop:false, deviaciones:false, reports:true,
     users:false, accesos:false, notifications:false,
-    vessels:false, voyages:false, repuestos:true
+    vessels:false, voyages:false, repuestos:true, manuales:true
   },
   jefe_maquinas:{
     dashboard:true, workorders:true, equipment:false,
     plans:false, indicadores:false, requests:false,
     checklist:true, historial_postop:true, deviaciones:false, reports:true,
     users:false, accesos:false, notifications:false,
-    vessels:true, voyages:true, repuestos:false, dashboard_checklist:true, operadores:false
+    vessels:true, voyages:true, repuestos:false, dashboard_checklist:true, operadores:false, manuales:true
   },
 };
 
@@ -1716,6 +1716,7 @@ const NAV_CATEGORIAS={
       {key:"plans",       label:"Plan Preventivo"},
       {key:"equipment",   label:"Equipos"},
       {key:"requests",    label:"Solicitudes"},
+      {key:"manuales",    label:"Manuales Técnicos"},
     ],
   },
   inventario:{
@@ -1759,6 +1760,7 @@ const NAV_CATEGORIAS_MARITIMO={
       {key:"plans",       label:"Plan Preventivo"},
       {key:"equipment",   label:"Equipos"},
       {key:"requests",    label:"Solicitudes"},
+      {key:"manuales",    label:"Manuales Técnicos"},
     ],
   },
   gestion:{
@@ -2573,6 +2575,7 @@ users:         {label:"Usuarios",             icon:Users},
 vessels:       {label:"Buques y Certificados",icon:Layers},
 voyages:       {label:"Registro de Travesías",icon:Activity},
 repuestos:     {label:"Repuestos",            icon:Package},
+manuales:      {label:"Manuales Técnicos",    icon:BookOpen},
 };
 function Topbar({user,page,onNav,notifCount,onToggleSidebar,fontSize,setFontSize,onChangePassword,onChangeModule,onLogout,onInstall,onOpenChat,chatBadge,onOpenPlanner,plannerBadge,navCategorias:navCats}){
 const navCategorias=navCats||NAV_CATEGORIAS;
@@ -18832,6 +18835,50 @@ function ConfigReportes({user}){
   );
 }
 
+const MANUALES_TECNICOS=[
+  {file:"APC200_Manual_Digital.html",              title:"Manual APC200",                        desc:"Manual digital del controlador APC200.",                              icon:BookOpen, color:"blue",    sizeMB:"8.4"},
+  {file:"TAD760VE_Manual_Digital.html",             title:"Manual Motor TAD760VE",                desc:"Manual digital del motor Volvo Penta TAD760VE.",                      icon:Wrench,   color:"amber",   sizeMB:"15.4"},
+  {file:"TE15_Manual_Interactivo.html",             title:"Manual TE15",                          desc:"Manual interactivo TE15.",                                            icon:FileText, color:"emerald", sizeMB:"7.1"},
+  {file:"Buscador_de_Fallas_Flota_Navimag.html",    title:"Buscador de Fallas — Flota Navimag",   desc:"Herramienta interactiva para diagnóstico de fallas de la flota.",    icon:Search,   color:"purple",  sizeMB:"0.8"},
+];
+const MANUALES_COLOR_CLS={
+  blue:   {border:"border-blue-200",    bg:"bg-blue-50",    iconBg:"bg-blue-100",    icon:"text-blue-600"},
+  amber:  {border:"border-amber-200",   bg:"bg-amber-50",   iconBg:"bg-amber-100",   icon:"text-amber-600"},
+  emerald:{border:"border-emerald-200", bg:"bg-emerald-50", iconBg:"bg-emerald-100", icon:"text-emerald-600"},
+  purple: {border:"border-purple-200",  bg:"bg-purple-50",  iconBg:"bg-purple-100",  icon:"text-purple-600"},
+};
+function ManualesPage(){
+  return(
+  <div className="p-5">
+    <div className="flex items-center gap-2 mb-1">
+      <BookOpen size={20} className="text-gray-700"/>
+      <h1 className="text-lg font-bold text-gray-900">Manuales Técnicos</h1>
+    </div>
+    <p className="text-sm text-gray-500 mb-5">Documentación técnica y manuales digitales de equipos de la flota. Cada manual se abre en una pestaña nueva del navegador.</p>
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      {MANUALES_TECNICOS.map(m=>{
+        const c=MANUALES_COLOR_CLS[m.color];
+        const Icon=m.icon;
+        return(
+        <a key={m.file} href={`/manuales/${m.file}`} target="_blank" rel="noopener noreferrer"
+           className={`flex items-start gap-3 p-4 rounded-lg border ${c.border} ${c.bg} hover:shadow-md transition-shadow`}>
+          <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${c.iconBg}`}>
+            <Icon size={18} className={c.icon}/>
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="font-semibold text-gray-900 text-sm">{m.title}</p>
+            <p className="text-xs text-gray-500 mt-0.5">{m.desc}</p>
+            <p className="text-xs text-gray-400 mt-1.5">~{m.sizeMB} MB · abrir en pestaña nueva</p>
+          </div>
+          <ExternalLink size={14} className="text-gray-400 flex-shrink-0 mt-1"/>
+        </a>
+        );
+      })}
+    </div>
+  </div>
+  );
+}
+
 // ─── OPERADORES ──────────────────────────────────────────────────────────────
 function OperadoresPage({user,data,setData,saveData}){
   const {operadores=[]}=data;
@@ -33109,6 +33156,7 @@ vessels:       <VesselsPage   user={user} data={data} setData={setData}/>,
 voyages:       <VoyagesPage   user={user} data={data} setData={setData}/>,
 accesos:       <AccessLog     data={data}/>,
 repuestos:     <RepuestosPage user={user} data={data} setData={setData} saveData={saveData}/>,
+manuales:      <ManualesPage/>,
 config_reportes:<ConfigReportes user={user}/>,
 gastos:        <GastosPresupuesto user={user} data={data} activeModule={activeModule} activeBarco={activeBarco}/>,
 disponibilidad:<DisponibilidadUtilizacion user={user} data={data}/>,
