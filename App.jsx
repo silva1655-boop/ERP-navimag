@@ -717,6 +717,16 @@ const nextOTCode = wos => {
   const max=existing.length>0?Math.max(...existing):0;
   return `OT-${year}-${String(max+1).padStart(3,"0")}`;
 };
+// OT generada desde un plan Marítimo: OT-{códigoPlan}-001, 002... (correlativo
+// único POR plan). Solo los planes Marítimo tienen `code` — para planes de
+// Taller (sin code) el llamador debe usar nextOTCode como antes.
+const nextPlanOTCode=(planCode,allWOs)=>{
+  const existing=allWOs
+    .filter(w=>w.code&&w.code.startsWith(`OT-${planCode}-`))
+    .map(w=>parseInt(w.code.split("-").pop())||0);
+  const max=existing.length>0?Math.max(...existing):0;
+  return `OT-${planCode}-${String(max+1).padStart(3,"0")}`;
+};
 const CRIT_LABEL = { A:"Crítico", B:"Importante", C:"Rutinario", alto:"Alto", medio:"Medio", bajo:"Bajo" };
 
 const calcScoreCriticidad=(factores)=>{
@@ -6753,7 +6763,14 @@ style={sel?.id===w.id?{borderColor:NV.blue,background:"#EBF4FF"}:sem?{borderColo
                 {icon:<Wrench size={13}/>,label:"Equipo",val:curEq?.name||"—"},
                 {icon:<Hash size={13}/>,label:"Código",val:curEq?.code||"—"},
                 {icon:<Tag size={13}/>,label:"Tipo",val:cur.type==="preventiva"?"Preventivo":cur.type==="correctiva"?"Correctivo":cur.type||"—"},
-                {icon:<FileText size={13}/>,label:"Fuente",val:cur.source==="plan"?"Plan Preventivo":cur.source==="inspeccion"?"Checklist":"Solicitud"},
+                {icon:<FileText size={13}/>,label:"Fuente",val:(()=>{
+                  if(cur.source==="plan"||cur.source==="planAssignment"){
+                    const planRef=(plans||[]).find(p=>p.id===cur.planId)||(data.planAssignments||[]).find(a=>a.id===cur.assignmentId);
+                    const planLabel=planRef?.code||planRef?.name||planRef?.nombreOverride||planRef?.templateCode;
+                    return planLabel?`Plan Preventivo — ${planLabel}`:"Plan Preventivo";
+                  }
+                  return cur.source==="inspeccion"?"Checklist":"Solicitud";
+                })()},
                 {icon:<Calendar size={13}/>,label:"Programado",val:fmt(cur.scheduledDate)||"—"},
               ].map(({icon,label,val})=>(
                 <div key={label} className="flex items-center gap-3 px-4 py-2.5">
@@ -9085,14 +9102,10 @@ const nextPlanCode=(equipId)=>{
   const max=existing.length>0?Math.max(...existing):0;
   return `PM-${eqCode}-${String(max+1).padStart(2,"0")}`;
 };
-// OT generada desde un plan: OT-{códigoPlan}-001, 002... (correlativo único POR plan)
-const nextPlanOTCode=(planCode,allWOs)=>{
-  const existing=allWOs
-    .filter(w=>w.code&&w.code.startsWith(`OT-${planCode}-`))
-    .map(w=>parseInt(w.code.split("-").pop())||0);
-  const max=existing.length>0?Math.max(...existing):0;
-  return `OT-${planCode}-${String(max+1).padStart(3,"0")}`;
-};
+// nextPlanOTCode (OT-{códigoPlan}-001, 002...) está definida a nivel de
+// módulo junto a nextOTCode — la usan también checkAndAutoGenerateOTs y
+// checkAndAutoGenerateOTsFromAssignments para que las OTs regeneradas
+// después de cerrar la anterior sigan llevando el código del plan.
 
 const genOT=(plan,allWOs)=>{
 const eq=equip.find(e=>e.id===plan.equipId);if(!eq)return null;
@@ -23293,7 +23306,7 @@ function checkAndAutoGenerateOTs(plans, wos, equip, checklists, users) {
     const resp=resolveResponsable(plan.responsable||plan.responsablePlan||plan.technician||"",users);
     const allWOs=[...wos,...newOTs];
     newOTs.push({
-      id:uid(),code:nextOTCode(allWOs),type:"preventiva",equipId:plan.equipId,
+      id:uid(),code:plan.code?nextPlanOTCode(plan.code,allWOs):nextOTCode(allWOs),type:"preventiva",equipId:plan.equipId,
       planId:plan.id,title:plan.name,priority:mkPriority(eq),
       status:"pendiente",needsAssignment:!resp.found,assignedTo:resp.userId||resp.userName,
       assignedToName:resp.userName,responsable:resp.userId||resp.userName,
@@ -23320,7 +23333,7 @@ function checkAndAutoGenerateOTs(plans, wos, equip, checklists, users) {
     const resp=resolveResponsable(plan.responsable||plan.responsablePlan||plan.technician||"",users);
     const allWOs=[...wos,...newOTs];
     newOTs.push({
-      id:uid(),code:nextOTCode(allWOs),type:"preventiva",equipId:plan.equipId,
+      id:uid(),code:plan.code?nextPlanOTCode(plan.code,allWOs):nextOTCode(allWOs),type:"preventiva",equipId:plan.equipId,
       planId:plan.id,title:plan.name,priority:mkPriority(eq),
       status:"pendiente",needsAssignment:!resp.found,assignedTo:resp.userId||resp.userName,
       assignedToName:resp.userName,responsable:resp.userId||resp.userName,
@@ -23375,7 +23388,7 @@ function checkAndAutoGenerateOTsFromAssignments(planAssignments,planTemplates,wo
       const allWOs=[...wos,...newOTs];
       const diasVenc=Math.round((new Date(todayStr)-new Date(nextDueDate))/(86400000));
       newOTs.push({
-        id:uid(),code:nextOTCode(allWOs),type:"preventiva",
+        id:uid(),code:assign.code?nextPlanOTCode(assign.code,allWOs):nextOTCode(allWOs),type:"preventiva",
         equipId:assign.equipId,assignmentId:assign.id,templateId:assign.templateId,
         title:assign.nombreOverride||tpl?.name||assign.templateCode||"PM Automático",
         priority,status:"pendiente",needsAssignment:!resp.found,
@@ -23398,7 +23411,7 @@ function checkAndAutoGenerateOTsFromAssignments(planAssignments,planTemplates,wo
       const allWOs=[...wos,...newOTs];
       const horasVenc=currentH-nextDue;
       newOTs.push({
-        id:uid(),code:nextOTCode(allWOs),type:"preventiva",
+        id:uid(),code:assign.code?nextPlanOTCode(assign.code,allWOs):nextOTCode(allWOs),type:"preventiva",
         equipId:assign.equipId,assignmentId:assign.id,templateId:assign.templateId,
         title:assign.nombreOverride||tpl?.name||assign.templateCode||"PM Automático",
         priority,status:"pendiente",needsAssignment:!resp.found,
