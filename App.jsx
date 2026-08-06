@@ -16785,7 +16785,21 @@ function FaenaActivaPage({user,data}){
   const [enviandoInforme,setEnviandoInforme]=useState(false);
   const [ultimaFaenaCerradaId,setUltimaFaenaCerradaId]=useState(null);
 
-  const tractosTerminal=equip.filter(e=>!e.deleted&&TRACTO_GRUPOS_VALIDOS.includes(getGroup(e)));
+  // Liftec (LIF) son grúas horquilla, no tractos de terminal — mismo criterio
+  // que EstadoTractosPage/Dashboard.
+  const tractosTerminal=equip.filter(e=>!e.deleted&&TRACTO_GRUPOS_VALIDOS.includes(getGroup(e))&&getGroup(e)!=="Liftec");
+  const tractosAgrupados=useMemo(()=>{
+    const grupos={disponible:[],fuera_servicio:[],dalka:[],esperanza:[],otra_sucursal:[]};
+    tractosTerminal.forEach(e=>{
+      const est=estadoTractoDe(estadosTractos,e.id);
+      if(est.estado==="fuera_servicio") grupos.fuera_servicio.push(e);
+      else if(est.estado==="en_viaje") (est.buqueViaje==="DALKA"?grupos.dalka:grupos.esperanza).push(e);
+      else if(est.estado==="en_otra_sucursal") grupos.otra_sucursal.push(e);
+      else grupos.disponible.push(e);
+    });
+    Object.values(grupos).forEach(arr=>arr.sort((a,b)=>(a.code||"").localeCompare(b.code||"")));
+    return grupos;
+  },[tractosTerminal,estadosTractos]);
   const detencionesActiva=detenciones.filter(d=>faenaActiva&&d.faenaId===faenaActiva.id);
   const totalHorasDet=detencionesActiva.reduce((s,d)=>s+(d.horasReparacion||0),0);
   const targetActual=targets.find(t=>t.buque===form.buque&&t.terminal===form.terminal);
@@ -16961,30 +16975,44 @@ function FaenaActivaPage({user,data}){
             <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1.5">
               Tractos en Servicio<span className="ml-1.5 text-gray-400 font-normal normal-case">({form.tractosEnServicio.length} seleccionados)</span>
             </label>
-            <div className="border border-gray-200 rounded-xl p-3 max-h-48 overflow-y-auto">
+            <div className="border border-gray-200 rounded-xl p-3">
               {tractosTerminal.length===0?(
                 <p className="text-gray-400 text-sm text-center py-2">Sin equipos registrados</p>
               ):(
-                <div className="grid grid-cols-2 gap-1.5">
-                  {tractosTerminal.sort((a,b)=>(a.code||"").localeCompare(b.code||"")).map(e=>{
-                    const sel=form.tractosEnServicio.includes(e.id);
-                    const est=estadoTractoDe(estadosTractos,e.id);
-                    const cfg=ESTADO_TRACTO_CFG[est.estado]||ESTADO_TRACTO_CFG.disponible;
+                <div className="space-y-3">
+                  {[
+                    {key:"disponible",     label:"En Servicio",         emoji:"🟢", color:"text-emerald-600"},
+                    {key:"fuera_servicio", label:"Fuera de Servicio",   emoji:"🔴", color:"text-red-600"},
+                    {key:"dalka",          label:"En Viaje — Dalka",    emoji:"🔵", color:"text-blue-600"},
+                    {key:"esperanza",      label:"En Viaje — Esperanza",emoji:"🔵", color:"text-blue-600"},
+                    {key:"otra_sucursal",  label:"En Otro Puerto",      emoji:"🟣", color:"text-purple-600"},
+                  ].map(grupo=>{
+                    const items=tractosAgrupados[grupo.key];
+                    if(!items||items.length===0) return null;
                     return(
-                      <button key={e.id}
-                        onClick={()=>setForm(f=>({...f,tractosEnServicio:sel?f.tractosEnServicio.filter(id=>id!==e.id):[...f.tractosEnServicio,e.id]}))}
-                        className={`text-left px-3 py-2 rounded-lg border text-xs font-semibold transition flex items-center justify-between gap-1.5 ${sel?"bg-blue-50 border-blue-400 text-blue-800":"bg-gray-50 border-gray-200 text-gray-600 hover:border-blue-300"}`}>
-                        <span>{e.code}</span>
-                        <span className="text-[10px] flex-shrink-0" title={`${cfg.label}${est.estado==="en_viaje"&&est.buqueViaje?" — "+est.buqueViaje:""}`}>
-                          {cfg.emoji}{est.estado==="en_viaje"&&est.buqueViaje?` ${est.buqueViaje.slice(0,3)}`:""}
-                        </span>
-                      </button>
+                      <div key={grupo.key}>
+                        <p className={`text-[10px] font-bold uppercase tracking-wide mb-1 ${grupo.color}`}>
+                          {grupo.emoji} {grupo.label} <span className="text-gray-400 font-normal normal-case">({items.length})</span>
+                        </p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {items.map(e=>{
+                            const sel=form.tractosEnServicio.includes(e.id);
+                            return(
+                              <button key={e.id}
+                                onClick={()=>setForm(f=>({...f,tractosEnServicio:sel?f.tractosEnServicio.filter(id=>id!==e.id):[...f.tractosEnServicio,e.id]}))}
+                                className={`px-3 py-1.5 rounded-lg border text-xs font-semibold transition ${sel?"bg-blue-50 border-blue-400 text-blue-800":"bg-gray-50 border-gray-200 text-gray-600 hover:border-blue-300"}`}>
+                                {e.code}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
                     );
                   })}
                 </div>
               )}
-              <p className="text-gray-400 text-[10px] mt-1.5">
-                🟢 Disponible · 🔴 Fuera de Servicio · 🔵 En Viaje — según Estado de Tractos. Se puede elegir cualquiera igual, es solo referencia.
+              <p className="text-gray-400 text-[10px] mt-2.5">
+                Agrupados según Estado de Tractos. Se puede elegir cualquiera igual, es solo referencia.
               </p>
             </div>
           </div>
