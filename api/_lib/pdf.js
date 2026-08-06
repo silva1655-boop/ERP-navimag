@@ -148,6 +148,128 @@ export function generarPDFFaena(faena, periodoDesde, periodoHasta) {
   });
 }
 
+// ── INFORME DE FAENA (Faena en Curso — App.jsx: FaenaActivaPage) ───────────
+// Shape distinto al de arriba: acá "faena" es un registro de tractos en
+// terminal (buque/terminal/N° de faena/sector/tractos en servicio +
+// detenciones), no una faena derivada de checklists. Reusa hdrRow/dataRow
+// y la paleta de colores de este mismo archivo.
+const pct = v => Math.round((v || 0) * 100) + "%";
+const fmtDT = iso => iso ? new Date(iso).toLocaleString("es-CL", { day:"2-digit", month:"2-digit", year:"2-digit", hour:"2-digit", minute:"2-digit" }) : "—";
+
+export function generarPDFFaenaCurso(faena, detenciones, equipMap) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    const doc = new PDFDocument({ margin: 40, size: "A4" });
+    doc.on("data", chunk => chunks.push(chunk));
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", reject);
+
+    const W = doc.page.width - 80;
+    const det = (detenciones || []).filter(d => d.faenaId === faena.id);
+    const tractos = (faena.tractosEnServicio || []).map(id => equipMap?.[id]?.code || id);
+
+    // ── PORTADA ─────────────────────────────────────────────────────────────
+    doc.rect(0, 0, doc.page.width, 108).fill(AZUL);
+    doc.fillColor("#fff")
+      .fontSize(8).font("Helvetica")
+      .text("🚢  NAVIMAG  ·  INFORME DE FAENA — DISPONIBILIDAD Y UTILIZACIÓN DE TRACTOS", 40, 24, { width: W })
+      .fontSize(20).font("Helvetica-Bold")
+      .text(`${faena.buque}  —  ${faena.terminal}  —  Faena ${faena.numeroFaena}`, 40, 42, { width: W })
+      .fontSize(10).font("Helvetica")
+      .text(`${fmtDT(faena.inicioOp)}  →  ${fmtDT(faena.terminoOp)}`, 40, 74)
+      .text(`Generado: ${new Date().toLocaleString("es-CL")}`, 40, 89);
+    doc.fillColor("#1a1a1a");
+
+    // ── KPIs ────────────────────────────────────────────────────────────────
+    const mY = 128;
+    doc.fontSize(10).font("Helvetica-Bold").fillColor(AZUL).text("RESUMEN DE LA FAENA", 40, mY);
+    const mBoxY = mY + 16;
+    const mW = (W - 24) / 5;
+    const metrics = [
+      { l: "Disp. técnica", v: pct(faena.disponibilidadTecnica), color: cumplColor(Math.round((faena.disponibilidadTecnica||0)*100)) },
+      { l: "Utilización",   v: pct(faena.utilizacion),           color: cumplColor(Math.round((faena.utilizacion||0)*100)) },
+      { l: "Cumplimiento",  v: pct(faena.cumplimiento),          color: cumplColor(Math.round((faena.cumplimiento||0)*100)) },
+      { l: "Tractos op.",   v: String(faena.tractosOp||0),       color: AZUL },
+      { l: "Horas indisp.", v: `${(faena.indisponibilidadHH||0).toFixed(1)}h`, color: faena.indisponibilidadHH>0?ROJO:VERDE },
+    ];
+    metrics.forEach((m, i) => {
+      const x = 40 + i * (mW + 6);
+      doc.rect(x, mBoxY, mW, 50).stroke("#e2e8f0");
+      doc.fontSize(16).font("Helvetica-Bold").fillColor(m.color)
+        .text(m.v, x + 4, mBoxY + 8, { width: mW - 8, align: "center" });
+      doc.fontSize(8).font("Helvetica").fillColor(GRIS)
+        .text(m.l, x + 4, mBoxY + 32, { width: mW - 8, align: "center" });
+    });
+    doc.fillColor("#1a1a1a");
+
+    // ── DATOS GENERALES ────────────────────────────────────────────────────
+    let y = mBoxY + 62;
+    doc.fontSize(10).font("Helvetica-Bold").fillColor(AZUL).text("DATOS GENERALES", 40, y);
+    y += 14;
+    const datos = [
+      ["Sector", faena.sector==="N"?"Norte":faena.sector==="S"?"Sur":(faena.sector||"—")],
+      ["Tractos utilizados", String(faena.tractosUtilizados||0)],
+      ["Capacidad operadores", String(faena.capacidadOperadores||0)],
+      ["Target (tractos)", String(faena.target||"—")],
+      ["Horas operación bruta", `${(faena.horasOperacionBruta||0).toFixed(2)}h`],
+      ["Iniciada por", faena.creadoPor||"—"],
+      ["Cerrada por", faena.cerradoPor||"—"],
+    ];
+    datos.forEach(([k,v],i) => {
+      const col = i % 2, row = Math.floor(i/2);
+      const x = 40 + col * (W/2);
+      doc.fontSize(9).font("Helvetica").fillColor(GRIS).text(`${k}:`, x, y + row*15, { continued:true, width: 130 });
+      doc.font("Helvetica-Bold").fillColor("#1a1a1a").text(` ${v}`);
+    });
+    y += Math.ceil(datos.length/2)*15 + 16;
+
+    // ── TRACTOS EN SERVICIO ─────────────────────────────────────────────────
+    if (y > 680) { doc.addPage(); y = 40; }
+    doc.fontSize(10).font("Helvetica-Bold").fillColor(AZUL).text(`TRACTOS EN SERVICIO (${tractos.length})`, 40, y);
+    y += 14;
+    if (tractos.length === 0) {
+      doc.fontSize(9).font("Helvetica").fillColor(GRIS).text("Sin tractos registrados.", 40, y);
+      y += 15;
+    } else {
+      const colW = (W - 8) / 4;
+      tractos.forEach((code, idx) => {
+        const col = idx % 4;
+        if (col === 0 && idx > 0) y += 14;
+        if (y > 730) { doc.addPage(); y = 40; }
+        doc.fontSize(9).font("Helvetica-Bold").fillColor("#1a1a1a")
+          .text(code, 40 + col*(colW+2), y, { width: colW-2 });
+      });
+      y += 20;
+    }
+
+    // ── DETENCIONES ─────────────────────────────────────────────────────────
+    if (y > 660) { doc.addPage(); y = 40; }
+    doc.fontSize(10).font("Helvetica-Bold").fillColor(AZUL).text(`DETENCIONES (${det.length})`, 40, y);
+    y += 14;
+    if (det.length === 0) {
+      doc.fontSize(9).font("Helvetica").fillColor(GRIS).text("Sin detenciones registradas — faena sin novedades.", 40, y);
+    } else {
+      const dCols = [70, 75, 75, 45, 55, W-320];
+      y = hdrRow(doc, y, dCols, ["Equipo","Inicio","Fin","Tipo","Horas","Novedades"], W);
+      det.forEach((d, idx) => {
+        if (y > 720) { doc.addPage(); y = 40; }
+        y = dataRow(doc, y, dCols,
+          [d.equipo||"—", fmtDT(d.inicio), fmtDT(d.fin), d.tipo||"—", (d.horasReparacion||0).toFixed(2), (d.novedades||"—").slice(0,60)],
+          null, idx % 2 === 1
+        );
+      });
+    }
+
+    // ── FOOTER ──────────────────────────────────────────────────────────────
+    const footY = doc.page.height - 32;
+    doc.fontSize(7).fillColor(GRIS)
+      .text(`MANTEK ERP · Informe de Faena — Disponibilidad y Utilización de Tractos · ${new Date().toLocaleDateString("es-CL")}`,
+        40, footY, { align: "center", width: W });
+
+    doc.end();
+  });
+}
+
 // PDF combinado con todas las faenas del período (usado en la previsualización)
 export function generarPDFResumen(faenas, periodoDesde, periodoHasta) {
   return new Promise((resolve, reject) => {

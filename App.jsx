@@ -430,6 +430,10 @@ const canAccessGastos=(user)=>GASTOS_PRESUPUESTO_ALLOWLIST.includes((user?.usern
 const COLL_FAENA_TARGETS="mantek_config_targets";
 const COLL_FAENA="mantek_faena";
 const COLL_DETENCIONES="mantek_detenciones";
+// Estado de tractos (disponible / fuera de servicio / en viaje con
+// Esperanza|Dalka) — alimenta el selector de tractos de Faena en Curso.
+// Un tracto sin fila acá se trata como "disponible" por defecto.
+const COLL_TRACTO_ESTADO="mantek_tracto_estado";
 // Mismo allowlist fijo que Gastos y Presupuesto (no existe un rol "admin"
 // alcanzable hoy vía mantek-auth); decisión explícita: reusar el mismo set.
 const canAccessDisponibilidad=canAccessGastos;
@@ -1600,7 +1604,7 @@ const ROLE_DEFAULT_PERMS={
     checklist:true, historial_postop:true, deviaciones:true, reports:true,
     users:true, accesos:true, notifications:true,
     vessels:true, voyages:true, repuestos:true,
-    dashboard_checklist:true, operadores:true, config_reportes:true, faena_activa:true
+    dashboard_checklist:true, operadores:true, config_reportes:true, faena_activa:true, estado_tractos:true
   },
   supervisor:{
     dashboard:true, workorders:true, equipment:true,
@@ -1608,7 +1612,7 @@ const ROLE_DEFAULT_PERMS={
     checklist:true, historial_postop:true, deviaciones:true, reports:true,
     users:true, accesos:true, notifications:false,
     vessels:true, voyages:true, repuestos:true, dashboard_checklist:true, operadores:true,
-    config_reportes:true, faena_activa:true
+    config_reportes:true, faena_activa:true, estado_tractos:true
   },
   operaciones:{
     dashboard:true, workorders:false, equipment:false,
@@ -1616,13 +1620,13 @@ const ROLE_DEFAULT_PERMS={
     checklist:true, historial_postop:true, deviaciones:false, reports:false,
     users:false, accesos:false, notifications:true,
     vessels:true, voyages:true, repuestos:false, dashboard_checklist:true, operadores:true,
-    faena_activa:true
+    faena_activa:true, estado_tractos:true
   },
   mecanico:{
     dashboard:true, workorders:true, equipment:false,
     plans:false, indicadores:false, requests:false,
     checklist:true, historial_postop:true, deviaciones:true, reports:true,
-    users:false, accesos:false, notifications:false, repuestos:false
+    users:false, accesos:false, notifications:false, repuestos:false, estado_tractos:true
   },
   operador:{
     dashboard:true, workorders:false, equipment:false,
@@ -1689,6 +1693,7 @@ const NAV_CATEGORIAS={
     paginas:[
       {key:"checklist",        label:"Checklist Pre-op"},
       {key:"historial_postop", label:"Historial Post-Op"},
+      {key:"estado_tractos",   label:"Estado de Tractos"},
       {key:"faena_activa",     label:"Faena en Curso"},
     ],
   },
@@ -3135,6 +3140,32 @@ const otsCerradasOps=useMemo(()=>{
     .slice(0,10);
 },[data.wos]);
 
+// Widget de Estado de Tractos / Faenas recientes — a diferencia del de
+// Disponibilidad y Utilización de más abajo, este es "para todos" (pedido
+// explícito), sin el allowlist de csilva/jimunoz. Listener propio y chico
+// (mantek_tracto_estado tiene un solo doc con una fila por tracto).
+const [estadosTractosDB,setEstadosTractosDB]=useState([]);
+const [faenasRecientesDB,setFaenasRecientesDB]=useState([]);
+useEffect(()=>{
+  const u1=onSnapshot(doc(db,COLL_TRACTO_ESTADO,"estado"),snap=>setEstadosTractosDB(snap.exists()?(snap.data().data||[]):[]));
+  const u2=onSnapshot(doc(db,COLL_FAENA,"faenas"),snap=>setFaenasRecientesDB(snap.exists()?(snap.data().data||[]):[]));
+  return()=>{u1();u2();};
+},[]);
+const tractosResumenDB=useMemo(()=>{
+  const tractos=(data.equip||[]).filter(e=>!e.deleted&&TRACTO_GRUPOS_VALIDOS.includes(getGroup(e)));
+  const conteo={disponible:0,fuera_servicio:0,en_viaje_esperanza:0,en_viaje_dalka:0};
+  tractos.forEach(t=>{
+    const est=estadoTractoDe(estadosTractosDB,t.id);
+    if(est.estado==="fuera_servicio") conteo.fuera_servicio++;
+    else if(est.estado==="en_viaje") conteo[est.buqueViaje==="DALKA"?"en_viaje_dalka":"en_viaje_esperanza"]++;
+    else conteo.disponible++;
+  });
+  return {total:tractos.length,...conteo};
+},[data.equip,estadosTractosDB]);
+const faenasCerradasRecientesDB=useMemo(()=>
+  faenasRecientesDB.filter(f=>f.estado==="cerrada").sort((a,b)=>new Date(b.cerradoEn||0)-new Date(a.cerradoEn||0)).slice(0,5)
+,[faenasRecientesDB]);
+
 // Widget de Disponibilidad y Utilización del Dashboard Operaciones — mismo
 // allowlist que el módulo completo (canAccessDisponibilidad), así que solo
 // jimunoz/csilva ven estos datos acá aunque el dashboard operativo lo vean
@@ -3183,6 +3214,47 @@ const dispoOpsInfo=useMemo(()=>{
 },[faenasOps,user]);
 const fmtPctOps=v=>v==null?"—":`${Math.round(v*100)}%`;
 
+// Widget "Estado de Tractos / Faenas" — visible a TODOS los roles (a
+// diferencia del de Disponibilidad y Utilización de arriba, que sigue
+// restringido a csilva/jimunoz). Mismo patrón visual que el resto de
+// widgets del Dashboard (card + header con botón "Ver todo").
+const widgetTractosFaenas=(
+  <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+    <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+      <p className="font-bold text-gray-800 text-sm flex items-center gap-1.5">🚜 Estado de Tractos</p>
+      {onNav&&<button onClick={()=>onNav("estado_tractos")} className="text-xs text-blue-600 hover:underline">Ver / actualizar →</button>}
+    </div>
+    <div className="p-4">
+      <div className="grid grid-cols-4 gap-2 text-center mb-3">
+        {[
+          {l:"Disponibles",v:tractosResumenDB.disponible,c:"text-emerald-600"},
+          {l:"Fuera Serv.",v:tractosResumenDB.fuera_servicio,c:"text-red-600"},
+          {l:"En viaje ESP",v:tractosResumenDB.en_viaje_esperanza,c:"text-blue-600"},
+          {l:"En viaje DAL",v:tractosResumenDB.en_viaje_dalka,c:"text-blue-600"},
+        ].map(k=>(
+          <div key={k.l}>
+            <p className={`text-xl font-bold ${k.c}`}>{k.v}</p>
+            <p className="text-gray-400 text-[10px]">{k.l}</p>
+          </div>
+        ))}
+      </div>
+      <p className="text-gray-400 text-xs font-semibold uppercase tracking-wide mb-1.5 mt-3">Últimas faenas cerradas</p>
+      {faenasCerradasRecientesDB.length===0?(
+        <p className="text-gray-400 text-xs italic py-2">Sin faenas cerradas todavía.</p>
+      ):(
+        <div className="divide-y divide-gray-50">
+          {faenasCerradasRecientesDB.map(f=>(
+            <div key={f.id} className="flex items-center justify-between py-1.5 text-xs">
+              <span className="text-gray-700 font-medium">{f.buque} · Faena {f.numeroFaena}</span>
+              <span className="text-gray-400">{f.cerradoEn?new Date(f.cerradoEn).toLocaleDateString("es-CL"):"—"} · <span className="font-semibold text-gray-600">{Math.round((f.disponibilidadTecnica||0)*100)}%</span></span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  </div>
+);
+
 if(role==="operaciones"){
   return(
   <div className="flex-1 overflow-y-auto bg-gray-50/50">
@@ -3206,6 +3278,8 @@ if(role==="operaciones"){
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        {widgetTractosFaenas}
+
         {/* Widget Ranking Operadores */}
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
           <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
@@ -3913,6 +3987,9 @@ return<div key={c.id} className="flex items-center gap-2 py-2 border-b border-gr
 {allCL.filter(c=>c.operatorId===user.id).length===0&&<p className="text-gray-400 text-sm text-center py-6">No has completado ningún checklist</p>}
 </div>
 </>}
+
+{/* Estado de Tractos / Faenas — visible a todos los roles */}
+{widgetTractosFaenas}
 
 {/* Checklist stats widget — visible to all roles */}
 {monthCL.length>0&&(
@@ -16467,6 +16544,126 @@ function PromedioPeriodoChart({datos,height=180,width=620}){
 // pero solo csilva/jimunoz (canAccessDisponibilidad) pueden eliminar faenas o
 // detenciones desde acá — pensado para poder borrar pruebas.
 const TRACTO_GRUPOS_VALIDOS=["Mol","Kalmar","Terberg","Liftec"];
+
+// ─── ESTADO DE TRACTOS ────────────────────────────────────────────────────
+// Tablero rápido para que mecánicos (y supervisor/operaciones/admin) marquen
+// qué tractos están disponibles, fuera de servicio, o en viaje con
+// Esperanza/Dalka — se actualiza antes de cada faena. Un tap guarda al
+// instante, sin pasos ni formularios largos (pedido explícito: "rápido y
+// sencillo para el mecánico"). Alimenta los badges de estado del selector
+// de tractos en FaenaActivaPage (más abajo). Un tracto sin fila en
+// mantek_tracto_estado se trata como "disponible" por defecto.
+const ESTADO_TRACTO_CFG={
+  disponible:{label:"Disponible",border:"border-emerald-300",bg:"bg-emerald-50",text:"text-emerald-700",emoji:"🟢"},
+  fuera_servicio:{label:"Fuera de Servicio",border:"border-red-300",bg:"bg-red-50",text:"text-red-700",emoji:"🔴"},
+  en_viaje:{label:"En Viaje",border:"border-blue-300",bg:"bg-blue-50",text:"text-blue-700",emoji:"🔵"},
+};
+const estadoTractoDe=(estados,equipId)=>(estados||[]).find(e=>e.equipId===equipId)||{equipId,estado:"disponible",buqueViaje:null,motivo:""};
+
+function EstadoTractosPage({user,data}){
+  const equip=data?.equip||[];
+  const quien=user.name||user.username||"";
+  const [estados,setEstados]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [motivoEditId,setMotivoEditId]=useState(null);
+  const [motivoTxt,setMotivoTxt]=useState("");
+
+  useEffect(()=>{
+    const unsub=onSnapshot(doc(db,COLL_TRACTO_ESTADO,"estado"),snap=>{
+      setEstados(snap.exists()?(snap.data().data||[]):[]);
+      setLoading(false);
+    });
+    return()=>unsub();
+  },[]);
+
+  const tractos=equip.filter(e=>!e.deleted&&TRACTO_GRUPOS_VALIDOS.includes(getGroup(e)))
+    .sort((a,b)=>(a.code||"").localeCompare(b.code||""));
+
+  const actualizar=async(equipId,patch)=>{
+    const actual=estadoTractoDe(estados,equipId);
+    const nueva={...actual,...patch,actualizadoPor:quien,actualizadoEn:new Date().toISOString()};
+    const actualizados=[...estados.filter(e=>e.equipId!==equipId),nueva];
+    setEstados(actualizados);
+    await setDoc(doc(db,COLL_TRACTO_ESTADO,"estado"),{data:actualizados});
+  };
+
+  if(!getUserPerms(user).estado_tractos) return null;
+  if(loading) return <div className="flex-1 flex items-center justify-center p-10 text-gray-400 text-sm">Cargando…</div>;
+
+  return(
+    <div className="p-4 lg:p-6 max-w-4xl">
+      <div className="mb-5">
+        <h1 className="text-gray-900 font-bold text-xl flex items-center gap-2">🚜 Estado de Tractos</h1>
+        <p className="text-gray-500 text-sm mt-0.5">Actualizá esto antes de cada faena — alimenta el selector de tractos de Faena en Curso.</p>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {tractos.map(t=>{
+          const est=estadoTractoDe(estados,t.id);
+          const cfg=ESTADO_TRACTO_CFG[est.estado]||ESTADO_TRACTO_CFG.disponible;
+          const editandoMotivo=motivoEditId===t.id;
+          return(
+            <div key={t.id} className={`rounded-2xl border-2 p-3 ${cfg.border} ${cfg.bg}`}>
+              <div className="flex items-center justify-between mb-2">
+                <div>
+                  <p className="font-bold text-gray-900 text-sm">{t.code}</p>
+                  <p className="text-gray-500 text-xs">{t.name}</p>
+                </div>
+                <span className={`text-xs font-bold px-2 py-1 rounded-full ${cfg.text} bg-white border ${cfg.border}`}>
+                  {cfg.emoji} {cfg.label}{est.estado==="en_viaje"&&est.buqueViaje?` — ${est.buqueViaje}`:""}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-3 gap-1.5">
+                <button onClick={()=>{setMotivoEditId(null);actualizar(t.id,{estado:"disponible",buqueViaje:null,motivo:""});}}
+                  className={`py-2 rounded-xl text-xs font-bold border-2 transition ${est.estado==="disponible"?"bg-emerald-500 text-white border-emerald-500":"bg-white text-gray-500 border-gray-200 hover:border-emerald-300"}`}>
+                  🟢 Disponible
+                </button>
+                <button onClick={()=>{setMotivoEditId(t.id);setMotivoTxt(est.motivo||"");}}
+                  className={`py-2 rounded-xl text-xs font-bold border-2 transition ${est.estado==="fuera_servicio"?"bg-red-500 text-white border-red-500":"bg-white text-gray-500 border-gray-200 hover:border-red-300"}`}>
+                  🔴 Fuera Serv.
+                </button>
+                <button onClick={()=>{setMotivoEditId(null);actualizar(t.id,{estado:"en_viaje",buqueViaje:est.buqueViaje||"ESPERANZA",motivo:""});}}
+                  className={`py-2 rounded-xl text-xs font-bold border-2 transition ${est.estado==="en_viaje"?"bg-blue-500 text-white border-blue-500":"bg-white text-gray-500 border-gray-200 hover:border-blue-300"}`}>
+                  🔵 En Viaje
+                </button>
+              </div>
+
+              {est.estado==="en_viaje"&&(
+                <div className="flex gap-1.5 mt-2">
+                  {["ESPERANZA","DALKA"].map(b=>(
+                    <button key={b} onClick={()=>actualizar(t.id,{buqueViaje:b})}
+                      className={`flex-1 py-1.5 rounded-lg text-xs font-semibold border transition ${est.buqueViaje===b?"bg-blue-600 text-white border-blue-600":"bg-white text-gray-500 border-gray-200 hover:border-blue-300"}`}>
+                      🚢 {b==="ESPERANZA"?"Esperanza":"Dalka"}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {editandoMotivo&&(
+                <div className="flex gap-1.5 mt-2">
+                  <input autoFocus value={motivoTxt} onChange={e=>setMotivoTxt(e.target.value)}
+                    onKeyDown={e=>{if(e.key==="Enter"){actualizar(t.id,{estado:"fuera_servicio",buqueViaje:null,motivo:motivoTxt.trim()});setMotivoEditId(null);}}}
+                    placeholder="Motivo (opcional)..." className="flex-1 px-2.5 py-1.5 rounded-lg border border-gray-300 text-xs"/>
+                  <button onClick={()=>{actualizar(t.id,{estado:"fuera_servicio",buqueViaje:null,motivo:motivoTxt.trim()});setMotivoEditId(null);}}
+                    className="px-3 py-1.5 rounded-lg bg-red-500 text-white text-xs font-bold">OK</button>
+                </div>
+              )}
+              {est.estado==="fuera_servicio"&&est.motivo&&!editandoMotivo&&(
+                <p className="text-red-600 text-xs mt-1.5 italic">"{est.motivo}"</p>
+              )}
+
+              {est.actualizadoPor&&(
+                <p className="text-gray-400 text-[10px] mt-2">Actualizado por {est.actualizadoPor} — {fmtDT(est.actualizadoEn)}</p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function FaenaActivaPage({user,data}){
   const equip=data?.equip||[];
   const quien=user.name||user.username||"";
@@ -16475,13 +16672,17 @@ function FaenaActivaPage({user,data}){
   const [faenas,setFaenas]=useState([]);
   const [detenciones,setDetenciones]=useState([]);
   const [targets,setTargets]=useState([]);
+  const [estadosTractos,setEstadosTractos]=useState([]);
   const [loading,setLoading]=useState(true);
 
   useEffect(()=>{
     const u1=onSnapshot(doc(db,COLL_FAENA,"faenas"),snap=>{setFaenas(snap.exists()?(snap.data().data||[]):[]);setLoading(false);});
     const u2=onSnapshot(doc(db,COLL_DETENCIONES,"detenciones"),snap=>setDetenciones(snap.exists()?(snap.data().data||[]):[]));
     const u3=onSnapshot(doc(db,COLL_FAENA_TARGETS,"config"),snap=>setTargets(snap.exists()?(snap.data().data||[]):[]));
-    return()=>{u1();u2();u3();};
+    // Estado de tractos (ver EstadoTractosPage) — badges de disponible/fuera
+    // de servicio/en viaje en los selectores de tracto de más abajo.
+    const u4=onSnapshot(doc(db,COLL_TRACTO_ESTADO,"estado"),snap=>setEstadosTractos(snap.exists()?(snap.data().data||[]):[]));
+    return()=>{u1();u2();u3();u4();};
   },[]);
 
   const hoy=new Date().toISOString().slice(0,10);
@@ -16499,6 +16700,10 @@ function FaenaActivaPage({user,data}){
   const [showFormDetencion,setShowFormDetencion]=useState(false);
   const [formDet,setFormDet]=useState({equipo:"",inicio:"",fin:"",tipo:"DM",novedades:""});
   const [horaFin,setHoraFin]=useState("");
+  const [enviarInformeId,setEnviarInformeId]=useState(null);
+  const [emailInforme,setEmailInforme]=useState("");
+  const [enviandoInforme,setEnviandoInforme]=useState(false);
+  const [ultimaFaenaCerradaId,setUltimaFaenaCerradaId]=useState(null);
 
   const tractosTerminal=equip.filter(e=>!e.deleted&&TRACTO_GRUPOS_VALIDOS.includes(getGroup(e)));
   const detencionesActiva=detenciones.filter(d=>faenaActiva&&d.faenaId===faenaActiva.id);
@@ -16540,6 +16745,7 @@ function FaenaActivaPage({user,data}){
     const cerrada={...faenaActiva,terminoOp,estado:"cerrada",indisponibilidadHH:indisp,...derivados,cerradoPor:quien,cerradoEn:new Date().toISOString()};
     await guardarFaenas(faenas.map(f=>f.id===faenaActiva.id?cerrada:f));
     setHoraFin("");
+    setUltimaFaenaCerradaId(cerrada.id);
     setVista("inicio");
   };
 
@@ -16576,6 +16782,31 @@ function FaenaActivaPage({user,data}){
     await guardarDetenciones(detenciones.filter(d=>d.faenaId!==f.id));
     await guardarFaenas(faenas.filter(x=>x.id!==f.id));
     if(faenaActiva?.id===f.id) setVista("inicio");
+  };
+
+  // Informe de faena (PDF + envío por correo) — pipeline server-side con
+  // pdfkit/Nodemailer, mismo patrón que el informe semanal de checklist
+  // (ver api/preview-faena-curso.js y api/enviar-informe-faena-curso.js).
+  const verInformeFaena=f=>window.open(`/api/preview-faena-curso?faenaId=${f.id}`,"_blank");
+  const enviarInformeFaena=async()=>{
+    if(!enviarInformeId) return;
+    const email=emailInforme.trim();
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){alert("Ingresa un correo válido.");return;}
+    setEnviandoInforme(true);
+    try{
+      const res=await fetch("/api/enviar-informe-faena-curso",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({faenaId:enviarInformeId,email}),
+      });
+      const json=await res.json();
+      if(!res.ok||!json.ok) throw new Error(json.error||"Error al enviar");
+      alert(`✅ Informe enviado a ${email}.`);
+      setEnviarInformeId(null);setEmailInforme("");
+    }catch(e){
+      alert(`Error al enviar el informe: ${e.message}`);
+    }finally{
+      setEnviandoInforme(false);
+    }
   };
 
   if(!getUserPerms(user).faena_activa) return null;
@@ -16657,16 +16888,24 @@ function FaenaActivaPage({user,data}){
                 <div className="grid grid-cols-2 gap-1.5">
                   {tractosTerminal.sort((a,b)=>(a.code||"").localeCompare(b.code||"")).map(e=>{
                     const sel=form.tractosEnServicio.includes(e.id);
+                    const est=estadoTractoDe(estadosTractos,e.id);
+                    const cfg=ESTADO_TRACTO_CFG[est.estado]||ESTADO_TRACTO_CFG.disponible;
                     return(
                       <button key={e.id}
                         onClick={()=>setForm(f=>({...f,tractosEnServicio:sel?f.tractosEnServicio.filter(id=>id!==e.id):[...f.tractosEnServicio,e.id]}))}
-                        className={`text-left px-3 py-2 rounded-lg border text-xs font-semibold transition ${sel?"bg-blue-50 border-blue-400 text-blue-800":"bg-gray-50 border-gray-200 text-gray-600 hover:border-blue-300"}`}>
-                        {e.code}
+                        className={`text-left px-3 py-2 rounded-lg border text-xs font-semibold transition flex items-center justify-between gap-1.5 ${sel?"bg-blue-50 border-blue-400 text-blue-800":"bg-gray-50 border-gray-200 text-gray-600 hover:border-blue-300"}`}>
+                        <span>{e.code}</span>
+                        <span className="text-[10px] flex-shrink-0" title={`${cfg.label}${est.estado==="en_viaje"&&est.buqueViaje?" — "+est.buqueViaje:""}`}>
+                          {cfg.emoji}{est.estado==="en_viaje"&&est.buqueViaje?` ${est.buqueViaje.slice(0,3)}`:""}
+                        </span>
                       </button>
                     );
                   })}
                 </div>
               )}
+              <p className="text-gray-400 text-[10px] mt-1.5">
+                🟢 Disponible · 🔴 Fuera de Servicio · 🔵 En Viaje — según Estado de Tractos. Se puede elegir cualquiera igual, es solo referencia.
+              </p>
             </div>
           </div>
         </div>
@@ -16676,6 +16915,23 @@ function FaenaActivaPage({user,data}){
           style={{background:"linear-gradient(135deg,#2563eb,#1d4ed8)"}}>
           🚀 Iniciar Faena
         </button>
+
+        {(()=>{
+          const cerrada=faenas.find(f=>f.id===ultimaFaenaCerradaId);
+          if(!cerrada) return null;
+          return(
+            <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-emerald-800 font-bold text-sm">✅ Faena {cerrada.numeroFaena} cerrada</p>
+                <p className="text-emerald-600 text-xs">Ya podés ver o enviar el informe.</p>
+              </div>
+              <div className="flex gap-2 flex-shrink-0">
+                <button onClick={()=>verInformeFaena(cerrada)} className="text-xs px-3 py-1.5 rounded-xl bg-white border border-emerald-300 text-emerald-700 font-semibold hover:bg-emerald-100 transition">📄 Ver informe</button>
+                <button onClick={()=>{setEnviarInformeId(cerrada.id);setEmailInforme("");}} className="text-xs px-3 py-1.5 rounded-xl bg-emerald-600 text-white font-semibold hover:bg-emerald-700 transition">✉️ Enviar por correo</button>
+              </div>
+            </div>
+          );
+        })()}
 
         {faenasHoy.length>0&&(
           <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
@@ -16691,11 +16947,46 @@ function FaenaActivaPage({user,data}){
                   {f.estado==="activa"&&f.creadoPor===quien&&(
                     <button onClick={()=>setVista("faena_abierta")} className="text-xs px-3 py-1.5 rounded-xl bg-blue-600 text-white font-semibold hover:bg-blue-700 transition">Continuar →</button>
                   )}
+                  {f.estado==="cerrada"&&(
+                    <>
+                      <button onClick={()=>verInformeFaena(f)} className="text-gray-400 hover:text-blue-600 transition p-1" title="Ver informe"><FileText size={15}/></button>
+                      <button onClick={()=>{setEnviarInformeId(f.id);setEmailInforme("");}} className="text-gray-400 hover:text-emerald-600 transition p-1" title="Enviar por correo"><Send size={14}/></button>
+                    </>
+                  )}
                   {puedeEliminar&&(
                     <button onClick={()=>eliminarFaenaPrueba(f)} className="text-gray-300 hover:text-red-500" title="Eliminar (solo csilva/jimunoz)"><Trash2 size={14}/></button>
                   )}
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {enviarInformeId&&(
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{background:"rgba(0,0,0,0.5)"}}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+              <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+                <p className="font-bold text-gray-900">✉️ Enviar informe por correo</p>
+                <button onClick={()=>{if(!enviandoInforme){setEnviarInformeId(null);setEmailInforme("");}}} className="text-gray-400 text-xl hover:text-gray-600">×</button>
+              </div>
+              <div className="px-5 py-4 space-y-3">
+                <div>
+                  <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1.5">Correo destinatario</label>
+                  <input type="email" autoFocus value={emailInforme} onChange={e=>setEmailInforme(e.target.value)}
+                    onKeyDown={e=>{if(e.key==="Enter")enviarInformeFaena();}}
+                    className={iCls} placeholder="ejemplo@navimag.cl"/>
+                </div>
+                <div className="flex gap-3 pt-1">
+                  <button onClick={()=>{if(!enviandoInforme){setEnviarInformeId(null);setEmailInforme("");}}}
+                    className="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-600 text-sm font-semibold hover:bg-gray-50 transition">
+                    Cancelar
+                  </button>
+                  <button onClick={enviarInformeFaena} disabled={enviandoInforme||!emailInforme.trim()}
+                    className="flex-1 py-2.5 rounded-xl text-white text-sm font-bold transition disabled:opacity-50" style={{background:"#16a34a"}}>
+                    {enviandoInforme?"Enviando...":"Enviar"}
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -16818,9 +17109,10 @@ function FaenaActivaPage({user,data}){
                   {(faenaActiva.tractosEnServicio?.length>0
                     ?faenaActiva.tractosEnServicio.map(id=>equip.find(e=>e.id===id)).filter(Boolean)
                     :tractosTerminal
-                  ).sort((a,b)=>(a.code||"").localeCompare(b.code||"")).map(e=>(
-                    <option key={e.id} value={e.id}>{e.code}</option>
-                  ))}
+                  ).sort((a,b)=>(a.code||"").localeCompare(b.code||"")).map(e=>{
+                    const cfg=ESTADO_TRACTO_CFG[estadoTractoDe(estadosTractos,e.id).estado]||ESTADO_TRACTO_CFG.disponible;
+                    return <option key={e.id} value={e.id}>{cfg.emoji} {e.code}</option>;
+                  })}
                 </select>
               </div>
               <div>
@@ -32810,6 +33102,7 @@ config_reportes:<ConfigReportes user={user}/>,
 gastos:        <GastosPresupuesto user={user} data={data} activeModule={activeModule} activeBarco={activeBarco}/>,
 disponibilidad:<DisponibilidadUtilizacion user={user} data={data}/>,
 faena_activa:  <FaenaActivaPage user={user} data={data}/>,
+estado_tractos:<EstadoTractosPage user={user} data={data}/>,
 };
 
 return(

@@ -89,3 +89,74 @@ export async function enviarReporteFaena(destinatarios, faena, pdfBuffer, period
     ],
   });
 }
+
+/**
+ * Envía el informe de una faena de Faena en Curso (App.jsx: FaenaActivaPage)
+ * por correo, con el PDF adjunto. Destinatario se escribe a mano al momento
+ * de enviar (no hay lista de configuración fija para esto).
+ * @param {string} destinatario - un solo email
+ * @param {object} faena - objeto faena cerrado (mantek_faena/"faenas")
+ * @param {Buffer} pdfBuffer - PDF generado con generarPDFFaenaCurso
+ */
+export async function enviarInformeFaenaCurso(destinatario, faena, pdfBuffer) {
+  if (!destinatario) return;
+
+  const transport = createTransport();
+  const pct = v => Math.round((v || 0) * 100);
+  const cumpColor = p => p >= 90 ? "#16a34a" : p >= 70 ? "#d97706" : "#8B0000";
+  const disp = pct(faena.disponibilidadTecnica);
+  const subject = `[MANTEK] Informe de Faena ${faena.numeroFaena} — ${faena.buque} / ${faena.terminal}`;
+  const filename = `Informe_Faena_${faena.numeroFaena}_${faena.buque}.pdf`.replace(/\s+/g, "_");
+
+  const html = `
+<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="UTF-8"/></head>
+<body style="font-family:Arial,sans-serif;color:#1a1a1a;margin:0;padding:0;background:#f9fafb;">
+  <div style="max-width:600px;margin:24px auto;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 6px rgba(0,0,0,.1)">
+    <div style="background:#0055A4;padding:24px 32px;">
+      <p style="color:#fff;margin:0;font-size:12px;opacity:.8">NAVIMAG · INFORME DE FAENA — DISPONIBILIDAD Y UTILIZACIÓN DE TRACTOS</p>
+      <h1 style="color:#fff;margin:8px 0 0;font-size:22px">${faena.buque} — ${faena.terminal} — Faena ${faena.numeroFaena}</h1>
+    </div>
+    <div style="padding:24px 32px;">
+      <table style="width:100%;border-collapse:collapse;margin-bottom:20px">
+        <tr>
+          <td style="text-align:center;padding:12px;border:1px solid #e2e8f0">
+            <div style="font-size:24px;font-weight:bold;color:${cumpColor(disp)}">${disp}%</div>
+            <div style="font-size:11px;color:#6b7280">Disp. técnica</div>
+          </td>
+          <td style="text-align:center;padding:12px;border:1px solid #e2e8f0">
+            <div style="font-size:24px;font-weight:bold;color:${cumpColor(pct(faena.utilizacion))}">${pct(faena.utilizacion)}%</div>
+            <div style="font-size:11px;color:#6b7280">Utilización</div>
+          </td>
+          <td style="text-align:center;padding:12px;border:1px solid #e2e8f0">
+            <div style="font-size:24px;font-weight:bold;color:#0055A4">${faena.tractosOp||0}</div>
+            <div style="font-size:11px;color:#6b7280">Tractos op.</div>
+          </td>
+        </tr>
+      </table>
+      <p style="font-size:12px;color:#6b7280;margin:0">
+        Se adjunta el informe completo en PDF con detalle de tractos en servicio y detenciones registradas.
+      </p>
+    </div>
+    <div style="background:#f1f5f9;padding:12px 32px;text-align:center">
+      <p style="font-size:11px;color:#94a3b8;margin:0">MANTEK ERP · Informe generado desde Faena en Curso</p>
+    </div>
+  </div>
+</body>
+</html>`;
+
+  await transport.sendMail({
+    from: `"MANTEK ERP" <${process.env.GMAIL_USER}>`,
+    to: destinatario,
+    subject,
+    html,
+    attachments: [
+      {
+        filename,
+        content: pdfBuffer,
+        contentType: "application/pdf",
+      },
+    ],
+  });
+}

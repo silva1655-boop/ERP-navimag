@@ -2,9 +2,13 @@
 import { initializeApp, getApps, cert } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 
-export const COLL_MARITIMO = "mantek_maritimo_v1";
-export const COLL_DALKA    = "mantek_dalka_v1";
-export const COLL_TALLER   = "mantek_v2";
+export const COLL_MARITIMO   = "mantek_maritimo_v1";
+export const COLL_DALKA      = "mantek_dalka_v1";
+export const COLL_TALLER     = "mantek_v2";
+// Faena en Curso (App.jsx: FaenaActivaPage) — mismas colecciones que usa el
+// cliente, cada una con un solo doc clave/valor leído vía readDocData.
+export const COLL_FAENA       = "mantek_faena";
+export const COLL_DETENCIONES = "mantek_detenciones";
 
 // Init lazy — no crashea el módulo si faltan env vars;
 // el error se propaga como excepción capturada en el handler → JSON 500.
