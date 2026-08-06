@@ -20553,6 +20553,26 @@ const {checklists=[],equip=[],requests=[],users=[]}=data;
 const allCL=checklists||[];
 const [editing,setEditing]=useState(false);
 const [setup,setSetup]=useState({operatorName:user?.name||user?.fullName||"",equipType:activeModule==="maritimo"?"sala_maquinas":"tracto",equipId:"",horometro:"",fuel:"1/2",puerto:"",nave:"",inspectionType:"pre"});
+// Operador logueado con rol "operador": el nombre se auto-completa y se
+// muestra bloqueado (ver el select de más abajo) — nunca lo elige a mano.
+// Varios puntos del formulario resetean setup.operatorName a "" (al
+// cambiar de puerto, al terminar un checklist y volver al paso 1 para el
+// siguiente...) pensando en el caso de selección manual, donde eso fuerza
+// a re-elegir el operador correcto para el nuevo puerto. Para un operador
+// auto-detectado ese reset lo dejaba con el nombre visible en pantalla
+// (el bloque de abajo lo muestra directo desde user.name, no desde
+// setup.operatorName) pero el campo real vacío — el botón "Iniciar
+// Inspección" quedaba deshabilitado sin ninguna pista visual de por qué,
+// bloqueando el inicio del checklist. Este effect lo vuelve a completar
+// solo apenas eso pasa, sin importar qué lo vació.
+const esOperador=user?.role==="operador"||user?.authRole==="OPERADOR";
+useEffect(()=>{
+  if(!esOperador) return;
+  const nombreUsuario=user?.name||user?.fullName||"";
+  if(nombreUsuario&&setup.operatorName!==nombreUsuario){
+    setSetup(s=>({...s,operatorName:nombreUsuario}));
+  }
+},[esOperador,user?.name,user?.fullName,setup.operatorName]);
 const [postPhotos,setPostPhotos]=useState({front:null,right:null,left:null,rear:null,interior:null,extintor:null});
 const [cortaCorrientePhotos,setCortaCorrientePhotos]=useState({cortado:null});
 const [postDamageNote,setPostDamageNote]=useState("");
@@ -22282,7 +22302,11 @@ return(
     {Object.entries(PUERTOS).map(([k,p])=>(
       <button key={k} onClick={()=>{
           const naveAutomatica=k==="UCO"?"Dalka":k==="NAT"?"Esperanza":"";
-          setSetup(s=>({...s,puerto:k,operatorName:"",nave:naveAutomatica}));
+          // Si es un operador auto-detectado (nombre bloqueado, no se
+          // elige a mano) no hay que limpiarlo — solo aplica al caso de
+          // selección manual, donde forzar a re-elegir tiene sentido
+          // porque la lista de operadores está filtrada por puerto.
+          setSetup(s=>({...s,puerto:k,operatorName:esOperador?s.operatorName:"",nave:naveAutomatica}));
         }}
         className={`p-3 rounded-xl border-2 text-center transition font-semibold text-sm
           ${setup.puerto===k?"text-white border-transparent":"border-gray-200 text-gray-600 hover:border-gray-300"}`}
@@ -22316,7 +22340,6 @@ return(
 <div>
 <label className="text-gray-500 text-xs font-medium mb-1 block">NOMBRE DEL OPERADOR *</label>
 {(()=>{
-  const esOperador=user?.role==="operador"||user?.authRole==="OPERADOR";
   const nombreUsuario=user?.name||user?.fullName||"";
   // Si es operador, auto-seleccionar y bloquear
   if(esOperador&&nombreUsuario){
