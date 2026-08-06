@@ -31606,6 +31606,45 @@ const [user,setUser]=useState(null);
   },[user,syncUsersFromAuth]);
   // ─────────────────────────────────────────────────────
 
+  // ─── AVISO DE NUEVA VERSIÓN ──────────────────────────
+  // Revisa periódicamente si el build desplegado cambió (compara contra
+  // __APP_VERSION__, horneado en este mismo bundle al momento de compilar —
+  // ver vite.config.js) y muestra un aviso para recargar. Sin esto, una
+  // sesión que quedó abierta durante un deploy nunca se entera de que hay
+  // cambios nuevos hasta que alguien la cierra y abre por su cuenta.
+  const [updateAvailable,setUpdateAvailable]=useState(false);
+  const checkForUpdate=useCallback(async()=>{
+    try{
+      const res=await fetch('/version.json?t='+Date.now(),{cache:'no-store'});
+      if(!res.ok) return;
+      const {version}=await res.json();
+      if(version&&version!==__APP_VERSION__) setUpdateAvailable(true);
+    }catch(e){/* sin red, o version.json todavía no existe — no molesta */}
+  },[]);
+  useEffect(()=>{
+    checkForUpdate();
+    const iv=setInterval(checkForUpdate,5*60*1000);
+    const onVisible=()=>{if(document.visibilityState==="visible")checkForUpdate();};
+    document.addEventListener("visibilitychange",onVisible);
+    return()=>{clearInterval(iv);document.removeEventListener("visibilitychange",onVisible);};
+  },[checkForUpdate]);
+  const updateBanner=updateAvailable&&(
+    <div className="fixed top-3 left-0 right-0 z-[100] flex justify-center px-4 pointer-events-none">
+      <div className="flex items-center gap-3 px-4 py-2 rounded-full shadow-lg text-white text-sm font-semibold pointer-events-auto"
+        style={{background:NV.navy}}>
+        <span>🔄 Hay una nueva versión de la app disponible.</span>
+        <button onClick={()=>window.location.reload()}
+          className="px-3 py-1 rounded-full bg-white/15 hover:bg-white/25 transition font-bold">
+          Actualizar ahora
+        </button>
+        <button onClick={()=>setUpdateAvailable(false)} className="text-white/60 hover:text-white transition" title="Recordar más tarde">
+          <X size={14}/>
+        </button>
+      </div>
+    </div>
+  );
+  // ─────────────────────────────────────────────────────
+
 const [installPrompt,setInstallPrompt]=useState(null);
 const [showInstallBtn,setShowInstallBtn]=useState(false);
 const [fontSize,setFontSize]=useState(()=>{
@@ -32650,6 +32689,7 @@ if(isSgn){
   };
   return(
     <div className="min-h-screen bg-gray-50 flex">
+      {updateBanner}
       {sidebarOpen&&<div className="fixed inset-0 bg-black/40 z-40 lg:hidden" onClick={()=>setSidebarOpen(false)}/>}
       <Sidebar user={user} active={page} onNav={handleNav} onLogout={()=>{setUser(null);setPage("sgn_hallazgos");}} onChangePassword={()=>setShowChangePwd(true)} onChangeModule={onChangeModule} notifications={0} devBadge={0} online={online} collapsed={!sidebarOpen} moduleLabel={MODULE_LABEL} onInstall={null} fontSize={fontSize} setFontSize={setFontSize} data={data} navCategorias={SGN_NAV_CATEGORIAS} userPerms={sgnPerms}/>
       <div className="flex-1 min-h-screen flex flex-col overflow-hidden">
@@ -32709,6 +32749,7 @@ faena_activa:  <FaenaActivaPage user={user} data={data}/>,
 
 return(
 <div className="min-h-screen bg-gray-50 flex">
+{updateBanner}
 {sidebarOpen&&<div className="fixed inset-0 bg-black/40 z-40 lg:hidden" onClick={()=>setSidebarOpen(false)}/>}
 <Sidebar user={user} active={page} onNav={handleNav} onLogout={async()=>{try{await fetch(AUTH_URL+'/api/auth/logout',{method:'POST',credentials:'include'});}catch(e){console.warn('logout:',e);}setUser(null);setPage("dashboard");}} onChangePassword={()=>setShowChangePwd(true)} onChangeModule={()=>{setActiveModule(null);setActiveBarco(null);setPage("dashboard");setUser(null);setLoading(false);unsubs.current.forEach(u=>u());unsubs.current=[];setData({users:[],equip:[],plans:[],requests:[],wos:[],taskTemplates:[],checklists:[]});}} notifications={pendingReqs} devBadge={devBadge} online={online} collapsed={!sidebarOpen} moduleLabel={MODULE_LABEL} onInstall={showInstallBtn?async()=>{if(!installPrompt)return;installPrompt.prompt();const r=await installPrompt.userChoice;if(r.outcome==="accepted"){setShowInstallBtn(false);setInstallPrompt(null);}}:null} fontSize={fontSize} setFontSize={setFontSize} data={data} navCategorias={activeModule==="sgn"?SGN_NAV_CATEGORIAS:activeModule==="maritimo"?NAV_CATEGORIAS_MARITIMO:NAV_CATEGORIAS} userPerms={activeModule==="sgn"?getSgnUserPerms(user):getUserPerms(user)}/>
 <div className="flex-1 min-h-screen flex flex-col overflow-hidden">
