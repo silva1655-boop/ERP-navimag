@@ -19271,6 +19271,40 @@ const createDev=async()=>{
   }
 };
 
+const [isDeletingDev,setIsDeletingDev]=useState(null);
+const deleteDevReport=async(dev)=>{
+  if(isDeletingDev) return;
+  if(!window.confirm(`¿Eliminar este reporte de trabajo fuera de programa?${dev.otId?" También se elimina la OT generada.":""}\n\nEsta acción no se puede deshacer.`)) return;
+  setIsDeletingDev(dev.id);
+  try{
+    // Documento individual del request + su entrada en el índice
+    await deleteDoc(doc(db,activeCOLL,`req_${dev.id}`));
+    try{
+      const idxRef=doc(db,activeCOLL,"requests_index");
+      const idxSnap=await getDoc(idxRef);
+      if(idxSnap.exists()){
+        await setDoc(idxRef,{ids:(idxSnap.data().ids||[]).filter(id=>id!==dev.id)});
+      }
+    }catch(e){console.warn("Error actualizando requests_index:",e);}
+
+    // La OT generada automáticamente al registrar (si existe) sale también
+    // — si no, quedaría una OT huérfana en Órdenes de Trabajo sin el
+    // reporte que la originó.
+    let updatedWOs=wos;
+    if(dev.otId&&wos.some(w=>w.id===dev.otId)){
+      updatedWOs=wos.filter(w=>w.id!==dev.otId);
+      saveData("workOrders",updatedWOs);
+    }
+
+    setData(d=>({...d,requests:(d.requests||[]).filter(r=>r.id!==dev.id),wos:updatedWOs}));
+  }catch(e){
+    console.error("deleteDevReport:",e);
+    alert("Error al eliminar el reporte. Intenta nuevamente.");
+  }finally{
+    setIsDeletingDev(null);
+  }
+};
+
 const TYPE_LABEL={fuera_de_programa:"Fuera de Programa",anomalia:"Anomalía Detectada",desgaste:"Desgaste / Deterioro",correctivo_no_planif:"Correctivo No Planificado",otro:"Otro"};
 const TYPE_COLOR={fuera_de_programa:"text-orange-700 bg-orange-50 border-orange-200",anomalia:"text-amber-700 bg-amber-50 border-amber-200",desgaste:"text-yellow-700 bg-yellow-50 border-yellow-200",correctivo_no_planif:"text-red-700 bg-red-50 border-red-200",otro:"text-gray-600 bg-gray-50 border-gray-200"};
 const photoInputRef=useRef(null);
@@ -19360,12 +19394,23 @@ return(
           </div>
         </div>
 
-        {/* Expand button */}
-        <button
-          onClick={()=>setExpandedId(isExpanded?null:d.id)}
-          className="flex-shrink-0 p-1.5 rounded-lg hover:bg-gray-100 transition text-gray-400">
-          <ChevronDown size={16} className={`transition-transform ${isExpanded?"rotate-180":""}`}/>
-        </button>
+        {/* Acciones */}
+        <div className="flex items-center gap-0.5 flex-shrink-0">
+          {role==="supervisor"&&(
+            <button
+              onClick={()=>deleteDevReport(d)}
+              disabled={isDeletingDev===d.id}
+              title="Eliminar"
+              className="p-1.5 rounded-lg hover:bg-red-50 transition text-gray-300 hover:text-red-500 disabled:opacity-40 disabled:cursor-not-allowed">
+              <Trash2 size={15}/>
+            </button>
+          )}
+          <button
+            onClick={()=>setExpandedId(isExpanded?null:d.id)}
+            className="p-1.5 rounded-lg hover:bg-gray-100 transition text-gray-400">
+            <ChevronDown size={16} className={`transition-transform ${isExpanded?"rotate-180":""}`}/>
+          </button>
+        </div>
       </div>
 
       {/* Expanded detail */}
@@ -31781,6 +31826,18 @@ const loadMonthlyChecklists=async(loadAll=false)=>{
       }
     }catch(e){}
 
+    // IDs recuperados manualmente con "Recuperar checklists no visibles"
+    // (recoverLostChecklists escanea 12 meses hacia atrás). Se guardan en un
+    // índice aparte que SIEMPRE se revisa acá, no solo con loadAll — si no,
+    // un checklist recuperado de hace más de 3 meses volvía a desaparecer
+    // en cuanto se cerraba y reabría la app, porque quedaba fuera de la
+    // ventana normal de monthsToLoad.
+    let recoveredIds=[];
+    try{
+      const recSnap=await getDoc(doc(db,currentCOLL,"cl_recovered_index"));
+      if(recSnap.exists()) recoveredIds=recSnap.data().ids||[];
+    }catch(e){}
+
     // Also check legacy monthly documents (checklists_YYYY_MM)
     // These contain checklists saved before individual doc migration
     const legacyCLs=[];
@@ -31843,7 +31900,13 @@ const loadMonthlyChecklists=async(loadAll=false)=>{
       })).then(()=>console.log(`✅ ${legacyCLs.length} checklists legacy migrados a documentos individuales`));
     }
 
-    const idsToLoad=loadAll?allIds:allIds.slice(-200);
+    // Los recuperados van SIEMPRE, sin pasar por el cap de 200 — son pocos
+    // (solo lo que el usuario recuperó a mano) y son justo los que se
+    // perderían si quedaran sujetos al mismo recorte que el resto.
+    const idsToLoad=[...new Set([
+      ...(loadAll?allIds:allIds.slice(-200)),
+      ...recoveredIds,
+    ])];
 
     // Show preview immediately from metadata
     const previewCLs=idsToLoad
@@ -32002,6 +32065,20 @@ const recoverLostChecklists=async()=>{
         if(!clSnap.exists()) await setDoc(clRef,{data:c});
       }catch(e){console.warn(`Error reconstruyendo cl_${c.id}:`,e);}
     }
+
+    // Guardar los IDs recuperados en un índice permanente aparte de los
+    // mensuales — esta recuperación escanea 12 meses hacia atrás, pero
+    // loadMonthlyChecklists() normalmente solo mira los últimos 3. Sin este
+    // índice, lo recuperado solo duraba la sesión actual y volvía a
+    // desaparecer al cerrar y reabrir la app (loadMonthlyChecklists ahora
+    // revisa cl_recovered_index siempre, no solo con "cargar todo").
+    try{
+      const recIdxRef=doc(db,currentCOLL,"cl_recovered_index");
+      const recIdxSnap=await getDoc(recIdxRef);
+      const existingRecIds=recIdxSnap.exists()?recIdxSnap.data().ids||[]:[];
+      const newRecIds=[...new Set([...existingRecIds,...recovered.map(c=>c.id)])];
+      await setDoc(recIdxRef,{ids:newRecIds});
+    }catch(e){console.warn("Error guardando cl_recovered_index:",e);}
 
     // Actualizar estado local
     const allMerged=[...(data.checklists||[]),...recovered]
