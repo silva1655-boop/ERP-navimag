@@ -18951,35 +18951,66 @@ function ManualesPage(){
 // pulgadas). Son valores de referencia de ingeniería — para aplicaciones
 // críticas o de seguridad siempre hay que verificar la especificación del
 // fabricante del equipo.
+// Diámetros y pasos de rosca métricos según ISO 261 (paso grueso/estándar) e
+// ISO 262 (paso fino más usado por diámetro) — rango completo de tornillería
+// de taller, de M1.6 a M64.
 const TORQUE_METRIC_DIAM=[
-  {d:3,  label:"M3",  coarse:0.5,  fine:null},
-  {d:4,  label:"M4",  coarse:0.7,  fine:null},
-  {d:5,  label:"M5",  coarse:0.8,  fine:null},
-  {d:6,  label:"M6",  coarse:1.0,  fine:null},
-  {d:8,  label:"M8",  coarse:1.25, fine:1.0},
-  {d:10, label:"M10", coarse:1.5,  fine:1.25},
-  {d:12, label:"M12", coarse:1.75, fine:1.25},
-  {d:14, label:"M14", coarse:2.0,  fine:1.5},
-  {d:16, label:"M16", coarse:2.0,  fine:1.5},
-  {d:18, label:"M18", coarse:2.5,  fine:1.5},
-  {d:20, label:"M20", coarse:2.5,  fine:1.5},
-  {d:22, label:"M22", coarse:2.5,  fine:1.5},
-  {d:24, label:"M24", coarse:3.0,  fine:2.0},
-  {d:27, label:"M27", coarse:3.0,  fine:2.0},
-  {d:30, label:"M30", coarse:3.5,  fine:2.0},
-  {d:33, label:"M33", coarse:3.5,  fine:2.0},
-  {d:36, label:"M36", coarse:4.0,  fine:3.0},
+  {d:1.6, label:"M1.6", coarse:0.35, fine:null},
+  {d:1.8, label:"M1.8", coarse:0.35, fine:null},
+  {d:2,   label:"M2",   coarse:0.4,  fine:null},
+  {d:2.2, label:"M2.2", coarse:0.45, fine:null},
+  {d:2.5, label:"M2.5", coarse:0.45, fine:null},
+  {d:3,   label:"M3",   coarse:0.5,  fine:null},
+  {d:3.5, label:"M3.5", coarse:0.6,  fine:null},
+  {d:4,   label:"M4",   coarse:0.7,  fine:null},
+  {d:4.5, label:"M4.5", coarse:0.75, fine:null},
+  {d:5,   label:"M5",   coarse:0.8,  fine:null},
+  {d:6,   label:"M6",   coarse:1.0,  fine:null},
+  {d:7,   label:"M7",   coarse:1.0,  fine:null},
+  {d:8,   label:"M8",   coarse:1.25, fine:1.0},
+  {d:9,   label:"M9",   coarse:1.25, fine:1.0},
+  {d:10,  label:"M10",  coarse:1.5,  fine:1.25},
+  {d:11,  label:"M11",  coarse:1.5,  fine:1.0},
+  {d:12,  label:"M12",  coarse:1.75, fine:1.25},
+  {d:14,  label:"M14",  coarse:2.0,  fine:1.5},
+  {d:16,  label:"M16",  coarse:2.0,  fine:1.5},
+  {d:18,  label:"M18",  coarse:2.5,  fine:1.5},
+  {d:20,  label:"M20",  coarse:2.5,  fine:1.5},
+  {d:22,  label:"M22",  coarse:2.5,  fine:1.5},
+  {d:24,  label:"M24",  coarse:3.0,  fine:2.0},
+  {d:27,  label:"M27",  coarse:3.0,  fine:2.0},
+  {d:30,  label:"M30",  coarse:3.5,  fine:2.0},
+  {d:33,  label:"M33",  coarse:3.5,  fine:2.0},
+  {d:36,  label:"M36",  coarse:4.0,  fine:3.0},
+  {d:39,  label:"M39",  coarse:4.0,  fine:3.0},
+  {d:42,  label:"M42",  coarse:4.5,  fine:3.0},
+  {d:45,  label:"M45",  coarse:4.5,  fine:3.0},
+  {d:48,  label:"M48",  coarse:5.0,  fine:3.0},
+  {d:52,  label:"M52",  coarse:5.0,  fine:4.0},
+  {d:56,  label:"M56",  coarse:5.5,  fine:4.0},
+  {d:60,  label:"M60",  coarse:5.5,  fine:4.0},
+  {d:64,  label:"M64",  coarse:6.0,  fine:4.0},
 ];
 const TORQUE_METRIC_GRADOS=[
-  {v:"4.6",  sp:225, marca:"Marcado \"4.6\" en la cabeza"},
-  {v:"4.8",  sp:310, marca:"Marcado \"4.8\" en la cabeza"},
-  {v:"5.8",  sp:380, marca:"Marcado \"5.8\" en la cabeza"},
-  {v:"8.8",  sp:580, marca:"Marcado \"8.8\" en la cabeza"},
-  {v:"9.8",  sp:650, marca:"Marcado \"9.8\" en la cabeza"},
-  {v:"10.9", sp:830, marca:"Marcado \"10.9\" en la cabeza"},
-  {v:"12.9", sp:970, marca:"Marcado \"12.9\" en la cabeza"},
+  {v:"4.6",   sp:225, marca:"Marcado \"4.6\" en la cabeza"},
+  {v:"4.8",   sp:310, marca:"Marcado \"4.8\" en la cabeza"},
+  {v:"5.8",   sp:380, marca:"Marcado \"5.8\" en la cabeza"},
+  {v:"6.8",   sp:440, marca:"Marcado \"6.8\" en la cabeza"},
+  {v:"8.8",   sp:580, marca:"Marcado \"8.8\" en la cabeza"},
+  {v:"9.8",   sp:650, marca:"Marcado \"9.8\" en la cabeza"},
+  {v:"10.9",  sp:830, marca:"Marcado \"10.9\" en la cabeza"},
+  {v:"12.9",  sp:970, marca:"Marcado \"12.9\" en la cabeza"},
+  {v:"A2-70", sp:450, label:"A2-70 (inox)", marca:"Marcado \"A2-70\" — acero inoxidable"},
+  {v:"A4-80", sp:600, label:"A4-80 (inox)", marca:"Marcado \"A4-80\" — acero inoxidable"},
 ];
+// Diámetros y pasos (hilos por pulgada) en pulgadas según ANSI/ASME B1.1 —
+// desde tornillería pequeña numerada (#4 a #12) hasta pernos de 2".
 const TORQUE_IMPERIAL_DIAM=[
+  {d:0.112,  label:'#4',    unc:40, unf:48},
+  {d:0.138,  label:'#6',    unc:32, unf:40},
+  {d:0.164,  label:'#8',    unc:32, unf:36},
+  {d:0.190,  label:'#10',   unc:24, unf:32},
+  {d:0.216,  label:'#12',   unc:24, unf:28},
   {d:0.25,   label:'1/4"',  unc:20, unf:28},
   {d:0.3125, label:'5/16"', unc:18, unf:24},
   {d:0.375,  label:'3/8"',  unc:16, unf:24},
@@ -18990,11 +19021,20 @@ const TORQUE_IMPERIAL_DIAM=[
   {d:0.75,   label:'3/4"',  unc:10, unf:16},
   {d:0.875,  label:'7/8"',  unc:9,  unf:14},
   {d:1.0,    label:'1"',    unc:8,  unf:12},
+  {d:1.125,  label:'1-1/8"',unc:7,  unf:12},
+  {d:1.25,   label:'1-1/4"',unc:7,  unf:12},
+  {d:1.375,  label:'1-3/8"',unc:6,  unf:12},
+  {d:1.5,    label:'1-1/2"',unc:6,  unf:12},
+  {d:1.75,   label:'1-3/4"',unc:5,  unf:null},
+  {d:2.0,    label:'2"',    unc:4.5,unf:null},
 ];
 const TORQUE_IMPERIAL_GRADOS=[
+  {v:"SAE1", sp:33000,  label:"SAE Grado 1", marca:"Sin líneas radiales, cabeza baja"},
   {v:"SAE2", sp:55000,  label:"SAE Grado 2", marca:"Sin líneas radiales en la cabeza"},
   {v:"SAE5", sp:85000,  label:"SAE Grado 5", marca:"3 líneas radiales en la cabeza"},
   {v:"SAE8", sp:120000, label:"SAE Grado 8", marca:"6 líneas radiales en la cabeza"},
+  {v:"A325", sp:92000,  label:"ASTM A325",   marca:"Perno estructural — marcado \"A325\""},
+  {v:"A490", sp:120000, label:"ASTM A490",   marca:"Perno estructural — marcado \"A490\""},
 ];
 const TORQUE_LUBRICACION=[
   {v:"seco",      label:"Seco / oxidado",              sub:"Sin lubricar, con óxido o suciedad", k:0.20},
@@ -19003,9 +19043,12 @@ const TORQUE_LUBRICACION=[
   {v:"zincado",   label:"Zincado / galvanizado",        sub:"Perno con recubrimiento de zinc",      k:0.20},
 ];
 
+const TORQUE_METRIC_DEFAULT_IDX=TORQUE_METRIC_DIAM.findIndex(d=>d.label==="M10");
+const TORQUE_IMPERIAL_DEFAULT_IDX=TORQUE_IMPERIAL_DIAM.findIndex(d=>d.label==='1/2"');
+
 function TorqueCalculatorPage(){
   const [sistema,setSistema]=useState("metrico"); // metrico | pulgadas
-  const [diamIdx,setDiamIdx]=useState(5);          // M10 / 1/2" por defecto
+  const [diamIdx,setDiamIdx]=useState(TORQUE_METRIC_DEFAULT_IDX); // M10 por defecto
   const [tipoRosca,setTipoRosca]=useState("coarse"); // coarse|fine  ó  unc|unf
   const [gradoV,setGradoV]=useState("8.8");
   const [lubV,setLubV]=useState("seco");
@@ -19015,8 +19058,8 @@ function TorqueCalculatorPage(){
 
   const cambiarSistema=s=>{
     setSistema(s);
-    if(s==="metrico"){setGradoV("8.8");setTipoRosca("coarse");setDiamIdx(5);}
-    else{setGradoV("SAE5");setTipoRosca("unc");setDiamIdx(4);}
+    if(s==="metrico"){setGradoV("8.8");setTipoRosca("coarse");setDiamIdx(TORQUE_METRIC_DEFAULT_IDX);}
+    else{setGradoV("SAE5");setTipoRosca("unc");setDiamIdx(TORQUE_IMPERIAL_DEFAULT_IDX);}
   };
 
   const diametros=sistema==="metrico"?TORQUE_METRIC_DIAM:TORQUE_IMPERIAL_DIAM;
@@ -19024,7 +19067,6 @@ function TorqueCalculatorPage(){
   const grados=sistema==="metrico"?TORQUE_METRIC_GRADOS:TORQUE_IMPERIAL_GRADOS;
   const grado=grados.find(g=>g.v===gradoV)||grados[0];
   const lub=TORQUE_LUBRICACION.find(l=>l.v===lubV)||TORQUE_LUBRICACION[0];
-  const tieneFina=sistema==="metrico"&&diam.fine;
 
   const resultado=useMemo(()=>{
     const pct=(avanzado?pctCustom:75)/100;
@@ -19038,7 +19080,7 @@ function TorqueCalculatorPage(){
       return {As,F,K,pct,P,T_Nm,T_kgfm:T_Nm*0.10197,T_lbft:T_Nm*0.737562};
     }
     const D=diam.d;
-    const n=(tipoRosca==="unf"?diam.unf:diam.unc);
+    const n=(tipoRosca==="unf"&&diam.unf)?diam.unf:diam.unc; // algunos diámetros grandes no tienen UNF estándar
     const As=(Math.PI/4)*Math.pow(D-0.9743/n,2); // in²
     const F=As*grado.sp*pct;                     // lbf
     const T_inlb=K*F*D;
@@ -19110,9 +19152,9 @@ function TorqueCalculatorPage(){
             className={`py-2.5 rounded-xl text-sm font-bold border-2 transition ${tipoRosca==="unc"?"bg-blue-500 text-white border-blue-500":"bg-white text-gray-500 border-gray-200 hover:border-blue-300"}`}>
             UNC (grueso) — {diam.unc} hilos/in
           </button>
-          <button onClick={()=>setTipoRosca("unf")}
-            className={`py-2.5 rounded-xl text-sm font-bold border-2 transition ${tipoRosca==="unf"?"bg-blue-500 text-white border-blue-500":"bg-white text-gray-500 border-gray-200 hover:border-blue-300"}`}>
-            UNF (fino) — {diam.unf} hilos/in
+          <button disabled={!diam.unf} onClick={()=>setTipoRosca("unf")}
+            className={`py-2.5 rounded-xl text-sm font-bold border-2 transition ${!diam.unf?"bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed":tipoRosca==="unf"?"bg-blue-500 text-white border-blue-500":"bg-white text-gray-500 border-gray-200 hover:border-blue-300"}`}>
+            UNF (fino) {diam.unf?`— ${diam.unf} hilos/in`:"— no aplica"}
           </button>
         </>)}
       </div>
