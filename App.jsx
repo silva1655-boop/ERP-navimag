@@ -1647,6 +1647,14 @@ const ROLE_DEFAULT_PERMS={
 };
 
 const getUserPerms=(u)=>{
+  // csilva/jimunoz: acceso total a toda la app (Taller + Marítimo) — pisa
+  // rol y permisos por completo, sin importar lo que devuelva mantek-auth.
+  // Mismo allowlist que ya usan Gastos y Disponibilidad.
+  if(canAccessGastos(u)){
+    const full={};
+    Object.keys(ROLE_DEFAULT_PERMS.admin).forEach(k=>{full[k]=true;});
+    return {...full, gastos:true, disponibilidad:true};
+  }
   const base=(u?.permisos&&Object.keys(u.permisos).length>0)
     ?{...(ROLE_DEFAULT_PERMS[u?.role]||{}),...u.permisos}
     :(ROLE_DEFAULT_PERMS[u?.role]||{});
@@ -2362,10 +2370,16 @@ const handle=async()=>{
     const meData=await meRes.json();
     if(!meData.ok){setErr('Error al obtener permisos');setLoadingLogin(false);return;}
     const au=meData.user;
+    // csilva/jimunoz: acceso total a toda la app — fuerza rol "supervisor"
+    // y descarta cualquier restricción puntual que traiga mantek-auth
+    // (au.permissions), para que ROLE_DEFAULT_PERMS.supervisor + el
+    // override en getUserPerms les den acceso completo sin importar cómo
+    // esté configurada su cuenta ahí. Mismo allowlist que Gastos/Disponibilidad.
+    const esSuperUser=canAccessGastos({username:au.username});
     const erpUser={
       id:au.id,name:au.fullName,email:email.trim().toLowerCase(),
-      username:au.username,role:mapAuthRoleToErp(au.role),
-      authRole:au.role,nav:au.nav,permisos:buildErpPerms(au.permissions),
+      username:au.username,role:esSuperUser?"supervisor":mapAuthRoleToErp(au.role),
+      authRole:au.role,nav:au.nav,permisos:esSuperUser?{}:buildErpPerms(au.permissions),
       password:'',deleted:false,status:'activo',
       avatar:null,photo:null,
       _sessionToken:sessionToken||'',
