@@ -3175,12 +3175,13 @@ useEffect(()=>{
   return()=>{u1();u2();};
 },[]);
 const tractosResumenDB=useMemo(()=>{
-  const tractos=(data.equip||[]).filter(e=>!e.deleted&&TRACTO_GRUPOS_VALIDOS.includes(getGroup(e)));
-  const conteo={disponible:0,fuera_servicio:0,en_viaje_esperanza:0,en_viaje_dalka:0};
+  // Liftec (LIF) son grúas horquilla, no tractos de terminal — mismo
+  // criterio que EstadoTractosPage, así el resumen coincide con esa lista.
+  const tractos=(data.equip||[]).filter(e=>!e.deleted&&TRACTO_GRUPOS_VALIDOS.includes(getGroup(e))&&getGroup(e)!=="Liftec");
+  const conteo={disponible:0,fuera_servicio:0,en_viaje:0,en_otra_sucursal:0};
   tractos.forEach(t=>{
-    const est=estadoTractoDe(estadosTractosDB,t.id);
-    if(est.estado==="fuera_servicio") conteo.fuera_servicio++;
-    else if(est.estado==="en_viaje") conteo[est.buqueViaje==="DALKA"?"en_viaje_dalka":"en_viaje_esperanza"]++;
+    const est=estadoTractoDe(estadosTractosDB,t.id).estado;
+    if(conteo[est]!==undefined) conteo[est]++;
     else conteo.disponible++;
   });
   return {total:tractos.length,...conteo};
@@ -3252,8 +3253,8 @@ const widgetTractosFaenas=(
         {[
           {l:"Disponibles",v:tractosResumenDB.disponible,c:"text-emerald-600"},
           {l:"Fuera Serv.",v:tractosResumenDB.fuera_servicio,c:"text-red-600"},
-          {l:"En viaje ESP",v:tractosResumenDB.en_viaje_esperanza,c:"text-blue-600"},
-          {l:"En viaje DAL",v:tractosResumenDB.en_viaje_dalka,c:"text-blue-600"},
+          {l:"En Viaje",v:tractosResumenDB.en_viaje,c:"text-blue-600"},
+          {l:"Otra Sucursal",v:tractosResumenDB.en_otra_sucursal,c:"text-purple-600"},
         ].map(k=>(
           <div key={k.l}>
             <p className={`text-xl font-bold ${k.c}`}>{k.v}</p>
@@ -3521,6 +3522,10 @@ return(
     )}
   </div>
 </div>
+
+{/* Estado de Tractos / Faenas — visible a todos los roles, al principio del dashboard */}
+{widgetTractosFaenas}
+
 {role==="supervisor"&&(()=>{
   const tarjetasFlota=[
     ...EQ_GROUPS.filter(g=>g!=="Terberg"&&equip.some(e=>getGroup(e)===g)),
@@ -4010,9 +4015,6 @@ return<div key={c.id} className="flex items-center gap-2 py-2 border-b border-gr
 {allCL.filter(c=>c.operatorId===user.id).length===0&&<p className="text-gray-400 text-sm text-center py-6">No has completado ningún checklist</p>}
 </div>
 </>}
-
-{/* Estado de Tractos / Faenas — visible a todos los roles */}
-{widgetTractosFaenas}
 
 {/* Checklist stats widget — visible to all roles */}
 {monthCL.length>0&&(
@@ -16620,11 +16622,35 @@ function EstadoTractosPage({user,data}){
   if(!getUserPerms(user).estado_tractos) return null;
   if(loading) return <div className="flex-1 flex items-center justify-center p-10 text-gray-400 text-sm">Cargando…</div>;
 
+  const resumen={disponible:0,fuera_servicio:0,en_viaje:0,en_otra_sucursal:0};
+  tractos.forEach(t=>{
+    const est=estadoTractoDe(estados,t.id).estado;
+    if(resumen[est]!==undefined) resumen[est]++;
+    else resumen.disponible++;
+  });
+
   return(
     <div className="p-4 lg:p-6 max-w-4xl">
       <div className="mb-5">
         <h1 className="text-gray-900 font-bold text-xl flex items-center gap-2">🚜 Estado de Tractos</h1>
         <p className="text-gray-500 text-sm mt-0.5">Actualizá esto antes de cada faena — alimenta el selector de tractos de Faena en Curso.</p>
+      </div>
+
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4 mb-5">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+          {[
+            {l:"Disponibles",v:resumen.disponible,c:"text-emerald-600"},
+            {l:"Fuera Servicio",v:resumen.fuera_servicio,c:"text-red-600"},
+            {l:"En Viaje",v:resumen.en_viaje,c:"text-blue-600"},
+            {l:"Otra Sucursal",v:resumen.en_otra_sucursal,c:"text-purple-600"},
+          ].map(k=>(
+            <div key={k.l}>
+              <p className={`text-2xl font-bold ${k.c}`}>{k.v}</p>
+              <p className="text-gray-400 text-xs mt-0.5">{k.l}</p>
+            </div>
+          ))}
+        </div>
+        <p className="text-gray-400 text-[11px] text-right mt-2">{tractos.length} tractos en total</p>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
