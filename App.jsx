@@ -31672,7 +31672,10 @@ const [user,setUser]=useState(null);
       <div className="flex items-center gap-3 px-4 py-2 rounded-full shadow-lg text-white text-sm font-semibold pointer-events-auto"
         style={{background:NV.navy}}>
         <span>🔄 Hay una nueva versión de la app disponible.</span>
-        <button onClick={()=>window.location.reload()}
+        <button onClick={()=>{
+            if(window.confirm("¿Actualizar ahora?\n\nSe recargará la página — cualquier cambio no guardado (un checklist a medio llenar, un reporte de OT en curso, etc.) se va a perder."))
+              window.location.reload();
+          }}
           className="px-3 py-1 rounded-full bg-white/15 hover:bg-white/25 transition font-bold">
           Actualizar ahora
         </button>
