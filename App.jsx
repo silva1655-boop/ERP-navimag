@@ -19235,13 +19235,24 @@ const createDev=async()=>{
   await saveRequestIndividual(nd,{},activeCOLL);
 
   setDevSaveMsg(`✅ Guardado — OT ${otCode} registrada.`);
-  setTimeout(()=>setDevSaveMsg(""),4000);
-  // Cerrar el formulario automáticamente
-  setTimeout(()=>setShowDevForm&&setShowDevForm(false),500);
+  // Cerrar el formulario automáticamente — el setter real de este componente
+  // es setShowForm (setShowDevForm no existe: referenciarlo tira
+  // ReferenceError y el timeout nunca llega a cerrar nada). También se
+  // resetea el form para que la próxima vez que se abra no aparezcan datos
+  // de la última carga.
+  // isSavingDev se libera recién cuando el form efectivamente se cierra
+  // (no antes) — así el botón queda deshabilitado todo el tiempo hasta
+  // que se cierra solo, y un doble tap dentro de esa ventana no alcanza
+  // a disparar un segundo registro.
+  setTimeout(()=>{
+    setShowForm(false);
+    setForm(EMPTY_FORM);
+    setDevSaveMsg("");
+    setIsSavingDev(false);
+  },600);
   }catch(e){
     console.error("createDev error:",e);
     alert("Error al guardar. Intenta nuevamente.");
-  }finally{
     setIsSavingDev(false);
   }
 };
@@ -19425,7 +19436,7 @@ return(
 
   {/* Sticky header */}
   <div className="sticky top-0 z-30 flex items-center justify-between px-4 py-3 shadow-sm" style={{background:NV.navy}}>
-    <button onClick={()=>{if(window.confirm("¿Cerrar el formulario? El último guardado quedó registrado.")){setShowForm(false);setForm(EMPTY_FORM);setDevSaveMsg("");}}}
+    <button onClick={()=>{if(window.confirm("¿Cerrar sin registrar? Se perderán los datos ingresados en este formulario.")){setShowForm(false);setForm(EMPTY_FORM);setDevSaveMsg("");}}}
       className="flex items-center gap-1.5 text-white/80 hover:text-white text-sm font-medium transition">
       <ChevronLeft size={18}/>Volver
     </button>
@@ -19630,7 +19641,7 @@ return(
     {/* Footer actions */}
     <div className="flex gap-3 pb-8">
       <button
-        onClick={()=>{if(window.confirm("¿Cerrar el formulario? El último guardado quedó registrado.")){setShowForm(false);setForm(EMPTY_FORM);setDevSaveMsg("");}}}
+        onClick={()=>{if(window.confirm("¿Cerrar sin registrar? Se perderán los datos ingresados en este formulario.")){setShowForm(false);setForm(EMPTY_FORM);setDevSaveMsg("");}}}
         className={btnSecondary+" flex-1"}>
         Cancelar
       </button>
