@@ -685,7 +685,18 @@ if(missing.length>0)await setDoc(doc(db,coll,"taskTemplates"),{data:[...existing
 }
 
 // ─── UTILS ───────────────────────────────────────────────────────────────────
-const fmt   = d => d ? new Date(d).toLocaleDateString("es-CL",{day:"2-digit",month:"2-digit",year:"numeric"}) : "—";
+// Fechas "solo día" (YYYY-MM-DD, sin hora — scheduledDate, nextDueDate, etc.)
+// el motor de JS las parsea como medianoche UTC. En cualquier timezone
+// detrás de UTC (todo Chile) eso se muestra UN DÍA ANTES al formatear en
+// hora local — ej: "2026-07-30" se veía "29-07-2026". Si viene solo la
+// fecha (sin hora), se arma en hora LOCAL agregando "T00:00:00" antes de
+// parsear, para que no se corra. Los timestamps completos (con hora) no se
+// tocan — ahí sí corresponde mostrar en hora local, es un instante real.
+const fmt   = d => {
+  if(!d) return "—";
+  const soloFecha=/^\d{4}-\d{2}-\d{2}$/.test(String(d));
+  return new Date(soloFecha?d+"T00:00:00":d).toLocaleDateString("es-CL",{day:"2-digit",month:"2-digit",year:"numeric"});
+};
 const fmtDT = d => d ? new Date(d).toLocaleString("es-CL",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"}) : "—";
 const uid = () => Math.random().toString(36).slice(2,10);
 // Persistencia simple de filtros en localStorage (así sobreviven a navegar a
@@ -12932,7 +12943,7 @@ w.document.write(`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"/><t
      <tr><td class="label">Código OT</td><td><strong>${esc(ot.code)}</strong></td><td class="label">Tipo</td><td>${esc(ot.type)}</td></tr>
      <tr><td class="label">Equipo</td><td>${esc(eq?.code||"")} — ${esc(eq?.name||"")}</td><td class="label">Ubicación</td><td>${esc(eq?.location||"")}</td></tr>
      <tr><td class="label">Prioridad</td><td><span class="${ot.priority==="alta"?"badge-high":ot.priority==="media"?"badge-med":"badge-low"}">${esc(ot.priority?.toUpperCase())}</span></td><td class="label">Estado</td><td>${esc(ot.status)}</td></tr>
-     <tr><td class="label">Fecha Creación</td><td>${new Date(ot.createdAt).toLocaleDateString("es-CL")}</td><td class="label">Fecha Programada</td><td>${ot.scheduledDate?new Date(ot.scheduledDate).toLocaleDateString("es-CL"):"—"}</td></tr>
+     <tr><td class="label">Fecha Creación</td><td>${new Date(ot.createdAt).toLocaleDateString("es-CL")}</td><td class="label">Fecha Programada</td><td>${fmt(ot.scheduledDate)}</td></tr>
      <tr><td class="label">Horas Estimadas</td><td>${esc(ot.estimatedHours)}h</td><td class="label">Horas Reales</td><td>${ot.actualHours!=null?esc(ot.actualHours)+"h":"—"}</td></tr>
    </table>
    <h2>Mecánico Responsable</h2>
