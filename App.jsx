@@ -16583,8 +16583,10 @@ const ESTADO_TRACTO_CFG={
   disponible:{label:"Disponible",border:"border-emerald-300",bg:"bg-emerald-50",text:"text-emerald-700",emoji:"🟢"},
   fuera_servicio:{label:"Fuera de Servicio",border:"border-red-300",bg:"bg-red-50",text:"text-red-700",emoji:"🔴"},
   en_viaje:{label:"En Viaje",border:"border-blue-300",bg:"bg-blue-50",text:"text-blue-700",emoji:"🔵"},
+  en_otra_sucursal:{label:"En Otra Sucursal",border:"border-purple-300",bg:"bg-purple-50",text:"text-purple-700",emoji:"🟣"},
 };
-const estadoTractoDe=(estados,equipId)=>(estados||[]).find(e=>e.equipId===equipId)||{equipId,estado:"disponible",buqueViaje:null,motivo:""};
+const SUCURSAL_TRACTO_CFG={UCO:"Chacabuco",NAT:"Puerto Natales"};
+const estadoTractoDe=(estados,equipId)=>(estados||[]).find(e=>e.equipId===equipId)||{equipId,estado:"disponible",buqueViaje:null,sucursalDestino:null,motivo:""};
 
 function EstadoTractosPage({user,data}){
   const equip=data?.equip||[];
@@ -16602,7 +16604,9 @@ function EstadoTractosPage({user,data}){
     return()=>unsub();
   },[]);
 
-  const tractos=equip.filter(e=>!e.deleted&&TRACTO_GRUPOS_VALIDOS.includes(getGroup(e)))
+  // Liftec (LIF) son grúas horquilla, no tractos de terminal — se excluyen
+  // de este tablero aunque sigan en TRACTO_GRUPOS_VALIDOS para otras vistas.
+  const tractos=equip.filter(e=>!e.deleted&&TRACTO_GRUPOS_VALIDOS.includes(getGroup(e))&&getGroup(e)!=="Liftec")
     .sort((a,b)=>(a.code||"").localeCompare(b.code||""));
 
   const actualizar=async(equipId,patch)=>{
@@ -16636,12 +16640,14 @@ function EstadoTractosPage({user,data}){
                   <p className="text-gray-500 text-xs">{t.name}</p>
                 </div>
                 <span className={`text-xs font-bold px-2 py-1 rounded-full ${cfg.text} bg-white border ${cfg.border}`}>
-                  {cfg.emoji} {cfg.label}{est.estado==="en_viaje"&&est.buqueViaje?` — ${est.buqueViaje}`:""}
+                  {cfg.emoji} {cfg.label}
+                  {est.estado==="en_viaje"&&est.buqueViaje?` — ${est.buqueViaje}`:""}
+                  {est.estado==="en_otra_sucursal"&&est.sucursalDestino?` — ${SUCURSAL_TRACTO_CFG[est.sucursalDestino]||est.sucursalDestino}`:""}
                 </span>
               </div>
 
-              <div className="grid grid-cols-3 gap-1.5">
-                <button onClick={()=>{setMotivoEditId(null);actualizar(t.id,{estado:"disponible",buqueViaje:null,motivo:""});}}
+              <div className="grid grid-cols-2 gap-1.5">
+                <button onClick={()=>{setMotivoEditId(null);actualizar(t.id,{estado:"disponible",buqueViaje:null,sucursalDestino:null,motivo:""});}}
                   className={`py-2 rounded-xl text-xs font-bold border-2 transition ${est.estado==="disponible"?"bg-emerald-500 text-white border-emerald-500":"bg-white text-gray-500 border-gray-200 hover:border-emerald-300"}`}>
                   🟢 Disponible
                 </button>
@@ -16649,9 +16655,13 @@ function EstadoTractosPage({user,data}){
                   className={`py-2 rounded-xl text-xs font-bold border-2 transition ${est.estado==="fuera_servicio"?"bg-red-500 text-white border-red-500":"bg-white text-gray-500 border-gray-200 hover:border-red-300"}`}>
                   🔴 Fuera Serv.
                 </button>
-                <button onClick={()=>{setMotivoEditId(null);actualizar(t.id,{estado:"en_viaje",buqueViaje:est.buqueViaje||"ESPERANZA",motivo:""});}}
+                <button onClick={()=>{setMotivoEditId(null);actualizar(t.id,{estado:"en_viaje",buqueViaje:est.buqueViaje||"ESPERANZA",sucursalDestino:null,motivo:""});}}
                   className={`py-2 rounded-xl text-xs font-bold border-2 transition ${est.estado==="en_viaje"?"bg-blue-500 text-white border-blue-500":"bg-white text-gray-500 border-gray-200 hover:border-blue-300"}`}>
                   🔵 En Viaje
+                </button>
+                <button onClick={()=>{setMotivoEditId(null);actualizar(t.id,{estado:"en_otra_sucursal",buqueViaje:null,sucursalDestino:est.sucursalDestino||"UCO",motivo:""});}}
+                  className={`py-2 rounded-xl text-xs font-bold border-2 transition ${est.estado==="en_otra_sucursal"?"bg-purple-500 text-white border-purple-500":"bg-white text-gray-500 border-gray-200 hover:border-purple-300"}`}>
+                  🟣 Otra Sucursal
                 </button>
               </div>
 
@@ -16661,6 +16671,17 @@ function EstadoTractosPage({user,data}){
                     <button key={b} onClick={()=>actualizar(t.id,{buqueViaje:b})}
                       className={`flex-1 py-1.5 rounded-lg text-xs font-semibold border transition ${est.buqueViaje===b?"bg-blue-600 text-white border-blue-600":"bg-white text-gray-500 border-gray-200 hover:border-blue-300"}`}>
                       🚢 {b==="ESPERANZA"?"Esperanza":"Dalka"}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {est.estado==="en_otra_sucursal"&&(
+                <div className="flex gap-1.5 mt-2">
+                  {Object.entries(SUCURSAL_TRACTO_CFG).map(([code,label])=>(
+                    <button key={code} onClick={()=>actualizar(t.id,{sucursalDestino:code})}
+                      className={`flex-1 py-1.5 rounded-lg text-xs font-semibold border transition ${est.sucursalDestino===code?"bg-purple-600 text-white border-purple-600":"bg-white text-gray-500 border-gray-200 hover:border-purple-300"}`}>
+                      📍 {label}
                     </button>
                   ))}
                 </div>
