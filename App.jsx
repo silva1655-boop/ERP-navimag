@@ -1770,7 +1770,6 @@ const NAV_CATEGORIAS_MARITIMO={
       {key:"plans",       label:"Plan Preventivo"},
       {key:"equipment",   label:"Equipos"},
       {key:"requests",    label:"Solicitudes"},
-      {key:"manuales",    label:"Manuales Técnicos"},
     ],
   },
   gestion:{
