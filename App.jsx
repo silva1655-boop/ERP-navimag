@@ -6443,7 +6443,7 @@ style={sel?.id===w.id?{borderColor:NV.blue,background:"#EBF4FF"}:sem?{borderColo
 <div className="flex-1 min-w-0">
 <div className="flex items-center gap-2 mb-1 flex-wrap">
 <span className="text-xs font-mono font-bold" style={{color:NV.blue}}>{w.code}</span>
-<Badge s={w.type==="preventivo"?"asignada":"en_proceso"} label={w.type==="preventivo"?"Preventivo":"Correctivo"}/>
+<Badge s={resolveOTType(w)==="preventiva"?"asignada":"en_proceso"} label={resolveOTType(w)==="preventiva"?"Preventivo":"Correctivo"}/>
 <Badge s={w.status} {...marBadge(w.status)}/>
 </div>
 <p className="text-gray-800 text-sm font-semibold truncate">{w.title}</p>
@@ -14083,8 +14083,8 @@ const inRange=w=>{
 };
 const filteredWOs=wos.filter(inRange);
 const completed=filteredWOs.filter(w=>w.status==="completada");
-const prev=filteredWOs.filter(w=>w.type==="preventivo");
-const corr=filteredWOs.filter(w=>w.type==="correctivo");
+const prev=filteredWOs.filter(w=>resolveOTType(w)==="preventiva");
+const corr=filteredWOs.filter(w=>resolveOTType(w)!=="preventiva");
 const totalHrs=completed.reduce((s,w)=>s+(w.actualHours||0),0);
 const byEquip=equip.map(e=>({
   ...e,
