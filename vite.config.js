@@ -4,7 +4,6 @@ import react from '@vitejs/plugin-react'
 // Versión de este build — se usa para el aviso de "hay una versión nueva"
 // dentro de la app (ver App.jsx: chequeo periódico de /version.json contra
 // __APP_VERSION__, el valor horneado en este mismo build).
-// (commit de prueba — verifica que el aviso de actualización dispare bien)
 const BUILD_VERSION = String(Date.now())
 
 // Emite dist/version.json con el mismo valor que __APP_VERSION__ — se sirve
