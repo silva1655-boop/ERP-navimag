@@ -9,7 +9,7 @@ Check, RefreshCw, Activity, ArrowRight, Edit2, Trash2,
 TrendingUp, Layers, Info, Wifi, WifiOff, Gauge, Key, FileWarning,
 Printer, Filter, Eye, EyeOff, Copy, Link, ChevronDown, Camera, Download, FileDown, Menu,
 ClipboardCheck, ZoomIn, ChevronLeft, Save, Play, HelpCircle, ChevronUp, MessageCircle, Truck, Upload, Send, RotateCcw,
-Hash, Tag, UserCheck, User as UserIcon, MessageSquare, ExternalLink, PieChart, TrendingDown, MapPin, BookOpen
+Hash, Tag, UserCheck, User as UserIcon, MessageSquare, ExternalLink, PieChart, TrendingDown, MapPin, BookOpen, Calculator, Ruler
 } from "lucide-react";
 import { db, storage } from "./firebase.js";
 import { ref, uploadString, getDownloadURL } from "firebase/storage";
@@ -1625,7 +1625,7 @@ const ROLE_DEFAULT_PERMS={
     checklist:true, historial_postop:true, deviaciones:true, reports:true,
     users:true, accesos:true, notifications:true,
     vessels:true, voyages:true, repuestos:true,
-    dashboard_checklist:true, operadores:true, config_reportes:true, faena_activa:true, estado_tractos:true, manuales:true
+    dashboard_checklist:true, operadores:true, config_reportes:true, faena_activa:true, estado_tractos:true, manuales:true, torque:true
   },
   supervisor:{
     dashboard:true, workorders:true, equipment:true,
@@ -1633,7 +1633,7 @@ const ROLE_DEFAULT_PERMS={
     checklist:true, historial_postop:true, deviaciones:true, reports:true,
     users:true, accesos:true, notifications:false,
     vessels:true, voyages:true, repuestos:true, dashboard_checklist:true, operadores:true,
-    config_reportes:true, faena_activa:true, estado_tractos:true, manuales:true
+    config_reportes:true, faena_activa:true, estado_tractos:true, manuales:true, torque:true
   },
   operaciones:{
     dashboard:true, workorders:false, equipment:false,
@@ -1641,33 +1641,33 @@ const ROLE_DEFAULT_PERMS={
     checklist:true, historial_postop:true, deviaciones:false, reports:false,
     users:false, accesos:false, notifications:true,
     vessels:true, voyages:true, repuestos:false, dashboard_checklist:true, operadores:true,
-    faena_activa:true, estado_tractos:true, manuales:true
+    faena_activa:true, estado_tractos:true, manuales:true, torque:true
   },
   mecanico:{
     dashboard:true, workorders:true, equipment:false,
     plans:false, indicadores:false, requests:false,
     checklist:true, historial_postop:true, deviaciones:true, reports:true,
-    users:false, accesos:false, notifications:false, repuestos:false, estado_tractos:true, manuales:true
+    users:false, accesos:false, notifications:false, repuestos:false, estado_tractos:true, manuales:true, torque:true
   },
   operador:{
     dashboard:true, workorders:false, equipment:false,
     plans:false, indicadores:false, requests:false,
     checklist:true, historial_postop:true, deviaciones:false, reports:false,
-    users:false, accesos:false, notifications:true, repuestos:false, manuales:true
+    users:false, accesos:false, notifications:true, repuestos:false, manuales:true, torque:true
   },
   bodega:{
     dashboard:true, workorders:false, equipment:false,
     plans:false, indicadores:false, requests:false,
     checklist:false, historial_postop:false, deviaciones:false, reports:true,
     users:false, accesos:false, notifications:false,
-    vessels:false, voyages:false, repuestos:true, manuales:true
+    vessels:false, voyages:false, repuestos:true, manuales:true, torque:true
   },
   jefe_maquinas:{
     dashboard:true, workorders:true, equipment:false,
     plans:false, indicadores:false, requests:false,
     checklist:true, historial_postop:true, deviaciones:false, reports:true,
     users:false, accesos:false, notifications:false,
-    vessels:true, voyages:true, repuestos:false, dashboard_checklist:true, operadores:false, manuales:true
+    vessels:true, voyages:true, repuestos:false, dashboard_checklist:true, operadores:false, manuales:true, torque:true
   },
 };
 
@@ -1726,13 +1726,19 @@ const NAV_CATEGORIAS={
       {key:"plans",       label:"Plan Preventivo"},
       {key:"equipment",   label:"Equipos"},
       {key:"requests",    label:"Solicitudes"},
-      {key:"manuales",    label:"Manuales Técnicos"},
     ],
   },
   inventario:{
     label:"Inventario", icon:Package,
     paginas:[
       {key:"repuestos", label:"Repuestos"},
+    ],
+  },
+  herramientas:{
+    label:"Herramientas Técnicas", icon:Zap,
+    paginas:[
+      {key:"manuales", label:"Manuales Técnicos"},
+      {key:"torque",   label:"Calculadora de Torque"},
     ],
   },
   gestion:{
@@ -2585,6 +2591,7 @@ vessels:       {label:"Buques y Certificados",icon:Layers},
 voyages:       {label:"Registro de Travesías",icon:Activity},
 repuestos:     {label:"Repuestos",            icon:Package},
 manuales:      {label:"Manuales Técnicos",    icon:BookOpen},
+torque:        {label:"Calculadora de Torque",icon:Calculator},
 };
 function Topbar({user,page,onNav,notifCount,onToggleSidebar,fontSize,setFontSize,onChangePassword,onChangeModule,onLogout,onInstall,onOpenChat,chatBadge,onOpenPlanner,plannerBadge,navCategorias:navCats}){
 const navCategorias=navCats||NAV_CATEGORIAS;
@@ -18938,6 +18945,270 @@ function ManualesPage(){
   );
 }
 
+// ─── CALCULADORA DE TORQUE ───────────────────────────────────────────────────
+// Torque de instalación recomendado = K · F · D, donde F = As · Sp · %objetivo
+// (fórmulas estándar de pernos ISO 898-1 para métrico y SAE J429 para
+// pulgadas). Son valores de referencia de ingeniería — para aplicaciones
+// críticas o de seguridad siempre hay que verificar la especificación del
+// fabricante del equipo.
+const TORQUE_METRIC_DIAM=[
+  {d:3,  label:"M3",  coarse:0.5,  fine:null},
+  {d:4,  label:"M4",  coarse:0.7,  fine:null},
+  {d:5,  label:"M5",  coarse:0.8,  fine:null},
+  {d:6,  label:"M6",  coarse:1.0,  fine:null},
+  {d:8,  label:"M8",  coarse:1.25, fine:1.0},
+  {d:10, label:"M10", coarse:1.5,  fine:1.25},
+  {d:12, label:"M12", coarse:1.75, fine:1.25},
+  {d:14, label:"M14", coarse:2.0,  fine:1.5},
+  {d:16, label:"M16", coarse:2.0,  fine:1.5},
+  {d:18, label:"M18", coarse:2.5,  fine:1.5},
+  {d:20, label:"M20", coarse:2.5,  fine:1.5},
+  {d:22, label:"M22", coarse:2.5,  fine:1.5},
+  {d:24, label:"M24", coarse:3.0,  fine:2.0},
+  {d:27, label:"M27", coarse:3.0,  fine:2.0},
+  {d:30, label:"M30", coarse:3.5,  fine:2.0},
+  {d:33, label:"M33", coarse:3.5,  fine:2.0},
+  {d:36, label:"M36", coarse:4.0,  fine:3.0},
+];
+const TORQUE_METRIC_GRADOS=[
+  {v:"4.6",  sp:225, marca:"Marcado \"4.6\" en la cabeza"},
+  {v:"4.8",  sp:310, marca:"Marcado \"4.8\" en la cabeza"},
+  {v:"5.8",  sp:380, marca:"Marcado \"5.8\" en la cabeza"},
+  {v:"8.8",  sp:580, marca:"Marcado \"8.8\" en la cabeza"},
+  {v:"9.8",  sp:650, marca:"Marcado \"9.8\" en la cabeza"},
+  {v:"10.9", sp:830, marca:"Marcado \"10.9\" en la cabeza"},
+  {v:"12.9", sp:970, marca:"Marcado \"12.9\" en la cabeza"},
+];
+const TORQUE_IMPERIAL_DIAM=[
+  {d:0.25,   label:'1/4"',  unc:20, unf:28},
+  {d:0.3125, label:'5/16"', unc:18, unf:24},
+  {d:0.375,  label:'3/8"',  unc:16, unf:24},
+  {d:0.4375, label:'7/16"', unc:14, unf:20},
+  {d:0.5,    label:'1/2"',  unc:13, unf:20},
+  {d:0.5625, label:'9/16"', unc:12, unf:18},
+  {d:0.625,  label:'5/8"',  unc:11, unf:18},
+  {d:0.75,   label:'3/4"',  unc:10, unf:16},
+  {d:0.875,  label:'7/8"',  unc:9,  unf:14},
+  {d:1.0,    label:'1"',    unc:8,  unf:12},
+];
+const TORQUE_IMPERIAL_GRADOS=[
+  {v:"SAE2", sp:55000,  label:"SAE Grado 2", marca:"Sin líneas radiales en la cabeza"},
+  {v:"SAE5", sp:85000,  label:"SAE Grado 5", marca:"3 líneas radiales en la cabeza"},
+  {v:"SAE8", sp:120000, label:"SAE Grado 8", marca:"6 líneas radiales en la cabeza"},
+];
+const TORQUE_LUBRICACION=[
+  {v:"seco",      label:"Seco / oxidado",              sub:"Sin lubricar, con óxido o suciedad", k:0.20},
+  {v:"ligero",    label:"Ligeramente aceitado",         sub:"Aceite de motor u óleo liviano",      k:0.18},
+  {v:"lubricado", label:"Lubricado",                    sub:"Grasa o anti-seize",                   k:0.15},
+  {v:"zincado",   label:"Zincado / galvanizado",        sub:"Perno con recubrimiento de zinc",      k:0.20},
+];
+
+function TorqueCalculatorPage(){
+  const [sistema,setSistema]=useState("metrico"); // metrico | pulgadas
+  const [diamIdx,setDiamIdx]=useState(5);          // M10 / 1/2" por defecto
+  const [tipoRosca,setTipoRosca]=useState("coarse"); // coarse|fine  ó  unc|unf
+  const [gradoV,setGradoV]=useState("8.8");
+  const [lubV,setLubV]=useState("seco");
+  const [avanzado,setAvanzado]=useState(false);
+  const [pctCustom,setPctCustom]=useState(75);
+  const [verDetalle,setVerDetalle]=useState(false);
+
+  const cambiarSistema=s=>{
+    setSistema(s);
+    if(s==="metrico"){setGradoV("8.8");setTipoRosca("coarse");setDiamIdx(5);}
+    else{setGradoV("SAE5");setTipoRosca("unc");setDiamIdx(4);}
+  };
+
+  const diametros=sistema==="metrico"?TORQUE_METRIC_DIAM:TORQUE_IMPERIAL_DIAM;
+  const diam=diametros[diamIdx]||diametros[0];
+  const grados=sistema==="metrico"?TORQUE_METRIC_GRADOS:TORQUE_IMPERIAL_GRADOS;
+  const grado=grados.find(g=>g.v===gradoV)||grados[0];
+  const lub=TORQUE_LUBRICACION.find(l=>l.v===lubV)||TORQUE_LUBRICACION[0];
+  const tieneFina=sistema==="metrico"&&diam.fine;
+
+  const resultado=useMemo(()=>{
+    const pct=(avanzado?pctCustom:75)/100;
+    const K=lub.k;
+    if(sistema==="metrico"){
+      const D=diam.d;
+      const P=(tipoRosca==="fine"&&diam.fine)?diam.fine:diam.coarse;
+      const As=(Math.PI/4)*Math.pow(D-0.9382*P,2); // mm²
+      const F=As*grado.sp*pct;                     // N (Sp en MPa = N/mm²)
+      const T_Nm=K*F*(D/1000);
+      return {As,F,K,pct,P,T_Nm,T_kgfm:T_Nm*0.10197,T_lbft:T_Nm*0.737562};
+    }
+    const D=diam.d;
+    const n=(tipoRosca==="unf"?diam.unf:diam.unc);
+    const As=(Math.PI/4)*Math.pow(D-0.9743/n,2); // in²
+    const F=As*grado.sp*pct;                     // lbf
+    const T_inlb=K*F*D;
+    const T_ftlb=T_inlb/12;
+    return {As,F,K,pct,n,T_ftlb,T_inlb,T_Nm:T_ftlb*1.35582};
+  },[sistema,diam,tipoRosca,grado,lub,avanzado,pctCustom]);
+
+  return(
+  <div className="p-5 max-w-3xl">
+    <div className="flex items-center gap-2 mb-1">
+      <Calculator size={20} className="text-gray-700"/>
+      <h1 className="text-lg font-bold text-gray-900">Calculadora de Torque</h1>
+    </div>
+    <p className="text-sm text-gray-500 mb-5">Calcula el torque de apriete recomendado para un perno según su diámetro, paso de rosca y grado de resistencia.</p>
+
+    {/* Paso 1 — sistema de medida */}
+    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4 mb-4">
+      <p className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2">1. Sistema de medida</p>
+      <div className="grid grid-cols-2 gap-2">
+        <button onClick={()=>cambiarSistema("metrico")}
+          className={`py-2.5 rounded-xl text-sm font-bold border-2 transition ${sistema==="metrico"?"bg-blue-500 text-white border-blue-500":"bg-white text-gray-500 border-gray-200 hover:border-blue-300"}`}>
+          Métrico (mm)
+        </button>
+        <button onClick={()=>cambiarSistema("pulgadas")}
+          className={`py-2.5 rounded-xl text-sm font-bold border-2 transition ${sistema==="pulgadas"?"bg-blue-500 text-white border-blue-500":"bg-white text-gray-500 border-gray-200 hover:border-blue-300"}`}>
+          Pulgadas (in)
+        </button>
+      </div>
+    </div>
+
+    {/* Paso 2 — diámetro */}
+    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4 mb-4">
+      <p className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-1">2. Diámetro del perno</p>
+      <p className="text-xs text-gray-400 flex items-start gap-1.5 mb-3">
+        <Ruler size={13} className="flex-shrink-0 mt-0.5"/>
+        <span><strong>Cómo medir:</strong> con un pie de metro (calibrador), mide el diámetro exterior de la parte roscada del perno — no el diámetro de la cabeza.</span>
+      </p>
+      <div className="grid grid-cols-4 sm:grid-cols-6 gap-1.5">
+        {diametros.map((d,i)=>(
+          <button key={d.label} onClick={()=>setDiamIdx(i)}
+            className={`py-2 rounded-lg text-xs font-bold border-2 transition ${diamIdx===i?"bg-blue-500 text-white border-blue-500":"bg-white text-gray-500 border-gray-200 hover:border-blue-300"}`}>
+            {d.label}
+          </button>
+        ))}
+      </div>
+    </div>
+
+    {/* Paso 3 — paso de rosca */}
+    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4 mb-4">
+      <p className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-1">3. Paso de rosca</p>
+      <p className="text-xs text-gray-400 flex items-start gap-1.5 mb-3">
+        <Ruler size={13} className="flex-shrink-0 mt-0.5"/>
+        {sistema==="metrico"
+          ?<span><strong>Cómo medir:</strong> con un peine de roscas (galga) o midiendo la distancia entre 2 crestas de hilo consecutivas. La mayoría de los pernos usan paso <strong>grueso (estándar)</strong> — el paso fino es menos común.</span>
+          :<span><strong>Cómo medir:</strong> cuenta cuántos hilos (crestas) hay en 1 pulgada de rosca, o usa un peine de roscas SAE. <strong>UNC</strong> (grueso) es el más común — UNF (fino) se usa en aplicaciones específicas.</span>}
+      </p>
+      <div className="grid grid-cols-2 gap-2">
+        {sistema==="metrico"?(<>
+          <button onClick={()=>setTipoRosca("coarse")}
+            className={`py-2.5 rounded-xl text-sm font-bold border-2 transition ${tipoRosca==="coarse"?"bg-blue-500 text-white border-blue-500":"bg-white text-gray-500 border-gray-200 hover:border-blue-300"}`}>
+            Grueso — {diam.coarse} mm
+          </button>
+          <button disabled={!diam.fine} onClick={()=>setTipoRosca("fine")}
+            className={`py-2.5 rounded-xl text-sm font-bold border-2 transition ${!diam.fine?"bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed":tipoRosca==="fine"?"bg-blue-500 text-white border-blue-500":"bg-white text-gray-500 border-gray-200 hover:border-blue-300"}`}>
+            Fino {diam.fine?`— ${diam.fine} mm`:"— no aplica"}
+          </button>
+        </>):(<>
+          <button onClick={()=>setTipoRosca("unc")}
+            className={`py-2.5 rounded-xl text-sm font-bold border-2 transition ${tipoRosca==="unc"?"bg-blue-500 text-white border-blue-500":"bg-white text-gray-500 border-gray-200 hover:border-blue-300"}`}>
+            UNC (grueso) — {diam.unc} hilos/in
+          </button>
+          <button onClick={()=>setTipoRosca("unf")}
+            className={`py-2.5 rounded-xl text-sm font-bold border-2 transition ${tipoRosca==="unf"?"bg-blue-500 text-white border-blue-500":"bg-white text-gray-500 border-gray-200 hover:border-blue-300"}`}>
+            UNF (fino) — {diam.unf} hilos/in
+          </button>
+        </>)}
+      </div>
+    </div>
+
+    {/* Paso 4 — grado / clase de resistencia */}
+    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4 mb-4">
+      <p className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-1">4. Grado / clase de resistencia</p>
+      <p className="text-xs text-gray-400 flex items-start gap-1.5 mb-3">
+        <Eye size={13} className="flex-shrink-0 mt-0.5"/>
+        {sistema==="metrico"
+          ?<span><strong>Dónde mirar:</strong> la clase (ej. "8.8", "10.9") viene grabada directamente en la cabeza del perno.</span>
+          :<span><strong>Dónde mirar:</strong> las líneas radiales grabadas en la cabeza indican el grado SAE — sin líneas = Grado 2, 3 líneas = Grado 5, 6 líneas = Grado 8.</span>}
+      </p>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+        {grados.map(g=>(
+          <button key={g.v} onClick={()=>setGradoV(g.v)} title={g.marca}
+            className={`py-2.5 rounded-xl text-xs font-bold border-2 transition ${gradoV===g.v?"bg-blue-500 text-white border-blue-500":"bg-white text-gray-500 border-gray-200 hover:border-blue-300"}`}>
+            {g.label||g.v}
+          </button>
+        ))}
+      </div>
+      <p className="text-gray-400 text-[11px] mt-2 italic">{grado.marca}</p>
+    </div>
+
+    {/* Avanzado — lubricación y % de carga objetivo */}
+    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4 mb-4">
+      <button onClick={()=>setAvanzado(v=>!v)} className="flex items-center justify-between w-full text-left">
+        <p className="text-xs font-bold text-gray-400 uppercase tracking-wide">5. Condición de la rosca (opcional)</p>
+        {avanzado?<ChevronUp size={16} className="text-gray-400"/>:<ChevronDown size={16} className="text-gray-400"/>}
+      </button>
+      {!avanzado&&<p className="text-xs text-gray-400 mt-1">Usando valores por defecto: seco / sin lubricar, 75% de la carga de prueba.</p>}
+      {avanzado&&(
+        <div className="mt-3 space-y-3">
+          <div className="grid grid-cols-2 gap-1.5">
+            {TORQUE_LUBRICACION.map(l=>(
+              <button key={l.v} onClick={()=>setLubV(l.v)} title={l.sub}
+                className={`py-2 rounded-lg text-xs font-bold border-2 transition text-left px-2.5 ${lubV===l.v?"bg-blue-500 text-white border-blue-500":"bg-white text-gray-500 border-gray-200 hover:border-blue-300"}`}>
+                {l.label}
+                <span className={`block font-normal text-[10px] ${lubV===l.v?"text-blue-100":"text-gray-400"}`}>{l.sub}</span>
+              </button>
+            ))}
+          </div>
+          <div>
+            <label className="text-xs text-gray-500 flex items-center justify-between mb-1">
+              <span>% de la carga de prueba objetivo</span>
+              <span className="font-bold text-gray-700">{pctCustom}%</span>
+            </label>
+            <input type="range" min="50" max="90" step="5" value={pctCustom} onChange={e=>setPctCustom(parseInt(e.target.value))} className="w-full"/>
+            <p className="text-gray-400 text-[11px] mt-1">75% es lo habitual para uniones reutilizables (evita deformar el perno). Hasta 90% se usa en uniones de un solo uso.</p>
+          </div>
+        </div>
+      )}
+    </div>
+
+    {/* Resultado */}
+    <div className="rounded-2xl border-2 border-blue-200 bg-blue-50 p-5 mb-4">
+      <p className="text-xs font-bold text-blue-500 uppercase tracking-wide mb-2">Torque recomendado</p>
+      {sistema==="metrico"?(
+        <div className="flex items-baseline gap-2 flex-wrap">
+          <p className="text-4xl font-bold text-blue-700">{resultado.T_Nm.toFixed(1)}</p>
+          <p className="text-blue-600 font-semibold">N·m</p>
+          <p className="text-blue-400 text-sm ml-2">≈ {resultado.T_kgfm.toFixed(1)} kgf·m · {resultado.T_lbft.toFixed(1)} lb-ft</p>
+        </div>
+      ):(
+        <div className="flex items-baseline gap-2 flex-wrap">
+          <p className="text-4xl font-bold text-blue-700">{resultado.T_ftlb.toFixed(1)}</p>
+          <p className="text-blue-600 font-semibold">lb-ft</p>
+          <p className="text-blue-400 text-sm ml-2">≈ {resultado.T_inlb.toFixed(1)} in-lb · {resultado.T_Nm.toFixed(1)} N·m</p>
+        </div>
+      )}
+      <p className="text-blue-500 text-xs mt-2">
+        {diam.label} · {sistema==="metrico"?(tipoRosca==="fine"?"paso fino":"paso grueso"):(tipoRosca==="unc"?"UNC":"UNF")} · grado {grado.label||grado.v} · {lub.label.toLowerCase()}
+      </p>
+
+      <button onClick={()=>setVerDetalle(v=>!v)} className="text-xs text-blue-600 hover:underline mt-3 flex items-center gap-1">
+        {verDetalle?"Ocultar":"Ver"} detalle del cálculo {verDetalle?<ChevronUp size={12}/>:<ChevronDown size={12}/>}
+      </button>
+      {verDetalle&&(
+        <div className="mt-2 bg-white/70 rounded-lg p-3 text-xs text-blue-700 space-y-1 font-mono">
+          <p>Área de esfuerzo (As) = {resultado.As.toFixed(2)} {sistema==="metrico"?"mm²":"in²"}</p>
+          <p>Carga de apriete (F) = As × Sp × {Math.round(resultado.pct*100)}% = {resultado.F.toFixed(0)} {sistema==="metrico"?"N":"lbf"}</p>
+          <p>Factor de fricción (K) = {resultado.K}</p>
+          <p>Torque = K × F × D</p>
+        </div>
+      )}
+    </div>
+
+    <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-700 flex items-start gap-2">
+      <AlertTriangle size={14} className="flex-shrink-0 mt-0.5"/>
+      <span>Valores de referencia calculados según fórmulas estándar de ingeniería (ISO 898-1 para métrico, SAE J429 para pulgadas). Para componentes críticos, de seguridad, o cuando el fabricante especifica un torque distinto, siempre prevalece la especificación del fabricante del equipo.</span>
+    </div>
+  </div>
+  );
+}
+
 // ─── OPERADORES ──────────────────────────────────────────────────────────────
 function OperadoresPage({user,data,setData,saveData}){
   const {operadores=[]}=data;
@@ -33216,6 +33487,7 @@ voyages:       <VoyagesPage   user={user} data={data} setData={setData}/>,
 accesos:       <AccessLog     data={data}/>,
 repuestos:     <RepuestosPage user={user} data={data} setData={setData} saveData={saveData}/>,
 manuales:      <ManualesPage/>,
+torque:        <TorqueCalculatorPage/>,
 config_reportes:<ConfigReportes user={user}/>,
 gastos:        <GastosPresupuesto user={user} data={data} activeModule={activeModule} activeBarco={activeBarco}/>,
 disponibilidad:<DisponibilidadUtilizacion user={user} data={data}/>,
