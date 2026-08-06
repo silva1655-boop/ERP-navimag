@@ -4321,6 +4321,7 @@ const {wos,equip,users,requests,plans}=data;
   const [vistaMecanico,setVistaMecanico]=useState(activeModule==="maritimo"?"abiertas_asig":"asignadas"); // maritimo: abiertas_asig|cerradas · taller: todas|asignadas|disponibles
   const [showWorkload,setShowWorkload]=useState(false);
 const [sel,setSel]=useState(null); const [showRep,setShowRep]=useState(false);
+const [showFullChecklist,setShowFullChecklist]=useState(false);
 const [saveMsg,setSaveMsg]=useState("");
 const [viewMode,setViewMode]=useState(()=>typeof window!=="undefined"&&window.innerWidth<768?"tarjetas":"tabla");
 const [sortOrder,setSortOrder]=useState("atraso");
@@ -6533,7 +6534,6 @@ style={sel?.id===w.id?{borderColor:NV.blue,background:"#EBF4FF"}:sem?{borderColo
             }
           }
           const allPhotos=[...clItemPhotos.map(p=>p.url),...reqPhotos];
-          const firstPhoto=allPhotos[0]||null;
           const clItem=linkedCL&&linkedReq?.checklistItemId
             ?(linkedCL.items||[]).find(x=>x.id===linkedReq.checklistItemId)
             :linkedCL
@@ -6547,59 +6547,63 @@ style={sel?.id===w.id?{borderColor:NV.blue,background:"#EBF4FF"}:sem?{borderColo
                   Origen — {esCL?"Checklist Pre-operacional":"Solicitud Manual"}
                 </p>
               </div>
-              <div className="flex gap-0">
-                <div className="flex-1 p-4">
-                  <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
-                    {linkedCL&&[
-                      ["Inspección",fmtDT(linkedCL.createdAt)?.split(",")[0]||"—"],
-                      ["Horómetro",`${(linkedCL.horometro||0).toLocaleString()} h`],
-                      ["Combustible",linkedCL.fuel||"—"],
-                      ["Operador",linkedCL.operatorName||"—"],
-                      ["Sección",clItem?.sectionLabel||"—"],
-                      ["Estado",clItem?.status?clItem.status.toUpperCase():"—"],
-                    ].map(([k,v])=>(
-                      <div key={k} className="flex items-start gap-2">
-                        <span className="text-gray-400 flex-shrink-0 w-20">{k}:</span>
-                        <span className="text-gray-700 font-medium">
-                          {k==="Estado"&&clItem?.status?(
-                            <span className={`px-2 py-0.5 rounded-full text-xs font-bold border ${clItem.status==="malo"?"bg-red-100 text-red-700 border-red-200":"bg-amber-100 text-amber-700 border-amber-200"}`}>
-                              {v} {clItem.status==="malo"?"✗":"~"}
-                            </span>
-                          ):v}
-                        </span>
-                      </div>
-                    ))}
-                    {!linkedCL&&linkedReq&&[
-                      ["Solicitante",users.find(u=>u.id===linkedReq.requestedBy)?.name||linkedReq.requestedByName||"—"],
-                      ["Fecha",fmtDT(linkedReq.requestedAt)||"—"],
-                      ["Prioridad",(linkedReq.priority||"media").toUpperCase()],
-                    ].map(([k,v])=>(
-                      <div key={k} className="flex items-start gap-2">
-                        <span className="text-gray-400 flex-shrink-0 w-20">{k}:</span>
-                        <span className="text-gray-700 font-medium">{v}</span>
-                      </div>
-                    ))}
-                    {clItem?.note&&(
-                      <div className="col-span-2 flex items-start gap-2">
-                        <span className="text-gray-400 flex-shrink-0 w-20">Nota:</span>
-                        <span className="text-gray-700 font-semibold">{clItem.note}</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-                {firstPhoto&&(
-                  <div className="w-36 flex-shrink-0 border-l border-gray-100 p-3 flex flex-col items-center gap-2">
-                    <p className="text-gray-400 text-xs font-semibold uppercase tracking-wide text-center">
-                      <Camera size={10} className="inline mr-1"/>Foto adjunta
-                    </p>
-                    <div className="w-full rounded-xl overflow-hidden border border-gray-200 cursor-pointer hover:opacity-90 transition"
-                      onClick={()=>window._mantekViewImg?.(firstPhoto)}>
-                      <img src={firstPhoto} className="w-full object-cover" style={{height:"80px"}}/>
+              <div className="p-4">
+                <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
+                  {linkedCL&&[
+                    ["Inspección",fmtDT(linkedCL.createdAt)?.split(",")[0]||"—"],
+                    ["Horómetro",`${(linkedCL.horometro||0).toLocaleString()} h`],
+                    ["Combustible",linkedCL.fuel||"—"],
+                    ["Operador",linkedCL.operatorName||"—"],
+                    ["Sección",clItem?.sectionLabel||"—"],
+                    ["Estado",clItem?.status?clItem.status.toUpperCase():"—"],
+                  ].map(([k,v])=>(
+                    <div key={k} className="flex items-start gap-2">
+                      <span className="text-gray-400 flex-shrink-0 w-20">{k}:</span>
+                      <span className="text-gray-700 font-medium">
+                        {k==="Estado"&&clItem?.status?(
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-bold border ${clItem.status==="malo"?"bg-red-100 text-red-700 border-red-200":"bg-amber-100 text-amber-700 border-amber-200"}`}>
+                            {v} {clItem.status==="malo"?"✗":"~"}
+                          </span>
+                        ):v}
+                      </span>
                     </div>
-                    <button onClick={()=>window._mantekViewImg?.(firstPhoto)}
-                      className="text-blue-600 text-xs font-medium flex items-center gap-1 hover:text-blue-800">
-                      <Eye size={10}/>Ver imagen<ExternalLink size={9}/>
-                    </button>
+                  ))}
+                  {!linkedCL&&linkedReq&&[
+                    ["Solicitante",users.find(u=>u.id===linkedReq.requestedBy)?.name||linkedReq.requestedByName||"—"],
+                    ["Fecha",fmtDT(linkedReq.requestedAt)||"—"],
+                    ["Prioridad",(linkedReq.priority||"media").toUpperCase()],
+                  ].map(([k,v])=>(
+                    <div key={k} className="flex items-start gap-2">
+                      <span className="text-gray-400 flex-shrink-0 w-20">{k}:</span>
+                      <span className="text-gray-700 font-medium">{v}</span>
+                    </div>
+                  ))}
+                  {clItem?.note&&(
+                    <div className="col-span-2 flex items-start gap-2">
+                      <span className="text-gray-400 flex-shrink-0 w-20">Nota:</span>
+                      <span className="text-gray-700 font-semibold">{clItem.note}</span>
+                    </div>
+                  )}
+                </div>
+                {/* Galería de fotos — todas, no solo la primera, y bien grandes */}
+                {allPhotos.length>0&&(
+                  <div className="mt-4 pt-4 border-t border-gray-100">
+                    <p className="text-gray-400 text-xs font-semibold uppercase tracking-wide mb-2">
+                      <Camera size={11} className="inline mr-1"/>
+                      {allPhotos.length>1?`${allPhotos.length} fotos adjuntas`:"Foto adjunta"}
+                    </p>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                      {allPhotos.map((url,i)=>(
+                        <div key={i}
+                          className="relative rounded-xl overflow-hidden border border-gray-200 cursor-pointer group"
+                          onClick={()=>window._mantekViewImg?.(url)}>
+                          <img src={url} className="w-full object-cover group-hover:opacity-90 transition" style={{height:"160px"}}/>
+                          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition flex items-center justify-center">
+                            <Eye size={20} className="text-white opacity-0 group-hover:opacity-100 transition drop-shadow"/>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>
@@ -6621,15 +6625,15 @@ style={sel?.id===w.id?{borderColor:NV.blue,background:"#EBF4FF"}:sem?{borderColo
           return(
             <div className="rounded-xl border border-gray-200 overflow-hidden">
               {/* Label */}
-              <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex items-center gap-2">
-                <MessageSquare size={12} className="text-gray-400"/>
+              <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-200 flex items-center gap-2">
+                <MessageSquare size={13} className="text-gray-400"/>
                 <p className="text-gray-500 text-xs font-semibold uppercase tracking-wide">
                   {clItem?.note?"Nota del operador":linkedReq?.description?"Motivo de solicitud":"Descripción"}
                 </p>
               </div>
-              {/* Contenido */}
-              <div className="px-4 py-3 bg-white">
-                <p className="text-gray-800 text-sm leading-relaxed font-medium">
+              {/* Contenido — letra grande, es lo primero que se necesita leer al abrir la OT */}
+              <div className="px-4 py-4 bg-white">
+                <p className="text-gray-900 text-lg leading-relaxed font-semibold whitespace-pre-line">
                   {textoDestacado}
                 </p>
               </div>
@@ -6687,36 +6691,71 @@ style={sel?.id===w.id?{borderColor:NV.blue,background:"#EBF4FF"}:sem?{borderColo
           </div>
         </div>
 
-        {/* ── CHECKLIST INLINE RESUMIDO ── */}
+        {/* ── CHECKLIST ASOCIADO — previsualización inline ── */}
         {(()=>{
           const linkedReq=requests.find(r=>r.id===cur.reqId||r.otId===cur.id);
           const linkedCL=(data.checklists||[]).find(c=>c.id===linkedReq?.checklistId);
           if(!linkedCL) return null;
-          const itemsConProblema=(linkedCL.items||[]).filter(it=>it.status==="malo"||it.status==="regular");
-          if(!itemsConProblema.length) return null;
+          const allItems=linkedCL.items||[];
+          const itemsConProblema=allItems.filter(it=>it.status==="malo"||it.status==="regular");
+          const itemsAMostrar=showFullChecklist?allItems:itemsConProblema;
+          const STATUS_CFG={
+            malo:{dot:"bg-red-500",text:"text-red-600",label:"MALO ✗"},
+            regular:{dot:"bg-amber-400",text:"text-amber-600",label:"REGULAR ~"},
+            bueno:{dot:"bg-emerald-400",text:"text-emerald-600",label:"BUENO ✓"},
+            na:{dot:"bg-gray-300",text:"text-gray-400",label:"N/A"},
+          };
           return(
             <div className="border border-gray-200 rounded-2xl overflow-hidden">
-              <div className="px-4 py-2.5 border-b border-gray-100 bg-gray-50 flex items-center gap-2">
-                <ClipboardCheck size={12} className="text-gray-400"/>
-                <p className="text-gray-500 text-xs font-semibold uppercase tracking-wide">
-                  Ítems del checklist con observación
+              <div className="px-4 py-2.5 border-b border-gray-100 bg-gray-50 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <ClipboardCheck size={12} className="text-gray-400"/>
+                  <p className="text-gray-500 text-xs font-semibold uppercase tracking-wide">
+                    Checklist asociado {showFullChecklist?`(${allItems.length} ítems)`:itemsConProblema.length>0?`— ${itemsConProblema.length} con observación`:""}
+                  </p>
+                </div>
+                {allItems.length>itemsConProblema.length&&(
+                  <button onClick={()=>setShowFullChecklist(v=>!v)}
+                    className="text-blue-600 text-xs font-semibold hover:text-blue-800 transition flex-shrink-0">
+                    {showFullChecklist?"Ver solo observaciones":`Ver checklist completo (${allItems.length})`}
+                  </button>
+                )}
+              </div>
+              {itemsAMostrar.length===0?(
+                <p className="text-gray-400 text-xs italic text-center py-4">
+                  {showFullChecklist?"Este checklist no tiene ítems.":"Sin observaciones — todos los ítems quedaron en buen estado."}
                 </p>
-              </div>
-              <div className="divide-y divide-gray-100">
-                {itemsConProblema.map((it,i)=>(
-                  <div key={i} className="flex items-center gap-3 px-4 py-2.5">
-                    <span className={`flex-shrink-0 w-2 h-2 rounded-full ${it.status==="malo"?"bg-red-500":"bg-amber-400"}`}/>
-                    <span className="text-gray-400 text-xs flex-shrink-0 w-24">{it.sectionLabel||"—"}:</span>
-                    <span className="text-gray-700 text-xs font-medium flex-1">{it.name}</span>
-                    {it.note&&(
-                      <span className="text-gray-500 text-xs italic truncate max-w-[120px]">"{it.note}"</span>
-                    )}
-                    <span className={`text-xs font-bold flex-shrink-0 ${it.status==="malo"?"text-red-600":"text-amber-600"}`}>
-                      {it.status==="malo"?"MALO ✗":"REGULAR ~"}
-                    </span>
-                  </div>
-                ))}
-              </div>
+              ):(
+                <div className="divide-y divide-gray-100 max-h-96 overflow-y-auto">
+                  {itemsAMostrar.map((it,i)=>{
+                    const cfg=STATUS_CFG[it.status]||STATUS_CFG.na;
+                    const itPhotos=(it.photos||[]).filter(p=>p&&!p.startsWith("["));
+                    return(
+                      <div key={i} className="px-4 py-2.5">
+                        <div className="flex items-center gap-3">
+                          <span className={`flex-shrink-0 w-2 h-2 rounded-full ${cfg.dot}`}/>
+                          <span className="text-gray-400 text-xs flex-shrink-0 w-24 truncate">{it.sectionLabel||"—"}:</span>
+                          <span className="text-gray-700 text-xs font-medium flex-1">{it.name}</span>
+                          {it.note&&(
+                            <span className="text-gray-500 text-xs italic truncate max-w-[140px]">"{it.note}"</span>
+                          )}
+                          <span className={`text-xs font-bold flex-shrink-0 ${cfg.text}`}>{cfg.label}</span>
+                        </div>
+                        {itPhotos.length>0&&(
+                          <div className="flex gap-1.5 mt-2 ml-5">
+                            {itPhotos.map((url,j)=>(
+                              <div key={j} onClick={()=>window._mantekViewImg?.(url)}
+                                className="w-14 h-14 rounded-lg overflow-hidden border border-gray-200 cursor-pointer hover:opacity-90 transition flex-shrink-0">
+                                <img src={url} className="w-full h-full object-cover"/>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           );
         })()}
