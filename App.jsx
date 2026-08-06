@@ -19041,6 +19041,7 @@ const [form,setForm]=useState(EMPTY_FORM);
 const [lightbox,setLightbox]=useState(null);
 const [expandedId,setExpandedId]=useState(null);
 const [devSaveMsg,setDevSaveMsg]=useState("");
+const [isSavingDev,setIsSavingDev]=useState(false);
 const [showRepSearchDev,setShowRepSearchDev]=useState(false);
 const [busqRepDev,setBusqRepDev]=useState("");
 const [showSigDev,setShowSigDev]=useState(false);
@@ -19107,9 +19108,12 @@ const uploadFotosDev=async(fotos)=>{
 };
 
 const createDev=async()=>{
+  if(isSavingDev) return;
   if(!form.equipId){alert("Selecciona el equipo");return;}
   if(!form.falla_descripcion.trim()){alert("Describe la falla detectada");return;}
   if(!form.reparacion_descripcion.trim()){alert("Describe la reparación realizada");return;}
+  setIsSavingDev(true);
+  try{
   const eq=equip.find(e=>e.id===form.equipId);
   // Calculate hours from date range if available
   let horasCalc=parseFloat(form.tiempoReparacion)||0;
@@ -19230,8 +19234,16 @@ const createDev=async()=>{
   }
   await saveRequestIndividual(nd,{},activeCOLL);
 
-  setDevSaveMsg(`✅ Guardado — OT ${otCode} registrada. Puedes seguir editando o cerrar.`);
-  setTimeout(()=>setDevSaveMsg(""),5000);
+  setDevSaveMsg(`✅ Guardado — OT ${otCode} registrada.`);
+  setTimeout(()=>setDevSaveMsg(""),4000);
+  // Cerrar el formulario automáticamente
+  setTimeout(()=>setShowDevForm&&setShowDevForm(false),500);
+  }catch(e){
+    console.error("createDev error:",e);
+    alert("Error al guardar. Intenta nuevamente.");
+  }finally{
+    setIsSavingDev(false);
+  }
 };
 
 const TYPE_LABEL={fuera_de_programa:"Fuera de Programa",anomalia:"Anomalía Detectada",desgaste:"Desgaste / Deterioro",correctivo_no_planif:"Correctivo No Planificado",otro:"Otro"};
@@ -19419,9 +19431,10 @@ return(
     </button>
     <span className="text-white font-bold text-sm">Trabajo Fuera de Programa</span>
     <button onClick={createDev}
-      className="flex items-center gap-1.5 text-sm font-bold px-3 py-1.5 rounded-lg transition"
-      style={{background:"#16a34a",color:"#fff"}}>
-      <CheckCircle size={14}/>Registrar
+      disabled={isSavingDev}
+      className="flex items-center gap-1.5 text-sm font-bold px-3 py-1.5 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
+      style={{background:isSavingDev?"#6b7280":"#16a34a",color:"#fff"}}>
+      <CheckCircle size={14}/>{isSavingDev?"Guardando...":"Registrar"}
     </button>
   </div>
 
@@ -19622,9 +19635,10 @@ return(
         Cancelar
       </button>
       <button onClick={createDev}
-        style={{background:NV.blue}}
-        className="flex-1 text-white font-bold py-2.5 px-6 rounded-xl text-sm transition hover:opacity-90 flex items-center justify-center gap-2">
-        <CheckCircle size={15}/>Registrar Trabajo
+        disabled={isSavingDev}
+        style={{background:isSavingDev?"#6b7280":NV.blue}}
+        className="flex-1 text-white font-bold py-2.5 px-6 rounded-xl text-sm transition hover:opacity-90 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+        <CheckCircle size={15}/>{isSavingDev?"Guardando...":"Registrar Trabajo"}
       </button>
     </div>
 
