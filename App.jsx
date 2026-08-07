@@ -16629,6 +16629,22 @@ const calcularTractosDisponibles=(lista,estados,buque,terminal)=>{
   return count;
 };
 
+// Dotación de operadores durante una faena, como registro de eventos
+// (turno entra / turno sale) en vez de un número absoluto por registro —
+// esto soporta turnos que se cruzan (ej. 00-08 y 04-12: entre las 04 y las
+// 08 están los dos turnos trabajando a la vez). Cada entrada es un delta
+// con signo; el total en cualquier momento es la suma acumulada de los
+// deltas hasta ese momento, y "el máximo" es el peak de esa suma en toda
+// la faena — así un turno que se suma no borra al anterior, y cuando ese
+// turno anterior se retira (delta negativo) el acumulado baja, pero el
+// peak ya quedó registrado.
+const dotacionSerie=(log)=>{
+  const ordenado=[...(log||[])].sort((a,b)=>new Date(a.ts)-new Date(b.ts));
+  let running=0,max=0;
+  ordenado.forEach(l=>{running+=(l.delta||0); if(running>max) max=running;});
+  return {actual:Math.max(0,running),max};
+};
+
 function EstadoTractosPage({user,data}){
   const equip=data?.equip||[];
   const quien=user.name||user.username||"";
@@ -16860,7 +16876,9 @@ function FaenaActivaPage({user,data}){
       // las fórmulas (siguen usando el target configurado a mano).
       tractosDisponiblesSnapshot:calcularTractosDisponibles(tractosTerminal,estadosTractos,form.buque,form.terminal),
       capacidadOperadores:dotacionInicial,
-      dotacionLog:[{ts:new Date().toISOString(),cantidad:dotacionInicial,registradoPor:quien}],
+      // Primer evento del registro de dotación: el turno inicial "entra"
+      // como un delta positivo (ver dotacionSerie).
+      dotacionLog:[{ts:new Date().toISOString(),delta:dotacionInicial,motivo:"Turno inicial",registradoPor:quien}],
       tractosEnServicio:form.tractosEnServicio,
       estado:"activa",creadoPor:quien,creadoEn:new Date().toISOString(),
     };
@@ -16869,22 +16887,21 @@ function FaenaActivaPage({user,data}){
     setVista("faena_abierta");
   };
 
-  // Dotación de operadores durante la faena — cada turno queda registrado
-  // con hora; al cerrar se usa el máximo de todos los turnos (pedido
-  // explícito: la cantidad de operadores se hace efectiva al final, para
-  // reflejar el máximo que hubo en toda la faena, no solo el del turno con
-  // que se abrió).
+  // Dotación de operadores durante la faena — se registra cada entrada/
+  // salida de turno con hora (no un número absoluto), para soportar turnos
+  // que se cruzan (ej. 00-08 y 04-12: entre 04 y 08 están los dos turnos
+  // trabajando a la vez, así que se suman). Al cerrar se usa el peak de la
+  // suma acumulada en el tiempo (dotacionSerie), no solo el último valor.
   const [nuevaDotacion,setNuevaDotacion]=useState("");
-  const registrarDotacion=async()=>{
+  const registrarDotacion=async(signo)=>{
     const n=parseInt(nuevaDotacion);
     if(!faenaActiva||!n||n<1) return;
-    const log=[...(faenaActiva.dotacionLog||[]),{ts:new Date().toISOString(),cantidad:n,registradoPor:quien}];
+    const log=[...(faenaActiva.dotacionLog||[]),{ts:new Date().toISOString(),delta:signo*n,motivo:signo>0?"Turno entra":"Turno sale",registradoPor:quien}];
     await guardarFaenas(faenas.map(f=>f.id===faenaActiva.id?{...f,dotacionLog:log}:f));
     setNuevaDotacion("");
   };
-  const dotacionMax=faenaActiva
-    ?Math.max(faenaActiva.capacidadOperadores||0,...(faenaActiva.dotacionLog||[]).map(l=>l.cantidad))
-    :0;
+  const dotacionInfo=faenaActiva?dotacionSerie(faenaActiva.dotacionLog):{actual:0,max:0};
+  const dotacionMax=dotacionInfo.max;
 
   const cerrarFaena=async()=>{
     if(!horaFin){alert("Ingresa la hora de término.");return;}
@@ -17178,7 +17195,7 @@ function FaenaActivaPage({user,data}){
             </p>
           </div>
           <div className="text-right">
-            <p className="text-xs text-gray-500">Operadores (máx. turno): <strong>{dotacionMax}</strong></p>
+            <p className="text-xs text-gray-500">Operadores ahora: <strong>{dotacionInfo.actual}</strong> · máx.: <strong>{dotacionMax}</strong></p>
             <p className="text-xs text-gray-500">Tractos en servicio: <strong>{faenaActiva.tractosUtilizados}</strong></p>
             {faenaActiva.tractosDisponiblesSnapshot!=null&&<p className="text-xs text-gray-400">Disponibles al iniciar: {faenaActiva.tractosDisponiblesSnapshot}</p>}
           </div>
@@ -17192,27 +17209,37 @@ function FaenaActivaPage({user,data}){
       </div>
 
       <div className="p-4 space-y-3">
-        {/* Dotación de operadores por turno — se guarda un registro por cada
-            actualización; al cerrar la faena se usa el máximo de todos. */}
+        {/* Dotación de operadores por turno — registra entradas/salidas, no
+            un número absoluto, para que dos turnos que se cruzan (ej. 00-08
+            y 04-12) se sumen mientras coinciden en vez de que uno pise al
+            otro. */}
         <div className="bg-white border border-gray-200 rounded-xl p-3">
-          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Dotación de operadores por turno</p>
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Dotación de operadores por turno</p>
+            <p className="text-xs text-gray-500">Ahora: <strong>{dotacionInfo.actual}</strong> · Máximo: <strong className="text-blue-700">{dotacionInfo.max}</strong></p>
+          </div>
           <div className="flex flex-wrap gap-1.5 mb-2">
             {(faenaActiva.dotacionLog||[]).map((l,i)=>(
-              <span key={i} className="text-xs font-semibold px-2 py-1 rounded-lg bg-gray-50 border border-gray-200 text-gray-600">
-                {l.cantidad} op. · {new Date(l.ts).toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit"})}
+              <span key={i} className={`text-xs font-semibold px-2 py-1 rounded-lg border ${l.delta>=0?"bg-emerald-50 border-emerald-200 text-emerald-700":"bg-red-50 border-red-200 text-red-700"}`}>
+                {l.delta>=0?`+${l.delta}`:l.delta} · {l.motivo||"—"} · {new Date(l.ts).toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit"})}
               </span>
             ))}
           </div>
           <div className="flex gap-2">
             <input type="number" min="1" value={nuevaDotacion} onChange={e=>setNuevaDotacion(e.target.value)}
-              onKeyDown={e=>{if(e.key==="Enter")registrarDotacion();}}
-              placeholder="Operadores de este turno" className="flex-1 px-3 py-2 rounded-lg border border-gray-200 text-sm"/>
-            <button onClick={registrarDotacion} disabled={!nuevaDotacion}
-              className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold disabled:opacity-40">
-              Registrar
+              placeholder="Cantidad de operadores" className="flex-1 px-3 py-2 rounded-lg border border-gray-200 text-sm"/>
+            <button onClick={()=>registrarDotacion(1)} disabled={!nuevaDotacion}
+              className="px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold disabled:opacity-40 whitespace-nowrap">
+              + Entra turno
+            </button>
+            <button onClick={()=>registrarDotacion(-1)} disabled={!nuevaDotacion}
+              className="px-3 py-2 rounded-lg bg-red-500 text-white text-sm font-semibold disabled:opacity-40 whitespace-nowrap">
+              − Sale turno
             </button>
           </div>
-          <p className="text-gray-400 text-[10px] mt-1.5">Al cerrar la faena se usa el máximo registrado ({dotacionMax} ahora) — cambia de turno, agrega otro registro acá.</p>
+          <p className="text-gray-400 text-[10px] mt-1.5">
+            Si un turno nuevo entra antes que el anterior salga (turnos que se cruzan), primero registra "Entra" con la cantidad que llega — se suma al que ya está. Cuando el turno anterior se retira, registra "Sale" con su cantidad. Al cerrar se usa el máximo simultáneo ({dotacionInfo.max} ahora).
+          </p>
         </div>
 
         {detencionesActiva.length===0?(
