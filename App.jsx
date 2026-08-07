@@ -3200,6 +3200,22 @@ const tractosResumenDB=useMemo(()=>{
   });
   return {total:tractos.length,...conteo};
 },[data.equip,estadosTractosDB]);
+// Detalle por tracto (código + a bordo de qué buque / en qué sucursal) para
+// el vistazo rápido del widget del Dashboard — mismo agrupamiento que ya
+// usa el selector de Faena en Curso.
+const tractosDetalleDB=useMemo(()=>{
+  const tractos=(data.equip||[]).filter(e=>!e.deleted&&TRACTO_GRUPOS_VALIDOS.includes(getGroup(e))&&getGroup(e)!=="Liftec");
+  const grupos={disponible:[],fuera_servicio:[],dalka:[],esperanza:[],otra_sucursal:[]};
+  tractos.forEach(t=>{
+    const est=estadoTractoDe(estadosTractosDB,t.id);
+    if(est.estado==="fuera_servicio") grupos.fuera_servicio.push(t);
+    else if(est.estado==="en_viaje") (est.buqueViaje==="DALKA"?grupos.dalka:grupos.esperanza).push(t);
+    else if(est.estado==="en_otra_sucursal") grupos.otra_sucursal.push({...t,_sucursal:SUCURSAL_TRACTO_CFG[est.sucursalDestino]||est.sucursalDestino||"?"});
+    else grupos.disponible.push(t);
+  });
+  Object.values(grupos).forEach(arr=>arr.sort((a,b)=>(a.code||"").localeCompare(b.code||"")));
+  return grupos;
+},[data.equip,estadosTractosDB]);
 const faenasCerradasRecientesDB=useMemo(()=>
   faenasRecientesDB.filter(f=>f.estado==="cerrada").sort((a,b)=>new Date(b.cerradoEn||0)-new Date(a.cerradoEn||0)).slice(0,5)
 ,[faenasRecientesDB]);
@@ -3275,6 +3291,34 @@ const widgetTractosFaenas=(
             <p className="text-gray-400 text-[10px]">{k.l}</p>
           </div>
         ))}
+      </div>
+
+      {/* Detalle por tracto — qué código está en cada estado, a bordo de qué
+          buque o en qué sucursal, para un vistazo rápido sin ir a Estado de
+          Tractos. */}
+      <div className="space-y-2 mb-3">
+        {[
+          {key:"disponible",     label:"Disponibles",          cls:"bg-emerald-50 border-emerald-200 text-emerald-700"},
+          {key:"fuera_servicio", label:"Fuera de Servicio",    cls:"bg-red-50 border-red-200 text-red-700"},
+          {key:"esperanza",      label:"En Viaje — Esperanza", cls:"bg-blue-50 border-blue-200 text-blue-700"},
+          {key:"dalka",          label:"En Viaje — Dalka",     cls:"bg-blue-50 border-blue-200 text-blue-700"},
+          {key:"otra_sucursal",  label:"Otra Sucursal",        cls:"bg-purple-50 border-purple-200 text-purple-700"},
+        ].map(g=>{
+          const items=tractosDetalleDB[g.key];
+          if(!items||items.length===0) return null;
+          return(
+            <div key={g.key}>
+              <p className="text-gray-400 text-[10px] font-semibold uppercase tracking-wide mb-1">{g.label}</p>
+              <div className="flex flex-wrap gap-1">
+                {items.map(t=>(
+                  <span key={t.id} className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${g.cls}`}>
+                    {t.code}{g.key==="otra_sucursal"?` · ${t._sucursal}`:""}
+                  </span>
+                ))}
+              </div>
+            </div>
+          );
+        })}
       </div>
       <p className="text-gray-400 text-xs font-semibold uppercase tracking-wide mb-1.5 mt-3">Últimas faenas cerradas</p>
       {faenasCerradasRecientesDB.length===0?(
