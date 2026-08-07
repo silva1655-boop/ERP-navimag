@@ -1684,16 +1684,16 @@ const getUserPerms=(u)=>{
   if(canAccessGastos(u)){
     const full={};
     Object.keys(ROLE_DEFAULT_PERMS.admin).forEach(k=>{full[k]=true;});
-    return {...full, gastos:true, disponibilidad:true};
+    return {...full, gastos:true, disponibilidad:true, gruas_arrendadas:true};
   }
   const base=(u?.permisos&&Object.keys(u.permisos).length>0)
     ?{...(ROLE_DEFAULT_PERMS[u?.role]||{}),...u.permisos}
     :(ROLE_DEFAULT_PERMS[u?.role]||{});
-  // gastos/disponibilidad no son permisos por rol — son allowlists fijas de
-  // usuarios, así que siempre se resuelven desde canAccessGastos/
-  // canAccessDisponibilidad, nunca desde ROLE_DEFAULT_PERMS ni desde los
-  // permisos editables por usuario.
-  return {...base, gastos:canAccessGastos(u), disponibilidad:canAccessDisponibilidad(u)};
+  // gastos/disponibilidad/gruas_arrendadas no son permisos por rol — son
+  // allowlists fijas de usuarios, así que siempre se resuelven desde
+  // canAccessGastos/canAccessDisponibilidad/canAccessGruasExternas, nunca
+  // desde ROLE_DEFAULT_PERMS ni desde los permisos editables por usuario.
+  return {...base, gastos:canAccessGastos(u), disponibilidad:canAccessDisponibilidad(u), gruas_arrendadas:canAccessGruasExternas(u)};
 };
 
 const SGN_ROLE_PERMS={
@@ -1722,6 +1722,7 @@ const NAV_CATEGORIAS={
       {key:"historial_postop", label:"Historial Post-Op"},
       {key:"estado_tractos",   label:"Estado de Tractos"},
       {key:"faena_activa",     label:"Faena en Curso"},
+      {key:"gruas_arrendadas", label:"Grúas Arrendadas"},
     ],
   },
   mantenimiento:{
@@ -2598,6 +2599,7 @@ voyages:       {label:"Registro de Travesías",icon:Activity},
 repuestos:     {label:"Repuestos",            icon:Package},
 manuales:      {label:"Manuales Técnicos",    icon:BookOpen},
 torque:        {label:"Calculadora de Torque",icon:Calculator},
+gruas_arrendadas:{label:"Grúas Arrendadas",   icon:Truck},
 };
 function Topbar({user,page,onNav,notifCount,onToggleSidebar,fontSize,setFontSize,onChangePassword,onChangeModule,onLogout,onInstall,onOpenChat,chatBadge,onOpenPlanner,plannerBadge,navCategorias:navCats}){
 const navCategorias=navCats||NAV_CATEGORIAS;
@@ -3162,13 +3164,15 @@ const equiposConHoro=useMemo(()=>{
     .sort((a,b)=>(b.horas||0)-(a.horas||0));
 },[data.equip,data.hourmeterReadings]);
 
-const puedeVerGruasExternasDB=canAccessGruasExternas(user);
+// Grúas arrendadas se movieron a su propia página (Grúas Arrendadas, solo
+// jsoto/pgallardo/fstein) — ya no aparecen en la cola general de
+// Solicitudes de Operaciones para nadie.
 const solicitudesPendientesOps=useMemo(()=>{
   return (data.requests||[])
-    .filter(r=>(r.status==="ops_pendiente"||r.status==="pendiente"||r.status==="nueva")&&(!r.esGruaArrendada||puedeVerGruasExternasDB))
+    .filter(r=>(r.status==="ops_pendiente"||r.status==="pendiente"||r.status==="nueva")&&!r.esGruaArrendada)
     .sort((a,b)=>new Date(b.requestedAt||b.createdAt||0)-new Date(a.requestedAt||a.createdAt||0))
     .slice(0,10);
-},[data.requests,puedeVerGruasExternasDB]);
+},[data.requests]);
 
 const otsCerradasOps=useMemo(()=>{
   return (data.wos||[])
@@ -13121,13 +13125,12 @@ const [rejectTarget,setRejectTarget]=useState(null);
 const [rejectComment,setRejectComment]=useState("");
 const [activeTab,setActiveTab]=useState("todas");
 const canCreate=user.role==="operaciones"||user.role==="supervisor";
-const puedeVerGruasExternas=canAccessGruasExternas(user);
+// Grúas arrendadas (todo menos GRU-39/40/41) se trasladaron a su propia
+// página "Grúas Arrendadas" (solo jsoto/pgallardo/fstein) — ya no aparecen
+// acá para nadie, ni siquiera para ellos.
 const visible=(()=>{
   if(user.role==="supervisor") return requests.filter(r=>!r.esGruaArrendada);
-  // Solicitudes de grúas arrendadas (todo menos GRU-39/40/41) solo las ven
-  // jsoto/pgallardo/fstein — el resto de Operaciones sigue viendo todo lo
-  // demás, igual que antes.
-  if(user.role==="operaciones") return requests.filter(r=>r.source!=="inspeccion"&&(!r.esGruaArrendada||puedeVerGruasExternas));
+  if(user.role==="operaciones") return requests.filter(r=>r.source!=="inspeccion"&&!r.esGruaArrendada);
   return requests.filter(r=>r.requestedBy===user.id&&!r.esGruaArrendada);
 })();
 const filtered=visible.filter(r=>{
@@ -14063,6 +14066,109 @@ return(
 )}
 </div>
 );
+}
+
+// ─── GRÚAS ARRENDADAS ────────────────────────────────────────────────────────
+// Página dedicada para jsoto/pgallardo/fstein (canAccessGruasExternas) —
+// solicitudes de cualquier grúa que no sea GRU-39/40/41 (isGruaArrendada) se
+// trasladaron acá desde Solicitudes. Sin flujo de aprobar/asignar OT: la
+// única acción operativa es ver/descargar el checklist que originó la
+// solicitud, para que puedan reenviarlo a {RESPONSABLE_ARRIENDO}, más
+// "Marcar coordinado" para poder sacarla de pendientes.
+function GruasArrendadasPage({user,data,setData,activeCOLL}){
+  const {requests=[],equip=[],users=[],checklists=[]}=data;
+
+  const marcarCoordinado=async(req)=>{
+    const patch={status:"coordinada_externo",approvedBy:user.id,approvedAt:new Date().toISOString()};
+    const updR=requests.map(r=>r.id===req.id?{...r,...patch}:r);
+    setData(d=>({...d,requests:updR}));
+    await saveRequestIndividual(req,patch,activeCOLL);
+  };
+
+  const abrirChecklist=(req,autoDownload)=>{
+    const cl=checklists.find(c=>c.id===req.checklistId);
+    if(!cl){alert("Esta solicitud no tiene un checklist asociado — se creó manual, sin inspección de por medio.");return;}
+    printSingleChecklist(cl,equip,users,autoDownload);
+  };
+
+  if(!getUserPerms(user).gruas_arrendadas) return null;
+
+  const gruaReqs=requests.filter(r=>r.esGruaArrendada)
+    .sort((a,b)=>new Date(b.requestedAt||0)-new Date(a.requestedAt||0));
+  const pendientes=gruaReqs.filter(r=>r.status==="ops_pendiente"||r.status==="pendiente"||r.status==="nueva");
+  const resto=gruaReqs.filter(r=>!pendientes.includes(r));
+
+  const Card=({r})=>{
+    const eq=equip.find(e=>e.id===r.equipId);
+    const reqBy=users.find(u=>u.id===r.requestedBy);
+    const tieneChecklist=!!checklists.find(c=>c.id===r.checklistId);
+    return(
+      <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+        <div className="px-4 py-2.5 bg-gray-50/60 border-b border-gray-100 flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <Badge s={r.status}/>
+            <span className={`px-2 py-0.5 rounded-full border text-xs font-bold ${PRI_CLS[r.priority||"media"]}`}>{String(r.priority||"media").toUpperCase()}</span>
+          </div>
+          <span className="text-gray-400 text-xs">{r.requestedByName||reqBy?.name||"—"} · {fmtDT(r.requestedAt)}</span>
+        </div>
+        <div className="px-4 py-3 space-y-1.5">
+          <div className="flex items-center gap-1.5 text-xs text-gray-500">
+            <Package size={11} className="text-gray-400 flex-shrink-0"/>
+            <span className="font-mono font-bold" style={{color:NV.blue}}>{eq?.code||"—"}</span>
+            <span className="font-medium text-gray-700">{eq?.name||"—"}</span>
+          </div>
+          <p className="text-gray-900 font-bold text-sm leading-tight">{r.title}</p>
+          {r.description&&<p className="text-gray-500 text-xs leading-snug">{r.description}</p>}
+        </div>
+        <div className="px-4 py-2.5 border-t border-gray-100 flex items-center gap-1.5 flex-wrap bg-gray-50/40">
+          <button onClick={()=>abrirChecklist(r,false)} disabled={!tieneChecklist}
+            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-gray-600 transition disabled:opacity-40 disabled:cursor-not-allowed">
+            <Eye size={12}/>Ver Checklist
+          </button>
+          <button onClick={()=>abrirChecklist(r,true)} disabled={!tieneChecklist}
+            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-gray-600 transition disabled:opacity-40 disabled:cursor-not-allowed">
+            <FileDown size={12}/>Descargar PDF
+          </button>
+          {!tieneChecklist&&<span className="text-gray-300 text-[10px] italic">Sin checklist asociado</span>}
+          {(r.status==="ops_pendiente"||r.status==="pendiente"||r.status==="nueva")&&(
+            <button onClick={()=>marcarCoordinado(r)}
+              className="flex items-center gap-1.5 text-white text-xs px-3 py-1.5 rounded-lg hover:opacity-90 transition font-medium ml-auto"
+              style={{background:"#EA580C"}}>
+              <MessageCircle size={12}/>Marcar coordinado
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  return(
+    <div className="p-4 lg:p-6 max-w-3xl">
+      <div className="mb-5">
+        <h1 className="text-gray-900 font-bold text-xl flex items-center gap-2">🏗️ Grúas Arrendadas</h1>
+        <p className="text-gray-500 text-sm mt-0.5">Solicitudes de cualquier grúa que no sea GRU-39, GRU-40 o GRU-41 — a coordinar con {RESPONSABLE_ARRIENDO}. Descarga el checklist para reenviarlo.</p>
+      </div>
+
+      {gruaReqs.length===0?(
+        <div className="text-center py-16 text-gray-400"><Bell size={40} className="mx-auto mb-3 text-gray-300"/><p className="font-medium">Sin solicitudes de grúas arrendadas</p></div>
+      ):(<>
+        <div className="mb-4">
+          <p className="text-gray-400 text-xs font-semibold uppercase tracking-wide mb-2">Pendientes ({pendientes.length})</p>
+          {pendientes.length===0?(
+            <p className="text-gray-400 text-xs italic py-2">Nada pendiente por ahora.</p>
+          ):(
+            <div className="space-y-3">{pendientes.map(r=><Card key={r.id} r={r}/>)}</div>
+          )}
+        </div>
+        {resto.length>0&&(
+          <div>
+            <p className="text-gray-400 text-xs font-semibold uppercase tracking-wide mb-2">Historial ({resto.length})</p>
+            <div className="space-y-3">{resto.map(r=><Card key={r.id} r={r}/>)}</div>
+          </div>
+        )}
+      </>)}
+    </div>
+  );
 }
 
 // ─── MONTHLY REPORT ──────────────────────────────────────────────────────────
@@ -20752,7 +20858,7 @@ function exportChecklistPDF(checklists, equip, users, dateFrom, dateTo, operator
   setTimeout(()=>w.print(),800);
 }
 
-function printSingleChecklist(c, equipList, usersList) {
+function printSingleChecklist(c, equipList, usersList, autoDownload=false) {
   const eq=equipList.find(e=>e.id===c.equipId);
   const op=usersList.find(u=>u.id===c.operatorId);
   const issueItems=(c.items||[]).filter(it=>it.status==="malo"||it.status==="regular");
@@ -21181,6 +21287,10 @@ ${c.operatorSignature?`
     a.href=url;a.target="_blank";
     document.body.appendChild(a);a.click();
     document.body.removeChild(a);
+  } else if(autoDownload){
+    // "Descargar PDF": abre directo al diálogo de impresión (el usuario
+    // elige "Guardar como PDF") en vez de dejarlo solo con el botón flotante.
+    setTimeout(()=>{try{w.print();}catch(e){}},900);
   }
   setTimeout(()=>URL.revokeObjectURL(url),15000);
 }
@@ -33552,11 +33662,10 @@ if(loading) return(
 
 const unseenReqs=(()=>{
   if(user?.role==="operaciones"){
-    // Las de grúa arrendada (todo menos GRU-39/40/41) ya no las ve/procesa
-    // cualquier operaciones — solo jsoto/pgallardo/fstein — así que no deben
-    // sumar al badge de quienes no las pueden ver.
-    const puedeVerGruasExt=canAccessGruasExternas(user);
-    return (data.requests||[]).filter(r=>r.status==="ops_pendiente"&&(!r.esGruaArrendada||puedeVerGruasExt)).length;
+    // Grúas arrendadas se trasladaron a su propia página (Grúas Arrendadas)
+    // — ese badge de "Solicitudes" ya no las cuenta para nadie; esa página
+    // muestra su propio contador de pendientes.
+    return (data.requests||[]).filter(r=>r.status==="ops_pendiente"&&!r.esGruaArrendada).length;
   }
   if(user?.role==="supervisor"){
     const unique=new Map();
@@ -33717,6 +33826,7 @@ equipment:     <Equipment     user={user} data={data} setData={setData} saveData
 plans:         <Plans         user={user} data={data} setData={setData} saveData={saveData} appendToArray={appendToArray} updateInArray={updateInArray} activeModule={activeModule} activeBarco={activeBarco}/>,
 indicadores:   <Indicadores   data={data}/>,
 requests:      <Requests      user={user} data={data} setData={setData} saveData={saveData} appendToArray={appendToArray} updateInArray={updateInArray} activeCOLL={activeCOLL} activeModule={activeModule}/>,
+gruas_arrendadas:<GruasArrendadasPage user={user} data={data} setData={setData} activeCOLL={activeCOLL}/>,
 notifications: <Notifications user={user} data={data} onSeen={()=>setSeenNotifs(true)}/>,
 checklist:     <Checklist     user={user} data={data} setData={setData} activeModule={activeModule} activeBarco={activeBarco} saveData={saveData} appendToArray={appendToArray} updateInArray={updateInArray}/>,
 historial_postop: <HistorialPostOperacional data={data}/>,
