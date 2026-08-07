@@ -16865,6 +16865,10 @@ function EstadoTractosPage({user,data}){
   if(!getUserPerms(user).estado_tractos) return null;
   if(loading) return <div className="flex-1 flex items-center justify-center p-10 text-gray-400 text-sm">Cargando…</div>;
 
+  // Operaciones solo visualiza — los cambios de estado los hacen mecánicos/
+  // supervisores/admin (y csilva/jimunoz, que tienen otro rol igual).
+  const puedeEditar=user.role!=="operaciones";
+
   const resumen={disponible:0,fuera_servicio:0,en_viaje:0,en_otra_sucursal:0};
   tractos.forEach(t=>{
     const est=estadoTractoDe(estados,t.id).estado;
@@ -16876,7 +16880,11 @@ function EstadoTractosPage({user,data}){
     <div className="p-4 lg:p-6 max-w-4xl">
       <div className="mb-5">
         <h1 className="text-gray-900 font-bold text-xl flex items-center gap-2">🚜 Estado de Tractos</h1>
-        <p className="text-gray-500 text-sm mt-0.5">Actualizá esto antes de cada faena — alimenta el selector de tractos de Faena en Curso.</p>
+        <p className="text-gray-500 text-sm mt-0.5">
+          {puedeEditar
+            ?"Actualizá esto antes de cada faena — alimenta el selector de tractos de Faena en Curso."
+            :"Solo lectura — los cambios de estado los hace Taller (mecánicos/supervisor)."}
+        </p>
       </div>
 
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4 mb-5">
@@ -16915,6 +16923,7 @@ function EstadoTractosPage({user,data}){
                 </span>
               </div>
 
+              {puedeEditar&&(<>
               <div className="grid grid-cols-2 gap-1.5">
                 <button onClick={()=>{setMotivoEditId(null);actualizar(t.id,{estado:"disponible",buqueViaje:null,sucursalDestino:null,motivo:""});}}
                   className={`py-2 rounded-xl text-xs font-bold border-2 transition ${est.estado==="disponible"?"bg-emerald-500 text-white border-emerald-500":"bg-white text-gray-500 border-gray-200 hover:border-emerald-300"}`}>
@@ -16965,6 +16974,7 @@ function EstadoTractosPage({user,data}){
                     className="px-3 py-1.5 rounded-lg bg-red-500 text-white text-xs font-bold">OK</button>
                 </div>
               )}
+              </>)}
               {est.estado==="fuera_servicio"&&est.motivo&&!editandoMotivo&&(
                 <p className="text-red-600 text-xs mt-1.5 italic">"{est.motivo}"</p>
               )}
