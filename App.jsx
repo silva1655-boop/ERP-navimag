@@ -21456,6 +21456,15 @@ function ChecklistDetailModal({checklist,equip,onClose}){
     :[];
   const damagePics=(checklist.damagePhotos||[]).filter(p=>p&&!p.startsWith("["));
   const itemsConFoto=(checklist.items||[]).filter(it=>(it.photos||[]).filter(p=>p&&!p.startsWith("[")).length>0);
+  // Galería combinada con todas las fotos del checklist, en el mismo orden
+  // en que aparecen en la página — así se puede pasar de una a la siguiente
+  // con las flechas del visor sin cerrar y volver a abrir.
+  const todasLasFotos=[
+    ...vehiclePics.map(([,url])=>url),
+    ...cortaPics.map(([,url])=>url),
+    ...damagePics,
+    ...itemsConFoto.flatMap(it=>(it.photos||[]).filter(p=>p&&!p.startsWith("["))),
+  ];
   return(
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[60] flex items-center justify-center p-0 lg:p-6"
       onClick={onClose}>
@@ -21500,7 +21509,7 @@ function ChecklistDetailModal({checklist,equip,onClose}){
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
               {vehiclePics.map(([k,url],i)=>(
                 <img key={i} src={url} alt={k} className="w-full object-cover rounded-lg border border-gray-200 cursor-pointer hover:opacity-90 transition" style={{height:"100px"}}
-                  onClick={()=>window._mantekViewImg?.(url)}/>
+                  onClick={()=>window._mantekViewImg?.(url,todasLasFotos)}/>
               ))}
             </div>
           </div>
@@ -21512,7 +21521,7 @@ function ChecklistDetailModal({checklist,equip,onClose}){
             <div className="grid grid-cols-2 gap-2">
               {cortaPics.map(([k,url],i)=>(
                 <img key={i} src={url} alt={k} className="w-full object-cover rounded-lg border border-gray-200 cursor-pointer hover:opacity-90 transition" style={{height:"110px"}}
-                  onClick={()=>window._mantekViewImg?.(url)}/>
+                  onClick={()=>window._mantekViewImg?.(url,todasLasFotos)}/>
               ))}
             </div>
           </div>
@@ -21524,7 +21533,7 @@ function ChecklistDetailModal({checklist,equip,onClose}){
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
               {damagePics.map((url,i)=>(
                 <img key={i} src={url} alt="daño" className="w-full object-cover rounded-lg border border-red-200 cursor-pointer hover:opacity-90 transition" style={{height:"100px"}}
-                  onClick={()=>window._mantekViewImg?.(url)}/>
+                  onClick={()=>window._mantekViewImg?.(url,todasLasFotos)}/>
               ))}
             </div>
           </div>
@@ -21544,7 +21553,7 @@ function ChecklistDetailModal({checklist,equip,onClose}){
                   <div className="grid grid-cols-4 gap-1.5">
                     {(it.photos||[]).filter(p=>p&&!p.startsWith("[")).map((url,i)=>(
                       <img key={i} src={url} alt={it.name} className="w-full object-cover rounded-lg border border-gray-200 cursor-pointer hover:opacity-90 transition" style={{height:"70px"}}
-                        onClick={()=>window._mantekViewImg?.(url)}/>
+                        onClick={()=>window._mantekViewImg?.(url,todasLasFotos)}/>
                     ))}
                   </div>
                 </div>
@@ -32759,10 +32768,47 @@ const [seenNotifs,setSeenNotifs]=useState(false);
 const [sidebarOpen,setSidebarOpen]=useState(true);
 const [pmNotifications,setPmNotifications]=useState([]);
 const [imgViewer,setImgViewer]=useState(null);
+// Galería opcional del visor de imágenes global — cuando quien llama a
+// window._mantekViewImg(url, listaDeUrls) pasa una segunda lista, el visor
+// muestra flechas prev/next y responde a las flechas del teclado en vez de
+// tener que cerrar y volver a abrir para ver la siguiente foto. Los ~15
+// llamados existentes que solo pasan la url siguen funcionando igual
+// (modo foto única, sin galería).
+const [imgGallery,setImgGallery]=useState(null); // {urls:[...], idx:n} | null
 const [conversaciones,setConversaciones]=useState([]);
 const [showChatPanel,setShowChatPanel]=useState(false);
 const [showPlanner,setShowPlanner]=useState(false);
-useEffect(()=>{window._mantekViewImg=setImgViewer;return()=>{window._mantekViewImg=null;};},[]);
+useEffect(()=>{
+  window._mantekViewImg=(url,gallery)=>{
+    if(url==null){setImgViewer(null);setImgGallery(null);return;}
+    setImgViewer(url);
+    if(Array.isArray(gallery)&&gallery.length>1){
+      const idx=gallery.indexOf(url);
+      setImgGallery({urls:gallery,idx:idx>=0?idx:0});
+    } else {
+      setImgGallery(null);
+    }
+  };
+  return()=>{window._mantekViewImg=null;};
+},[]);
+const cerrarImgViewer=()=>{setImgViewer(null);setImgGallery(null);};
+const galAvanzar=delta=>{
+  if(!imgGallery) return;
+  const{urls,idx}=imgGallery;
+  const nuevo=(idx+delta+urls.length)%urls.length;
+  setImgGallery({urls,idx:nuevo});
+  setImgViewer(urls[nuevo]);
+};
+useEffect(()=>{
+  if(!imgViewer) return;
+  const onKey=e=>{
+    if(e.key==="Escape") cerrarImgViewer();
+    else if(e.key==="ArrowLeft") setImgGallery(g=>{if(!g)return g;const idx=(g.idx-1+g.urls.length)%g.urls.length;setImgViewer(g.urls[idx]);return{...g,idx};});
+    else if(e.key==="ArrowRight") setImgGallery(g=>{if(!g)return g;const idx=(g.idx+1)%g.urls.length;setImgViewer(g.urls[idx]);return{...g,idx};});
+  };
+  window.addEventListener("keydown",onKey);
+  return()=>window.removeEventListener("keydown",onKey);
+},[imgViewer]);
 const navigate=p=>{setPage(p);setSidebarOpen(false);};
 const MODULE_LABEL=activeModule==="maritimo"
   ?(activeBarco==="dalka"?"🚢 Dalka":"🚢 Esperanza")
@@ -33884,12 +33930,13 @@ return(
 {imgViewer&&(
   <div
     className="fixed inset-0 bg-black/95 z-[100] flex flex-col items-center justify-center"
-    onClick={()=>setImgViewer(null)}>
+    onClick={cerrarImgViewer}>
     {/* Top bar */}
     <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 py-3 bg-gradient-to-b from-black/60 to-transparent z-10">
       <div className="flex items-center gap-2">
         <div className="w-2 h-2 rounded-full bg-emerald-400"/>
         <span className="text-white text-xs font-medium">Vista previa</span>
+        {imgGallery&&<span className="text-white/50 text-xs">{imgGallery.idx+1} / {imgGallery.urls.length}</span>}
         <span className="text-white/50 text-xs">
           {Math.round(imgViewer.length*0.75/1024)}KB
         </span>
@@ -33909,12 +33956,23 @@ return(
           <Download size={13}/>Descargar
         </button>
         <button
-          onClick={()=>setImgViewer(null)}
+          onClick={cerrarImgViewer}
           className="w-9 h-9 bg-white/20 rounded-full flex items-center justify-center text-white hover:bg-white/30 transition">
           <X size={18}/>
         </button>
       </div>
     </div>
+    {/* Prev / Next — solo si hay galería con más de 1 foto */}
+    {imgGallery&&imgGallery.urls.length>1&&(<>
+      <button onClick={e=>{e.stopPropagation();galAvanzar(-1);}}
+        className="absolute left-2 lg:left-6 top-1/2 -translate-y-1/2 w-11 h-11 bg-white/15 hover:bg-white/25 rounded-full flex items-center justify-center text-white transition z-10">
+        <ChevronLeft size={22}/>
+      </button>
+      <button onClick={e=>{e.stopPropagation();galAvanzar(1);}}
+        className="absolute right-2 lg:right-6 top-1/2 -translate-y-1/2 w-11 h-11 bg-white/15 hover:bg-white/25 rounded-full flex items-center justify-center text-white transition z-10">
+        <ChevronRight size={22}/>
+      </button>
+    </>)}
     {/* Image */}
     <img
       src={imgViewer}
@@ -33925,7 +33983,7 @@ return(
     />
     {/* Bottom hint */}
     <div className="absolute bottom-4 left-0 right-0 text-center">
-      <p className="text-white/40 text-xs">Toca fuera para cerrar</p>
+      <p className="text-white/40 text-xs">{imgGallery&&imgGallery.urls.length>1?"← → para cambiar de foto · Esc o toca fuera para cerrar":"Toca fuera para cerrar"}</p>
     </div>
   </div>
 )}
