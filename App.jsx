@@ -16506,7 +16506,7 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
 }
 
 // ─── DISPONIBILIDAD Y UTILIZACIÓN (Faena / Detenciones) ──────────────────────
-const FAENA_VACIA={buque:"ESPERANZA",terminal:"PMC",numeroFaena:"",inicioOp:"",terminoOp:"",tractosOp:"",tractosUtilizados:"",capacidadOperadores:""};
+const FAENA_VACIA={buque:"ESPERANZA",terminal:"PMC",numeroFaena:"",inicioOp:"",terminoOp:"",tractosOp:"",tractosUtilizados:"",capacidadOperadores:"",tractosDisponiblesSnapshot:""};
 const DETENCION_VACIA={buque:"ESPERANZA",faenaId:"",inicio:"",fin:"",equipo:"",componente:"",modoFalla:"",tipo:"DM",novedades:"",familiaEquipo:"KALMAR",clasificacion:"MECANICA"};
 const BUQUE_COLOR={ESPERANZA:"#0055A4",DALKA:"#F59E0B"};
 
@@ -16607,6 +16607,27 @@ const ESTADO_TRACTO_CFG={
 };
 const SUCURSAL_TRACTO_CFG={UCO:"Chacabuco",NAT:"Puerto Natales"};
 const estadoTractoDe=(estados,equipId)=>(estados||[]).find(e=>e.equipId===equipId)||{equipId,estado:"disponible",buqueViaje:null,sucursalDestino:null,motivo:""};
+// Tractos disponibles para una faena puntual (buque+terminal), leídos en
+// vivo desde Estado de Tractos — NO alimenta las fórmulas de disponibilidad/
+// utilización (esas siguen usando el target configurado a mano, sin
+// cambios); es solo el dato "tractos disponibles" que hoy había que
+// escribir a mano y ahora se completa solo. Reglas:
+//  - "Disponible" solo cuenta para faenas en PMC (físicamente están ahí).
+//  - "En Viaje" cuenta si el buque coincide con el de la faena (van a bordo).
+//  - "En Otra Sucursal" cuenta si el destino coincide con el terminal de la
+//    faena (UCO=Chacabuco, NAT=Pto. Natales).
+//  - "Fuera de Servicio" nunca cuenta.
+const calcularTractosDisponibles=(lista,estados,buque,terminal)=>{
+  let count=0;
+  (lista||[]).forEach(e=>{
+    const est=estadoTractoDe(estados,e.id);
+    if(est.estado==="fuera_servicio") return;
+    if(est.estado==="en_viaje"){ if(est.buqueViaje===buque) count++; return; }
+    if(est.estado==="en_otra_sucursal"){ if(est.sucursalDestino===terminal) count++; return; }
+    if(terminal==="PMC") count++; // disponible (o sin estado registrado) → está en PMC
+  });
+  return count;
+};
 
 function EstadoTractosPage({user,data}){
   const equip=data?.equip||[];
@@ -16819,19 +16840,27 @@ function FaenaActivaPage({user,data}){
   const guardarDetenciones=async(actualizadas)=>{setDetenciones(actualizadas);await setDoc(doc(db,COLL_DETENCIONES,"detenciones"),{data:actualizadas});};
 
   const iniciarFaena=async()=>{
-    if(!form.numeroBase.trim()||!form.inicioOp||!form.capacidadOperadores||!form.tractosUtilizados){
-      alert("Completa los campos obligatorios.");return;
+    if(!form.numeroBase.trim()||!form.inicioOp||!form.capacidadOperadores||form.tractosEnServicio.length===0){
+      alert("Completa los campos obligatorios — falta elegir al menos un tracto en servicio.");return;
     }
     if(!targetActual){alert(`No hay target configurado para ${form.buque} · ${form.terminal}. Pídele a un supervisor que lo agregue en Disponibilidad y Utilización antes de iniciar.`);return;}
     const numeroFaena=`${form.numeroBase.trim()} ${form.sector}`;
     const dup=faenas.find(f=>f.buque===form.buque&&f.numeroFaena.trim().toUpperCase()===numeroFaena.toUpperCase());
     if(dup&&!window.confirm(`Ya existe una faena ${form.buque} N°"${dup.numeroFaena}" (${dup.estado==="activa"?"en curso":"cerrada"}). ¿Iniciar igual?`)) return;
+    // Tractos OP / utilizados: siempre el conteo de tractos seleccionados
+    // arriba (Tractos en Servicio) — ya no se piden dos veces por separado.
+    const tractosCount=form.tractosEnServicio.length;
+    const dotacionInicial=parseInt(form.capacidadOperadores)||0;
     const nueva={
       id:uid(),buque:form.buque,terminal:form.terminal,numeroFaena,sector:form.sector,
       inicioOp:new Date(form.inicioOp).toISOString(),terminoOp:"",
-      tractosOp:form.tractosEnServicio.length||parseInt(form.tractosUtilizados)||0,
-      tractosUtilizados:parseInt(form.tractosUtilizados)||0,
-      capacidadOperadores:parseInt(form.capacidadOperadores)||0,
+      tractosOp:tractosCount,
+      tractosUtilizados:tractosCount,
+      // Foto de Estado de Tractos al iniciar — solo informativo, no alimenta
+      // las fórmulas (siguen usando el target configurado a mano).
+      tractosDisponiblesSnapshot:calcularTractosDisponibles(tractosTerminal,estadosTractos,form.buque,form.terminal),
+      capacidadOperadores:dotacionInicial,
+      dotacionLog:[{ts:new Date().toISOString(),cantidad:dotacionInicial,registradoPor:quien}],
       tractosEnServicio:form.tractosEnServicio,
       estado:"activa",creadoPor:quien,creadoEn:new Date().toISOString(),
     };
@@ -16840,14 +16869,34 @@ function FaenaActivaPage({user,data}){
     setVista("faena_abierta");
   };
 
+  // Dotación de operadores durante la faena — cada turno queda registrado
+  // con hora; al cerrar se usa el máximo de todos los turnos (pedido
+  // explícito: la cantidad de operadores se hace efectiva al final, para
+  // reflejar el máximo que hubo en toda la faena, no solo el del turno con
+  // que se abrió).
+  const [nuevaDotacion,setNuevaDotacion]=useState("");
+  const registrarDotacion=async()=>{
+    const n=parseInt(nuevaDotacion);
+    if(!faenaActiva||!n||n<1) return;
+    const log=[...(faenaActiva.dotacionLog||[]),{ts:new Date().toISOString(),cantidad:n,registradoPor:quien}];
+    await guardarFaenas(faenas.map(f=>f.id===faenaActiva.id?{...f,dotacionLog:log}:f));
+    setNuevaDotacion("");
+  };
+  const dotacionMax=faenaActiva
+    ?Math.max(faenaActiva.capacidadOperadores||0,...(faenaActiva.dotacionLog||[]).map(l=>l.cantidad))
+    :0;
+
   const cerrarFaena=async()=>{
     if(!horaFin){alert("Ingresa la hora de término.");return;}
     if(detencionesActiva.some(d=>!d.fin)){alert("Completa la hora de reposición de todos los tractos detenidos antes de cerrar.");return;}
     const terminoOp=new Date(horaFin).toISOString();
     const indisp=detencionesActiva.reduce((s,d)=>s+(d.horasReparacion||0),0);
-    const derivados=calcularFaenaDerivados({...faenaActiva,terminoOp},targets,indisp);
+    // capacidadOperadores final = máximo visto entre todos los turnos
+    // registrados durante la faena (no solo el del turno inicial).
+    const faenaConDotacionFinal={...faenaActiva,capacidadOperadores:dotacionMax,terminoOp};
+    const derivados=calcularFaenaDerivados(faenaConDotacionFinal,targets,indisp);
     if(!derivados){alert("No se pudo calcular la faena — revisa que el horario de término sea posterior al de inicio y que exista un target configurado.");return;}
-    const cerrada={...faenaActiva,terminoOp,estado:"cerrada",indisponibilidadHH:indisp,...derivados,cerradoPor:quien,cerradoEn:new Date().toISOString()};
+    const cerrada={...faenaConDotacionFinal,estado:"cerrada",indisponibilidadHH:indisp,...derivados,cerradoPor:quien,cerradoEn:new Date().toISOString()};
     await guardarFaenas(faenas.map(f=>f.id===faenaActiva.id?cerrada:f));
     setHoraFin("");
     setUltimaFaenaCerradaId(cerrada.id);
@@ -16971,16 +17020,17 @@ function FaenaActivaPage({user,data}){
             <input type="datetime-local" value={form.inicioOp} onChange={e=>setForm(f=>({...f,inicioOp:e.target.value}))} className={iCls}/>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1.5">N° Operadores *</label>
-              <input type="number" min="1" value={form.capacidadOperadores} onChange={e=>setForm(f=>({...f,capacidadOperadores:e.target.value}))} className={iCls} placeholder="Ej: 10"/>
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1.5">Tractos Utilizados *</label>
-              <input type="number" min="1" value={form.tractosUtilizados} onChange={e=>setForm(f=>({...f,tractosUtilizados:e.target.value}))} className={iCls} placeholder="Ej: 8"/>
-            </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1.5">N° Operadores (turno inicial) *</label>
+            <input type="number" min="1" value={form.capacidadOperadores} onChange={e=>setForm(f=>({...f,capacidadOperadores:e.target.value}))} className={iCls} placeholder="Ej: 10"/>
+            <p className="text-gray-400 text-[11px] mt-1">Si cambia la dotación en otro turno durante la faena, se actualiza más abajo — se usa el máximo de todos los turnos al cerrar.</p>
           </div>
+
+          <div className="bg-blue-50 border border-blue-200 rounded-xl px-3 py-2 flex items-center justify-between">
+            <p className="text-xs text-blue-700 font-semibold">🚜 Tractos disponibles ahora ({form.buque==="DALKA"?"Dalka":"Esperanza"} · {form.terminal})</p>
+            <p className="text-lg font-bold text-blue-700">{calcularTractosDisponibles(tractosTerminal,estadosTractos,form.buque,form.terminal)}</p>
+          </div>
+          <p className="text-gray-400 text-[11px] -mt-2">Según Estado de Tractos. Se guarda como referencia junto con la faena — no reemplaza el target configurado.</p>
 
           <div>
             <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1.5">
@@ -17128,8 +17178,9 @@ function FaenaActivaPage({user,data}){
             </p>
           </div>
           <div className="text-right">
-            <p className="text-xs text-gray-500">Operadores: <strong>{faenaActiva.capacidadOperadores}</strong></p>
-            <p className="text-xs text-gray-500">Tractos: <strong>{faenaActiva.tractosUtilizados}</strong></p>
+            <p className="text-xs text-gray-500">Operadores (máx. turno): <strong>{dotacionMax}</strong></p>
+            <p className="text-xs text-gray-500">Tractos en servicio: <strong>{faenaActiva.tractosUtilizados}</strong></p>
+            {faenaActiva.tractosDisponiblesSnapshot!=null&&<p className="text-xs text-gray-400">Disponibles al iniciar: {faenaActiva.tractosDisponiblesSnapshot}</p>}
           </div>
         </div>
         {detencionesActiva.length>0&&(
@@ -17141,6 +17192,29 @@ function FaenaActivaPage({user,data}){
       </div>
 
       <div className="p-4 space-y-3">
+        {/* Dotación de operadores por turno — se guarda un registro por cada
+            actualización; al cerrar la faena se usa el máximo de todos. */}
+        <div className="bg-white border border-gray-200 rounded-xl p-3">
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Dotación de operadores por turno</p>
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {(faenaActiva.dotacionLog||[]).map((l,i)=>(
+              <span key={i} className="text-xs font-semibold px-2 py-1 rounded-lg bg-gray-50 border border-gray-200 text-gray-600">
+                {l.cantidad} op. · {new Date(l.ts).toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit"})}
+              </span>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <input type="number" min="1" value={nuevaDotacion} onChange={e=>setNuevaDotacion(e.target.value)}
+              onKeyDown={e=>{if(e.key==="Enter")registrarDotacion();}}
+              placeholder="Operadores de este turno" className="flex-1 px-3 py-2 rounded-lg border border-gray-200 text-sm"/>
+            <button onClick={registrarDotacion} disabled={!nuevaDotacion}
+              className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold disabled:opacity-40">
+              Registrar
+            </button>
+          </div>
+          <p className="text-gray-400 text-[10px] mt-1.5">Al cerrar la faena se usa el máximo registrado ({dotacionMax} ahora) — cambia de turno, agrega otro registro acá.</p>
+        </div>
+
         {detencionesActiva.length===0?(
           <div className="text-center py-10">
             <p className="text-4xl mb-2">✅</p>
@@ -17205,6 +17279,7 @@ function FaenaActivaPage({user,data}){
               <p className="text-xs text-amber-700 font-semibold">⚠️ Hay {detencionesActiva.filter(d=>!d.fin).length} tracto(s) sin hora de reposición. Completa antes de cerrar.</p>
             </div>
           )}
+          <p className="text-gray-400 text-[11px]">Se guardará con <strong>{dotacionMax} operadores</strong> (máximo registrado entre todos los turnos) y <strong>{faenaActiva.tractosUtilizados} tractos</strong> en servicio.</p>
           <button onClick={cerrarFaena} disabled={!horaFin||detencionesActiva.some(d=>!d.fin)}
             className="w-full py-3.5 rounded-2xl text-white font-bold text-sm transition disabled:opacity-40 disabled:cursor-not-allowed"
             style={{background:"#CC0000"}}>
@@ -17449,6 +17524,10 @@ function DisponibilidadUtilizacion({user,data}){
       inicioOp:f.inicioOp,terminoOp:f.terminoOp,
       tractosOp:parseFloat(f.tractosOp)||0,tractosUtilizados:parseFloat(f.tractosUtilizados)||0,
       capacidadOperadores:parseFloat(f.capacidadOperadores)||0,
+      // Solo referencia (viene de Estado de Tractos vía Faena en Curso) — no
+      // entra en calcularFaenaDerivados. Queda en blanco/null para faenas
+      // cargadas a mano (histórico) que no pasaron por ese flujo.
+      tractosDisponiblesSnapshot:f.tractosDisponiblesSnapshot!==""&&f.tractosDisponiblesSnapshot!=null?parseFloat(f.tractosDisponiblesSnapshot):null,
       ...derivados,recalculadoEn:ahora,
     };
     if(editFaenaId){
@@ -17467,6 +17546,7 @@ function DisponibilidadUtilizacion({user,data}){
       inicioOp:f.inicioOp,terminoOp:f.terminoOp,
       tractosOp:String(f.tractosOp),tractosUtilizados:String(f.tractosUtilizados),
       capacidadOperadores:String(f.capacidadOperadores),
+      tractosDisponiblesSnapshot:f.tractosDisponiblesSnapshot!=null?String(f.tractosDisponiblesSnapshot):"",
     });
   };
   const cancelarEdicionFaena=()=>{setEditFaenaId(null);setNuevaFaena(FAENA_VACIA);};
@@ -18145,7 +18225,13 @@ function DisponibilidadUtilizacion({user,data}){
             <input type="number" min="0" value={nuevaFaena.capacidadOperadores} onChange={e=>setNuevaFaena(f=>({...f,capacidadOperadores:e.target.value}))}
               className="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 text-sm"/>
           </label>
+          <label className="text-xs text-gray-500">
+            Tractos disponibles <span className="text-gray-300 normal-case">(ref.)</span>
+            <input type="number" min="0" value={nuevaFaena.tractosDisponiblesSnapshot} onChange={e=>setNuevaFaena(f=>({...f,tractosDisponiblesSnapshot:e.target.value}))}
+              placeholder="Auto (Faena en Curso)" className="mt-1 w-full px-3 py-2 rounded-lg border border-gray-200 text-sm"/>
+          </label>
         </div>
+        <p className="text-gray-400 text-[11px] -mt-2 mb-3">"Tractos disponibles" es solo referencia (según Estado de Tractos al iniciar la faena) — no afecta el cálculo, que sigue usando el Target. Se completa solo cuando la faena se creó desde Faena en Curso.</p>
 
         {!targetFaenaActual&&(
           <p className="text-red-500 text-xs mb-3">⚠ No hay target configurado para {nuevaFaena.buque} · {nuevaFaena.terminal}. Agrégalo arriba antes de guardar.</p>
@@ -18160,6 +18246,7 @@ function DisponibilidadUtilizacion({user,data}){
         {previewFaena&&(
           <div className="bg-gray-50 rounded-xl p-4 mb-3 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
             <div><p className="text-gray-400 text-[10px]">Target</p><p className="font-bold text-gray-800">{previewFaena.target} tractos</p></div>
+            <div><p className="text-gray-400 text-[10px]">Disponibles (ref.)</p><p className="font-bold text-gray-800">{nuevaFaena.tractosDisponiblesSnapshot!==""?nuevaFaena.tractosDisponiblesSnapshot:"—"}</p></div>
             <div><p className="text-gray-400 text-[10px]">Hs. operación bruta</p><p className="font-bold text-gray-800">{fmtH(previewFaena.horasOperacionBruta)}</p></div>
             <div><p className="text-gray-400 text-[10px]">Hs. descontables</p><p className="font-bold text-gray-800">{fmtH(previewFaena.horasDescontables)}</p></div>
             <div><p className="text-gray-400 text-[10px]">Hs. operación</p><p className="font-bold text-gray-800">{fmtH(previewFaena.horasOperacion)}</p></div>
