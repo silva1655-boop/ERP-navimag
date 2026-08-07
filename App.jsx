@@ -14077,6 +14077,7 @@ return(
 // "Marcar coordinado" para poder sacarla de pendientes.
 function GruasArrendadasPage({user,data,setData,activeCOLL}){
   const {requests=[],equip=[],users=[],checklists=[]}=data;
+  const [migrando,setMigrando]=useState(false);
 
   const marcarCoordinado=async(req)=>{
     const patch={status:"coordinada_externo",approvedBy:user.id,approvedAt:new Date().toISOString()};
@@ -14089,6 +14090,27 @@ function GruasArrendadasPage({user,data,setData,activeCOLL}){
     const cl=checklists.find(c=>c.id===req.checklistId);
     if(!cl){alert("Esta solicitud no tiene un checklist asociado — se creó manual, sin inspección de por medio.");return;}
     printSingleChecklist(cl,equip,users,autoDownload);
+  };
+
+  // Migración de solicitudes que quedaron guardadas ANTES de que existiera
+  // el enrutamiento a esta página — su equipo ya era una grúa arrendada
+  // (isGruaArrendadaById) pero el request nunca quedó marcado
+  // esGruaArrendada:true, así que hoy no aparecen acá. Detecta y permite
+  // pasarlas al formato nuevo con un solo clic.
+  const pendientesMigrar=requests.filter(r=>!r.esGruaArrendada&&isGruaArrendadaById(r.equipId,equip));
+  const migrarSolicitudesAntiguas=async()=>{
+    if(pendientesMigrar.length===0) return;
+    if(!window.confirm(`Se encontraron ${pendientesMigrar.length} solicitud(es) antigua(s) de grúas arrendadas que no estaban marcadas — ¿traspasarlas a Grúas Arrendadas ahora?`)) return;
+    setMigrando(true);
+    const patch={esGruaArrendada:true,responsableExterno:RESPONSABLE_ARRIENDO,destino:"operaciones"};
+    const idsAMigrar=new Set(pendientesMigrar.map(r=>r.id));
+    const updR=requests.map(r=>idsAMigrar.has(r.id)?{...r,...patch}:r);
+    setData(d=>({...d,requests:updR}));
+    for(const r of pendientesMigrar){
+      await saveRequestIndividual(r,patch,activeCOLL);
+    }
+    setMigrando(false);
+    alert(`✅ ${pendientesMigrar.length} solicitud(es) traspasada(s) a Grúas Arrendadas.`);
   };
 
   if(!getUserPerms(user).gruas_arrendadas) return null;
@@ -14148,6 +14170,19 @@ function GruasArrendadasPage({user,data,setData,activeCOLL}){
         <h1 className="text-gray-900 font-bold text-xl flex items-center gap-2">🏗️ Grúas Arrendadas</h1>
         <p className="text-gray-500 text-sm mt-0.5">Solicitudes de cualquier grúa que no sea GRU-39, GRU-40 o GRU-41 — a coordinar con {RESPONSABLE_ARRIENDO}. Descarga el checklist para reenviarlo.</p>
       </div>
+
+      {pendientesMigrar.length>0&&(
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-4 flex items-center justify-between gap-3 flex-wrap">
+          <p className="text-amber-700 text-xs">
+            ⚠️ Hay <strong>{pendientesMigrar.length}</strong> solicitud(es) de grúas arrendadas guardadas antes de esta página — todavía no aparecen acá arriba.
+          </p>
+          <button onClick={migrarSolicitudesAntiguas} disabled={migrando}
+            className="text-xs px-3 py-1.5 rounded-lg text-white font-semibold hover:opacity-90 transition disabled:opacity-50"
+            style={{background:"#D97706"}}>
+            {migrando?"Traspasando...":"Traspasar al nuevo formato"}
+          </button>
+        </div>
+      )}
 
       {gruaReqs.length===0?(
         <div className="text-center py-16 text-gray-400"><Bell size={40} className="mx-auto mb-3 text-gray-300"/><p className="font-medium">Sin solicitudes de grúas arrendadas</p></div>
