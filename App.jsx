@@ -22879,7 +22879,11 @@ if(clFilterUbicacion){
   if(eqLoc!==clFilterUbicacion) return false;
 }
   return true;
-}).reverse().map(c=>{
+// "mine" ya viene ordenado según clSortOrder (por defecto más nuevo
+// primero) — este .reverse() de acá lo invertía de vuelta a más antiguo
+// primero, anulando el orden y desincronizando el botón "Más nuevo/antiguo
+// primero" de lo que realmente se mostraba.
+}).map(c=>{
 const eq=equip.find(e=>e.id===c.equipId);
 const op=users.find(u=>u.id===c.operatorId);
 return(
