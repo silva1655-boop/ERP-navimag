@@ -135,6 +135,12 @@ const isGruaArrendada = (equip) => {
 // Variante para cuando solo se tiene el equipId (busca en la lista de equipos)
 const isGruaArrendadaById = (equipId, equipList) => isGruaArrendada((equipList||[]).find(e=>e.id===equipId));
 const RESPONSABLE_ARRIENDO = "Tattersall";
+// Solicitudes de grúas arrendadas (todas menos GRU-39/40/41) van directo a
+// estas 3 personas — son quienes coordinan con Tattersall — en vez de a
+// cualquier usuario con rol "operaciones". Mismo patrón de allowlist fijo
+// que Gastos y Presupuesto (canAccessGastos).
+const GRUAS_EXTERNAS_ALLOWLIST=["jsoto","pgallardo","fstein"];
+const canAccessGruasExternas=(user)=>GRUAS_EXTERNAS_ALLOWLIST.includes((user?.username||"").toLowerCase().trim());
 
 const SEED_EQUIPMENT_MARITIMO = [
   { id:"mpbb",  code:"EQM-0001", name:"Motor Principal BB",        type:"Motor Principal",    location:"Sala de Máquinas", criticality:"alto", status:"operativo", lastMaint:"", nextMaint:"", hours:32049 },
@@ -3156,12 +3162,13 @@ const equiposConHoro=useMemo(()=>{
     .sort((a,b)=>(b.horas||0)-(a.horas||0));
 },[data.equip,data.hourmeterReadings]);
 
+const puedeVerGruasExternasDB=canAccessGruasExternas(user);
 const solicitudesPendientesOps=useMemo(()=>{
   return (data.requests||[])
-    .filter(r=>r.status==="ops_pendiente"||r.status==="pendiente"||r.status==="nueva")
+    .filter(r=>(r.status==="ops_pendiente"||r.status==="pendiente"||r.status==="nueva")&&(!r.esGruaArrendada||puedeVerGruasExternasDB))
     .sort((a,b)=>new Date(b.requestedAt||b.createdAt||0)-new Date(a.requestedAt||a.createdAt||0))
     .slice(0,10);
-},[data.requests]);
+},[data.requests,puedeVerGruasExternasDB]);
 
 const otsCerradasOps=useMemo(()=>{
   return (data.wos||[])
@@ -13070,9 +13077,13 @@ const [rejectTarget,setRejectTarget]=useState(null);
 const [rejectComment,setRejectComment]=useState("");
 const [activeTab,setActiveTab]=useState("todas");
 const canCreate=user.role==="operaciones"||user.role==="supervisor";
+const puedeVerGruasExternas=canAccessGruasExternas(user);
 const visible=(()=>{
   if(user.role==="supervisor") return requests.filter(r=>!r.esGruaArrendada);
-  if(user.role==="operaciones") return requests.filter(r=>r.source!=="inspeccion");
+  // Solicitudes de grúas arrendadas (todo menos GRU-39/40/41) solo las ven
+  // jsoto/pgallardo/fstein — el resto de Operaciones sigue viendo todo lo
+  // demás, igual que antes.
+  if(user.role==="operaciones") return requests.filter(r=>r.source!=="inspeccion"&&(!r.esGruaArrendada||puedeVerGruasExternas));
   return requests.filter(r=>r.requestedBy===user.id&&!r.esGruaArrendada);
 })();
 const filtered=visible.filter(r=>{
@@ -33383,7 +33394,11 @@ if(loading) return(
 
 const unseenReqs=(()=>{
   if(user?.role==="operaciones"){
-    return (data.requests||[]).filter(r=>r.status==="ops_pendiente").length;
+    // Las de grúa arrendada (todo menos GRU-39/40/41) ya no las ve/procesa
+    // cualquier operaciones — solo jsoto/pgallardo/fstein — así que no deben
+    // sumar al badge de quienes no las pueden ver.
+    const puedeVerGruasExt=canAccessGruasExternas(user);
+    return (data.requests||[]).filter(r=>r.status==="ops_pendiente"&&(!r.esGruaArrendada||puedeVerGruasExt)).length;
   }
   if(user?.role==="supervisor"){
     const unique=new Map();
