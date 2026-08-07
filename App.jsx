@@ -440,6 +440,12 @@ const COLL_DETENCIONES="mantek_detenciones";
 // Esperanza|Dalka) — alimenta el selector de tractos de Faena en Curso.
 // Un tracto sin fila acá se trata como "disponible" por defecto.
 const COLL_TRACTO_ESTADO="mantek_tracto_estado";
+// Historial de cambios de Estado de Tractos — alimenta el aviso de
+// Operaciones en el Dashboard (ventana emergente al iniciar sesión si hay
+// cambios nuevos desde la última vez que aceptaron, más el detalle
+// permanente del widget). No confundir con mantek_tracto_estado, que solo
+// guarda el estado ACTUAL de cada tracto, sin historial.
+const COLL_TRACTO_ESTADO_LOG="mantek_tracto_estado_log";
 // Mismo allowlist fijo que Gastos y Presupuesto (no existe un rol "admin"
 // alcanzable hoy vía mantek-auth); decisión explícita: reusar el mismo set.
 const canAccessDisponibilidad=canAccessGastos;
@@ -3190,11 +3196,36 @@ const otsCerradasOps=useMemo(()=>{
 // (mantek_tracto_estado tiene un solo doc con una fila por tracto).
 const [estadosTractosDB,setEstadosTractosDB]=useState([]);
 const [faenasRecientesDB,setFaenasRecientesDB]=useState([]);
+const [logCambiosTractosDB,setLogCambiosTractosDB]=useState([]);
 useEffect(()=>{
   const u1=onSnapshot(doc(db,COLL_TRACTO_ESTADO,"estado"),snap=>setEstadosTractosDB(snap.exists()?(snap.data().data||[]):[]));
   const u2=onSnapshot(doc(db,COLL_FAENA,"faenas"),snap=>setFaenasRecientesDB(snap.exists()?(snap.data().data||[]):[]));
-  return()=>{u1();u2();};
+  const u3=onSnapshot(doc(db,COLL_TRACTO_ESTADO_LOG,"log"),snap=>setLogCambiosTractosDB(snap.exists()?(snap.data().data||[]):[]));
+  return()=>{u1();u2();u3();};
 },[]);
+const cambiosTractosRecientes=useMemo(()=>
+  [...logCambiosTractosDB].sort((a,b)=>new Date(b.ts)-new Date(a.ts)).slice(0,8)
+,[logCambiosTractosDB]);
+const cfgCambioLabel=est=>ESTADO_TRACTO_CFG[est]?.label||est||"—";
+// Aviso emergente para Operaciones: al entrar al Dashboard, si hay cambios
+// de Estado de Tractos más nuevos que el último que aceptaron (guardado en
+// localStorage, por usuario), se los muestra una sola vez. "Aceptar" no
+// vuelve a mostrar el aviso hasta que haya un cambio más nuevo — pero el
+// detalle sigue disponible siempre en el widget de más abajo.
+const avisoTractosKey=`mantek_tractos_aviso_visto_${(user?.username||user?.id||"").toLowerCase()}`;
+const [avisoTractosCerrado,setAvisoTractosCerrado]=useState(false);
+const cambiosSinAceptar=useMemo(()=>{
+  if(user?.role!=="operaciones") return [];
+  const ultimoVisto=localStorage.getItem(avisoTractosKey)||"";
+  return logCambiosTractosDB.filter(e=>e.ts>ultimoVisto).sort((a,b)=>new Date(a.ts)-new Date(b.ts));
+},[logCambiosTractosDB,user?.role,avisoTractosKey]);
+const aceptarAvisoTractos=()=>{
+  if(cambiosSinAceptar.length>0){
+    const masNuevo=cambiosSinAceptar.reduce((max,e)=>e.ts>max?e.ts:max,cambiosSinAceptar[0].ts);
+    localStorage.setItem(avisoTractosKey,masNuevo);
+  }
+  setAvisoTractosCerrado(true);
+};
 const tractosResumenDB=useMemo(()=>{
   // Liftec (LIF) son grúas horquilla, no tractos de terminal — mismo
   // criterio que EstadoTractosPage, así el resumen coincide con esa lista.
@@ -3327,6 +3358,23 @@ const widgetTractosFaenas=(
           );
         })}
       </div>
+      <p className="text-gray-400 text-xs font-semibold uppercase tracking-wide mb-1.5 mt-3">Últimos cambios de Estado de Tractos</p>
+      {cambiosTractosRecientes.length===0?(
+        <p className="text-gray-400 text-xs italic py-2">Sin cambios registrados todavía.</p>
+      ):(
+        <div className="divide-y divide-gray-50 mb-1">
+          {cambiosTractosRecientes.map(e=>(
+            <div key={e.id} className="flex items-center justify-between py-1.5 text-xs gap-2">
+              <span className="text-gray-700">
+                <span className="font-mono font-bold" style={{color:NV.blue}}>{e.code}</span> {cfgCambioLabel(e.estadoAnterior)} → <strong>{cfgCambioLabel(e.estadoNuevo)}</strong>
+                {e.estadoNuevo==="en_viaje"&&e.buqueViaje?` (${e.buqueViaje==="DALKA"?"Dalka":"Esperanza"})`:""}
+                {e.estadoNuevo==="en_otra_sucursal"&&e.sucursalDestino?` (${SUCURSAL_TRACTO_CFG[e.sucursalDestino]||e.sucursalDestino})`:""}
+              </span>
+              <span className="text-gray-400 flex-shrink-0">{e.actualizadoPor} · {fmtDT(e.ts)}</span>
+            </div>
+          ))}
+        </div>
+      )}
       <p className="text-gray-400 text-xs font-semibold uppercase tracking-wide mb-1.5 mt-3">Últimas faenas cerradas</p>
       {faenasCerradasRecientesDB.length===0?(
         <p className="text-gray-400 text-xs italic py-2">Sin faenas cerradas todavía.</p>
@@ -3346,6 +3394,40 @@ const widgetTractosFaenas=(
 
 if(role==="operaciones"){
   return(
+  <>
+  {cambiosSinAceptar.length>0&&!avisoTractosCerrado&&(
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-100 flex items-center gap-2" style={{background:"#EFF6FF"}}>
+          <span className="text-xl">🚜</span>
+          <div>
+            <p className="font-bold text-gray-900 text-sm">Novedades de Estado de Tractos</p>
+            <p className="text-gray-500 text-xs">{cambiosSinAceptar.length} cambio(s) desde la última vez</p>
+          </div>
+        </div>
+        <div className="px-5 py-4 max-h-80 overflow-y-auto divide-y divide-gray-50">
+          {cambiosSinAceptar.map(e=>(
+            <div key={e.id} className="py-2 text-sm">
+              <p className="text-gray-800">
+                <span className="font-mono font-bold" style={{color:NV.blue}}>{e.code}</span>{" "}
+                pasó de <strong>{cfgCambioLabel(e.estadoAnterior)}</strong> a <strong>{cfgCambioLabel(e.estadoNuevo)}</strong>
+                {e.estadoNuevo==="en_viaje"&&e.buqueViaje?` — a bordo de ${e.buqueViaje==="DALKA"?"Dalka":"Esperanza"}`:""}
+                {e.estadoNuevo==="en_otra_sucursal"&&e.sucursalDestino?` — en ${SUCURSAL_TRACTO_CFG[e.sucursalDestino]||e.sucursalDestino}`:""}
+              </p>
+              <p className="text-gray-400 text-xs mt-0.5">{e.actualizadoPor} · {fmtDT(e.ts)}</p>
+            </div>
+          ))}
+        </div>
+        <div className="px-5 py-4 border-t border-gray-100">
+          <button onClick={aceptarAvisoTractos}
+            className="w-full py-2.5 rounded-xl text-white text-sm font-bold transition hover:opacity-90" style={{background:NV.blue}}>
+            Aceptar
+          </button>
+          <p className="text-gray-400 text-[11px] text-center mt-2">Este detalle sigue disponible más abajo en el Dashboard, en "Últimos cambios de Estado de Tractos".</p>
+        </div>
+      </div>
+    </div>
+  )}
   <div className="flex-1 overflow-y-auto bg-gray-50/50">
     <div className="px-6 pt-5 pb-4 bg-white border-b border-gray-100">
       <h1 className="text-xl font-bold text-gray-900">Dashboard Operaciones</h1>
@@ -3548,6 +3630,7 @@ if(role==="operaciones"){
       </div>
     </div>
   </div>
+  </>
   );
 }
 
@@ -16841,12 +16924,17 @@ function EstadoTractosPage({user,data}){
   const [motivoEditId,setMotivoEditId]=useState(null);
   const [motivoTxt,setMotivoTxt]=useState("");
 
+  const [logCambios,setLogCambios]=useState([]);
+
   useEffect(()=>{
     const unsub=onSnapshot(doc(db,COLL_TRACTO_ESTADO,"estado"),snap=>{
       setEstados(snap.exists()?(snap.data().data||[]):[]);
       setLoading(false);
     });
-    return()=>unsub();
+    const unsubLog=onSnapshot(doc(db,COLL_TRACTO_ESTADO_LOG,"log"),snap=>{
+      setLogCambios(snap.exists()?(snap.data().data||[]):[]);
+    });
+    return()=>{unsub();unsubLog();};
   },[]);
 
   // Liftec (LIF) son grúas horquilla, no tractos de terminal — se excluyen
@@ -16860,6 +16948,22 @@ function EstadoTractosPage({user,data}){
     const actualizados=[...estados.filter(e=>e.equipId!==equipId),nueva];
     setEstados(actualizados);
     await setDoc(doc(db,COLL_TRACTO_ESTADO,"estado"),{data:actualizados});
+    // Log del cambio — alimenta el aviso de Operaciones en el Dashboard
+    // (ventana emergente + detalle permanente). Solo se registra si algo
+    // realmente relevante cambió (estado, buque o sucursal de destino).
+    const huboCambio=nueva.estado!==actual.estado||nueva.buqueViaje!==actual.buqueViaje||nueva.sucursalDestino!==actual.sucursalDestino;
+    if(huboCambio){
+      const t=tractos.find(x=>x.id===equipId);
+      const entry={
+        id:uid(),ts:new Date().toISOString(),equipId,code:t?.code||equipId,
+        estadoAnterior:actual.estado,estadoNuevo:nueva.estado,
+        buqueViaje:nueva.buqueViaje,sucursalDestino:nueva.sucursalDestino,
+        actualizadoPor:quien,
+      };
+      const logActualizado=[...logCambios,entry].slice(-200);
+      setLogCambios(logActualizado);
+      await setDoc(doc(db,COLL_TRACTO_ESTADO_LOG,"log"),{data:logActualizado});
+    }
   };
 
   if(!getUserPerms(user).estado_tractos) return null;
@@ -16903,6 +17007,15 @@ function EstadoTractosPage({user,data}){
         </div>
         <p className="text-gray-400 text-[11px] text-right mt-2">{tractos.length} tractos en total</p>
       </div>
+
+      {!puedeEditar&&(
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-5 text-xs text-blue-700 space-y-1">
+          <p><strong>🟢 Disponibles</strong> — están en PMC (Puerto Montt), listos para asignar a una faena.</p>
+          <p><strong>🔴 Fuera de Servicio</strong> — con falla o en mantención, no operativos.</p>
+          <p><strong>🔵 En Viaje</strong> — a bordo de Esperanza o Dalka, viajando con el buque.</p>
+          <p><strong>🟣 Otra Sucursal</strong> — trasladados a Chacabuco o Puerto Natales.</p>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {tractos.map(t=>{
