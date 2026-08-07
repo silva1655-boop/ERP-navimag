@@ -1639,7 +1639,7 @@ const ROLE_DEFAULT_PERMS={
     checklist:true, historial_postop:true, deviaciones:true, reports:true,
     users:true, accesos:true, notifications:false,
     vessels:true, voyages:true, repuestos:true, dashboard_checklist:true, operadores:true,
-    config_reportes:true, faena_activa:true, estado_tractos:true, manuales:true, torque:true
+    config_reportes:true, faena_activa:true, estado_tractos:true
   },
   operaciones:{
     dashboard:true, workorders:false, equipment:false,
@@ -1647,8 +1647,11 @@ const ROLE_DEFAULT_PERMS={
     checklist:true, historial_postop:true, deviaciones:false, reports:false,
     users:false, accesos:false, notifications:true,
     vessels:true, voyages:true, repuestos:false, dashboard_checklist:true, operadores:true,
-    faena_activa:true, estado_tractos:true, manuales:true, torque:true
+    faena_activa:true, estado_tractos:true
   },
+  // Herramientas Técnicas (Manuales + Calculadora de Torque) es exclusivo
+  // de mecánicos (Taller) y csilva/jimunoz (override en getUserPerms) —
+  // pedido explícito, ningún otro rol lo tiene.
   mecanico:{
     dashboard:true, workorders:true, equipment:false,
     plans:false, indicadores:false, requests:false,
@@ -1659,21 +1662,21 @@ const ROLE_DEFAULT_PERMS={
     dashboard:true, workorders:false, equipment:false,
     plans:false, indicadores:false, requests:false,
     checklist:true, historial_postop:true, deviaciones:false, reports:false,
-    users:false, accesos:false, notifications:true, repuestos:false, manuales:true, torque:true
+    users:false, accesos:false, notifications:true, repuestos:false
   },
   bodega:{
     dashboard:true, workorders:false, equipment:false,
     plans:false, indicadores:false, requests:false,
     checklist:false, historial_postop:false, deviaciones:false, reports:true,
     users:false, accesos:false, notifications:false,
-    vessels:false, voyages:false, repuestos:true, manuales:true, torque:true
+    vessels:false, voyages:false, repuestos:true
   },
   jefe_maquinas:{
     dashboard:true, workorders:true, equipment:false,
     plans:false, indicadores:false, requests:false,
     checklist:true, historial_postop:true, deviaciones:false, reports:true,
     users:false, accesos:false, notifications:false,
-    vessels:true, voyages:true, repuestos:false, dashboard_checklist:true, operadores:false, manuales:true, torque:true
+    vessels:true, voyages:true, repuestos:false, dashboard_checklist:true, operadores:false
   },
 };
 
