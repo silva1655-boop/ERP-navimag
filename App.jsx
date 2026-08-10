@@ -18185,12 +18185,26 @@ function DisponibilidadUtilizacion({user,data}){
   const reglasAplicablesInforme=useMemo(()=>reglasGasto.filter(r=>r.activo&&(r.modulo==="ambos"||r.modulo==="taller")),[reglasGasto]);
   const presupuestoInforme=useMemo(()=>{
     const meses=mesesPeriodoInforme.map(m=>`${informeAnio}-${m}`);
+    // Si el presupuesto de Taller se cargó como una sola fila "TOTAL" para
+    // el mes exacto, se usa esa. Si no, y en cambio se cargó desglosado por
+    // categoría (mano de obra, repuestos, combustible, etc. — sin ninguna
+    // fila "TOTAL"), se suman todas las categorías cargadas para ese mes en
+    // vez de mostrar $0 — mismo criterio de "no hacer desaparecer lo
+    // cargado" que ya se aplicó al filtro de categoría de Gastos y
+    // Presupuesto. Por último, si tampoco hay nada mensual, cae al
+    // presupuesto anual (TOTAL o suma de categorías) prorrateado ÷12.
     const presupuestoDelMes=(mes)=>{
       const anio=parseInt(mes.slice(0,4));
-      const exacto=presupuestoGasto.find(p=>p.modulo==="taller"&&!p.vesselId&&p.categoria==="TOTAL"&&p.anio===anio&&p.mes===mes);
-      if(exacto) return exacto.montoPresupuestado||0;
-      const anual=presupuestoGasto.find(p=>p.modulo==="taller"&&!p.vesselId&&p.categoria==="TOTAL"&&p.anio===anio&&!p.mes);
-      return anual?(anual.montoPresupuestado||0)/12:0;
+      const deTaller=p=>p.modulo==="taller"&&!p.vesselId&&p.anio===anio;
+      const exactoTotal=presupuestoGasto.find(p=>deTaller(p)&&p.categoria==="TOTAL"&&p.mes===mes);
+      if(exactoTotal) return exactoTotal.montoPresupuestado||0;
+      const exactoCategorias=presupuestoGasto.filter(p=>deTaller(p)&&p.categoria!=="TOTAL"&&p.mes===mes);
+      if(exactoCategorias.length>0) return exactoCategorias.reduce((s,p)=>s+(p.montoPresupuestado||0),0);
+      const anualTotal=presupuestoGasto.find(p=>deTaller(p)&&p.categoria==="TOTAL"&&!p.mes);
+      if(anualTotal) return(anualTotal.montoPresupuestado||0)/12;
+      const anualCategorias=presupuestoGasto.filter(p=>deTaller(p)&&p.categoria!=="TOTAL"&&!p.mes);
+      if(anualCategorias.length>0) return anualCategorias.reduce((s,p)=>s+(p.montoPresupuestado||0),0)/12;
+      return 0;
     };
     let real=0,pres=0;
     meses.forEach(mes=>{
