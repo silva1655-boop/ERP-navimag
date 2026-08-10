@@ -15031,12 +15031,20 @@ function aplicaReglaGasto(txn,regla){
 
 // Reutilizada por la pestaña "Gestión" y por el Informe Gerencial de Gastos y
 // Presupuesto, para no mantener dos copias de la misma tabla.
-function TablaResumenTrimestral({resumenTrimestral,tituloPeriodo="Trimestre"}){
+// mostrarDisponibilidad: agrega una columna "Disp." con r.dispProm (0-1,
+// Solo Disponibilidad promedio de Taller ese período) — pensada para el
+// Resumen Mensual, para poder cruzar presupuesto y disponibilidad sin
+// tener que ir a buscarla a la pestaña de Disponibilidad y Utilización.
+function TablaResumenTrimestral({resumenTrimestral,tituloPeriodo="Trimestre",mostrarDisponibilidad=false}){
+  const semaforoDisp=v=>v==null?"text-gray-300 bg-gray-50":v>=0.9?"text-green-700 bg-green-50":v>=0.75?"text-amber-700 bg-amber-50":"text-red-700 bg-red-50";
   return(
     <table className="w-full text-xs border-separate" style={{borderSpacing:0}}>
       <thead>
         <tr>
           <th rowSpan={2} className="pb-2 pr-3 align-bottom border-b-2 border-gray-300 text-left text-gray-500 font-semibold">Período</th>
+          {mostrarDisponibilidad&&(
+            <th rowSpan={2} className="pb-2 pr-3 align-bottom border-b-2 border-gray-300 text-left text-gray-500 font-semibold">Disp.</th>
+          )}
           <th colSpan={3} className="py-1.5 text-center bg-blue-50 text-blue-800 font-bold border-b-2 border-blue-200 rounded-t-lg">{tituloPeriodo}</th>
           <th colSpan={3} className="py-1.5 text-center bg-indigo-50 text-indigo-800 font-bold border-b-2 border-indigo-200 border-l-2 border-l-gray-300 rounded-t-lg">Acumulado</th>
         </tr>
@@ -15053,6 +15061,11 @@ function TablaResumenTrimestral({resumenTrimestral,tituloPeriodo="Trimestre"}){
         {resumenTrimestral.map((r,i)=>(
           <tr key={r.trimestre} className={`border-b border-gray-200 ${i%2===1?"bg-gray-50/70":""}`}>
             <td className="py-2.5 pr-3 font-bold text-gray-900">{r.trimestre}</td>
+            {mostrarDisponibilidad&&(
+              <td className="py-2.5 pr-3">
+                {r.dispProm!=null?<span className={`font-semibold px-1.5 py-0.5 rounded ${semaforoDisp(r.dispProm)}`}>{Math.round(r.dispProm*100)}%</span>:<span className="text-gray-300">—</span>}
+              </td>
+            )}
             <td className="py-2.5 pr-3 text-gray-900 font-medium">{fmtCLP(r.realTrim)}</td>
             <td className="py-2.5 pr-3 text-gray-600">{fmtCLP(r.presTrim)}</td>
             <td className={`py-2.5 pr-3 font-bold ${r.varTrim==null?"text-gray-300":r.varTrim>=0?"text-emerald-700":"text-red-700"}`}>
@@ -15155,6 +15168,10 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
   // categoría" — {nombre,valor,pct} del item clickeado, o null si el modal
   // está cerrado.
   const [categoriaDetalle,setCategoriaDetalle]=useState(null);
+  // Faenas de Taller (Disponibilidad y Utilización) — livianas, se leen
+  // siempre para poder cruzar Disponibilidad mensual con el Resumen
+  // Mensual del presupuesto sin ir a buscarla a esa otra pestaña.
+  const [faenasTaller,setFaenasTaller]=useState([]);
   const fileInputRef=useRef(null);
   const presupuestoFileRef=useRef(null);
   const vesselIdActual=activeModule==="maritimo"?(activeBarco||null):null;
@@ -15177,8 +15194,27 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
     const unsub5=onSnapshot(doc(db,COLL_GASTOS_CONFIG_EQUIPOS,"config"),snap=>{
       setConfigEquiposOrden(snap.exists()?(snap.data().data||[]):[]);
     });
-    return()=>{unsub1();unsub2();unsub3();unsub4();unsub5();};
+    const unsub6=onSnapshot(doc(db,COLL_FAENA,"faenas"),snap=>{
+      setFaenasTaller(snap.exists()?(snap.data().data||[]):[]);
+    });
+    return()=>{unsub1();unsub2();unsub3();unsub4();unsub5();unsub6();};
   },[]);
+
+  // Disponibilidad mensual de Taller (Solo Disponibilidad promedio,
+  // combinada Esperanza+Dalka) por mes "YYYY-MM" — solo tiene sentido en el
+  // módulo Taller, Marítimo no tiene esta pestaña.
+  const dispMensualPorMes=useMemo(()=>{
+    if(activeModule!=="taller") return{};
+    const map={};
+    faenasTaller.forEach(f=>{
+      if(!f.anio||!f.mes) return;
+      const key=`${f.anio}-${String(f.mes).padStart(2,"0")}`;
+      (map[key]=map[key]||[]).push(f.disponibilidadTecnica||0);
+    });
+    const out={};
+    Object.keys(map).forEach(k=>{out[k]=map[k].reduce((s,v)=>s+v,0)/map[k].length;});
+    return out;
+  },[faenasTaller,activeModule]);
 
   // Rango de meses por defecto: todo lo cargado, hasta que el usuario lo acote
   useEffect(()=>{
@@ -15537,9 +15573,10 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
         trimestre:new Date(m.mes+"-01T00:00:00").toLocaleDateString("es-CL",{month:"long",year:"numeric"}),
         realTrim:m.filtrado,presTrim:m.presupuesto,varTrim:m.presupuesto>0?((m.presupuesto-m.filtrado)/m.presupuesto)*100:null,
         realAcum:accReal,presAcum:accPres,varAcum:accPres>0?((accPres-accReal)/accPres)*100:null,
+        dispProm:dispMensualPorMes[m.mes]??null,
       };
     });
-  },[serieAnualCompleta]);
+  },[serieAnualCompleta,dispMensualPorMes]);
 
   // ═══ Informe Gerencial de Gastos y Presupuesto ═══════════════════════════
   // "Real sin filtro" = solo acotado por el rango de meses elegido (sin reglas
@@ -16879,8 +16916,11 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
       {/* ── Resumen Mensual ── */}
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 overflow-x-auto">
         <h2 className="font-bold text-gray-800 text-sm mb-1">Resumen Mensual — Real filtrado vs. Presupuesto</h2>
-        <p className="text-gray-400 text-[10px] mb-3">Mismo cálculo que el Resumen Trimestral pero mes a mes, para revisar el estado del gasto sin esperar a que cierre el trimestre — acumulado corrido, año {anioTrabajo} completo.</p>
-        <TablaResumenTrimestral resumenTrimestral={resumenMensual} tituloPeriodo="Mes"/>
+        <p className="text-gray-400 text-[10px] mb-3">
+          Mismo cálculo que el Resumen Trimestral pero mes a mes, para revisar el estado del gasto sin esperar a que cierre el trimestre — acumulado corrido, año {anioTrabajo} completo.
+          {activeModule==="taller"&&" Incluye la Solo Disponibilidad promedio de Taller de ese mes (Esperanza+Dalka combinado), para cruzarla con el presupuesto sin ir a buscarla a Disponibilidad y Utilización."}
+        </p>
+        <TablaResumenTrimestral resumenTrimestral={resumenMensual} tituloPeriodo="Mes" mostrarDisponibilidad={activeModule==="taller"}/>
       </div>
 
       {/* ── Gasto mensual - acumulado anual ── */}
@@ -17921,10 +17961,12 @@ function DisponibilidadUtilizacion({user,data}){
   const [filtrosTerminalTabla,setFiltrosTerminalTabla]=useState(()=>leerLSJson("mantek_dispo_filtro_terminal",[]));
   const [fechaDesdeTabla,setFechaDesdeTabla]=useState(()=>leerLSJson("mantek_dispo_filtro_fechaDesde",""));
   const [fechaHastaTabla,setFechaHastaTabla]=useState(()=>leerLSJson("mantek_dispo_filtro_fechaHasta",""));
+  const [busquedaNumeroFaena,setBusquedaNumeroFaena]=useState(()=>leerLSJson("mantek_dispo_filtro_numeroFaena",""));
   useEffect(()=>{guardarLSJson("mantek_dispo_filtro_buque",filtrosBuqueTabla);},[filtrosBuqueTabla]);
   useEffect(()=>{guardarLSJson("mantek_dispo_filtro_terminal",filtrosTerminalTabla);},[filtrosTerminalTabla]);
   useEffect(()=>{guardarLSJson("mantek_dispo_filtro_fechaDesde",fechaDesdeTabla);},[fechaDesdeTabla]);
   useEffect(()=>{guardarLSJson("mantek_dispo_filtro_fechaHasta",fechaHastaTabla);},[fechaHastaTabla]);
+  useEffect(()=>{guardarLSJson("mantek_dispo_filtro_numeroFaena",busquedaNumeroFaena);},[busquedaNumeroFaena]);
 
   useEffect(()=>{
     const unsub=onSnapshot(doc(db,COLL_FAENA_TARGETS,"config"),snap=>{
@@ -18078,8 +18120,9 @@ function DisponibilidadUtilizacion({user,data}){
     if(filtrosTerminalTabla.length>0&&!filtrosTerminalTabla.includes(f.terminal)) return false;
     if(fechaDesdeTabla&&f.terminoOp<fechaDesdeTabla) return false;
     if(fechaHastaTabla&&f.terminoOp>fechaHastaTabla+"T23:59:59") return false;
+    if(busquedaNumeroFaena.trim()&&!String(f.numeroFaena||"").toUpperCase().includes(busquedaNumeroFaena.trim().toUpperCase())) return false;
     return true;
-  }),[faenasOrdenadas,filtrosBuqueTabla,filtrosTerminalTabla,fechaDesdeTabla,fechaHastaTabla]);
+  }),[faenasOrdenadas,filtrosBuqueTabla,filtrosTerminalTabla,fechaDesdeTabla,fechaHastaTabla,busquedaNumeroFaena]);
 
   // Promedio de Disponibilidad/Utilización por buque, agrupado según la
   // granularidad elegida (mensual/trimestral/semestral/anual) — equivalente a
@@ -18841,13 +18884,15 @@ function DisponibilidadUtilizacion({user,data}){
         <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
           <h2 className="font-bold text-gray-800 text-base">Faenas registradas ({faenasFiltradas.length}/{faenas.length})</h2>
           <div className="flex flex-wrap gap-2 items-center">
+            <input type="text" value={busquedaNumeroFaena} onChange={e=>setBusquedaNumeroFaena(e.target.value)}
+              placeholder="Buscar N° faena..." className="px-2 py-1.5 rounded-lg border border-gray-200 text-xs w-36"/>
             <MultiSelectFiltro label="Buque" opciones={["ESPERANZA","DALKA"]} seleccionados={filtrosBuqueTabla} onChange={setFiltrosBuqueTabla}/>
             <MultiSelectFiltro label="Terminal" opciones={["PMC","NAT","UCO"]} seleccionados={filtrosTerminalTabla} onChange={setFiltrosTerminalTabla}/>
             <input type="date" value={fechaDesdeTabla} onChange={e=>setFechaDesdeTabla(e.target.value)} className="px-2 py-1.5 rounded-lg border border-gray-200 text-xs"/>
             <span className="text-gray-400 text-xs">a</span>
             <input type="date" value={fechaHastaTabla} onChange={e=>setFechaHastaTabla(e.target.value)} className="px-2 py-1.5 rounded-lg border border-gray-200 text-xs"/>
-            {(filtrosBuqueTabla.length>0||filtrosTerminalTabla.length>0||fechaDesdeTabla||fechaHastaTabla)&&(
-              <button onClick={()=>{setFiltrosBuqueTabla([]);setFiltrosTerminalTabla([]);setFechaDesdeTabla("");setFechaHastaTabla("");}}
+            {(filtrosBuqueTabla.length>0||filtrosTerminalTabla.length>0||fechaDesdeTabla||fechaHastaTabla||busquedaNumeroFaena)&&(
+              <button onClick={()=>{setFiltrosBuqueTabla([]);setFiltrosTerminalTabla([]);setFechaDesdeTabla("");setFechaHastaTabla("");setBusquedaNumeroFaena("");}}
                 className="text-xs text-gray-400 hover:text-red-500">Limpiar filtros</button>
             )}
           </div>
