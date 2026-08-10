@@ -16978,25 +16978,29 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
 const FAENA_VACIA={buque:"ESPERANZA",terminal:"PMC",numeroFaena:"",inicioOp:"",terminoOp:"",tractosOp:"",tractosUtilizados:"",capacidadOperadores:"",tractosDisponiblesSnapshot:""};
 const DETENCION_VACIA={buque:"ESPERANZA",faenaId:"",inicio:"",fin:"",equipo:"",componente:"",modoFalla:"",tipo:"DM",novedades:"",familiaEquipo:"KALMAR",clasificacion:"MECANICA"};
 const BUQUE_COLOR={ESPERANZA:"#0055A4",DALKA:"#F59E0B"};
+const DISP_UTIL_COLOR={disp:"#1D4ED8",util:"#0E7490"}; // azul=Disponibilidad, cian=Utilización — mismos colores que StatCard usa para estas 2 métricas
 
-// Gráfico mensual comparativo por buque (equivalente a la hoja "Prom. Disp.
-// mensual" del Excel, extendido a 2 buques y a Disponibilidad+Utilización
-// per el spec — el Excel original solo traía un promedio combinado de
-// Disponibilidad, sin separar por buque ni incluir Utilización).
-// Línea de promedio por buque a través de períodos — el tamaño del período
-// (mes/trimestre/semestre/año) lo decide quien arma `datos` (cada punto trae
-// su propio `key` para el React key y `label` ya formateado para el eje).
-function PromedioPeriodoChart({datos,height=180,width=620}){
+// Gráfico de líneas genérico por período (equivalente a la hoja "Prom. Disp.
+// mensual" del Excel, extendido a Disponibilidad+Utilización per el spec —
+// el Excel original solo traía un promedio combinado de Disponibilidad).
+// `series` define qué campos de cada punto de `datos` graficar — [{key,label,
+// color}, ...] — así el mismo componente sirve tanto para comparar 2 buques
+// (series=[ESPERANZA,DALKA]) como para comparar 2 métricas de un solo buque
+// (series=[disp,util]). El tamaño del período (mes/trimestre/semestre/año)
+// lo decide quien arma `datos` (cada punto trae su propio `key` para el
+// React key y `label` ya formateado para el eje).
+function PromedioPeriodoChart({datos,series,height=180,width=620}){
   const [hoverIdx,setHoverIdx]=useState(null);
   const pad={l:34,r:10,t:10,b:22};
   const cW=width-pad.l-pad.r, cH=height-pad.t-pad.b;
+  const s=series||[{key:"ESPERANZA",label:"Esperanza",color:BUQUE_COLOR.ESPERANZA},{key:"DALKA",label:"Dalka",color:BUQUE_COLOR.DALKA}];
   if(!datos||datos.length===0) return <p className="text-gray-400 text-xs italic py-6 text-center">Sin datos suficientes todavía.</p>;
   const n=datos.length;
   const x=i=>pad.l+(n<=1?cW/2:i/(n-1)*cW);
   const y=v=>pad.t+cH-(v??0)*cH;
   const bandW=n<=1?cW:cW/(n-1);
-  const buildPath=buque=>{
-    const pts=datos.map((d,i)=>({i,v:d[buque]})).filter(p=>p.v!=null);
+  const buildPath=key=>{
+    const pts=datos.map((d,i)=>({i,v:d[key]})).filter(p=>p.v!=null);
     if(pts.length<1) return "";
     return pts.map((p,idx)=>`${idx===0?"M":"L"}${x(p.i).toFixed(1)},${y(p.v).toFixed(1)}`).join(" ");
   };
@@ -17008,12 +17012,10 @@ function PromedioPeriodoChart({datos,height=180,width=620}){
           <text x={pad.l-6} y={y(g)+3} textAnchor="end" fontSize="9" fill="#9CA3AF">{Math.round(g*100)}%</text>
         </g>
       ))}
-      <path d={buildPath("ESPERANZA")} fill="none" stroke={BUQUE_COLOR.ESPERANZA} strokeWidth="2"/>
-      <path d={buildPath("DALKA")} fill="none" stroke={BUQUE_COLOR.DALKA} strokeWidth="2"/>
+      {s.map(serie=><path key={serie.key} d={buildPath(serie.key)} fill="none" stroke={serie.color} strokeWidth="2"/>)}
       {datos.map((d,i)=>(
         <g key={d.key}>
-          {d.ESPERANZA!=null&&<circle cx={x(i)} cy={y(d.ESPERANZA)} r="3" fill={BUQUE_COLOR.ESPERANZA}/>}
-          {d.DALKA!=null&&<circle cx={x(i)} cy={y(d.DALKA)} r="3" fill={BUQUE_COLOR.DALKA}/>}
+          {s.map(serie=>d[serie.key]!=null&&<circle key={serie.key} cx={x(i)} cy={y(d[serie.key])} r="3" fill={serie.color}/>)}
           <text x={x(i)} y={height-6} textAnchor="middle" fontSize="9" fill="#9CA3AF">{d.label}</text>
         </g>
       ))}
@@ -17029,7 +17031,7 @@ function PromedioPeriodoChart({datos,height=180,width=620}){
         onMouseLeave={()=>setHoverIdx(null)} style={{cursor:"crosshair"}}/>
       {hoverIdx!=null&&(()=>{
         const d=datos[hoverIdx];
-        const filas=[d.ESPERANZA!=null&&{label:"Esperanza",v:d.ESPERANZA,color:BUQUE_COLOR.ESPERANZA},d.DALKA!=null&&{label:"Dalka",v:d.DALKA,color:BUQUE_COLOR.DALKA}].filter(Boolean);
+        const filas=s.filter(serie=>d[serie.key]!=null).map(serie=>({label:serie.label,v:d[serie.key],color:serie.color}));
         if(filas.length===0) return null;
         const boxW=120,boxH=16+filas.length*12;
         let boxX=x(hoverIdx)+8;
@@ -18167,8 +18169,11 @@ function DisponibilidadUtilizacion({user,data}){
       nEsperanza:g.ESPERANZA.n,nDalka:g.DALKA.n,
     }));
   },[faenas,granularidadPromedio]);
-  const serieDisponibilidadPeriodo=useMemo(()=>promediosPorPeriodo.map(d=>({key:d.key,label:d.label,ESPERANZA:d.dispEsperanza,DALKA:d.dispDalka})),[promediosPorPeriodo]);
-  const serieUtilizacionPeriodo=useMemo(()=>promediosPorPeriodo.map(d=>({key:d.key,label:d.label,ESPERANZA:d.utilEsperanza,DALKA:d.utilDalka})),[promediosPorPeriodo]);
+  // Un gráfico por buque, Disponibilidad vs. Utilización (antes eran 2
+  // gráficos por métrica comparando Esperanza vs. Dalka — pedido explícito
+  // de tener cada buque por separado, cruzando sus propias 2 métricas).
+  const serieEsperanzaPeriodo=useMemo(()=>promediosPorPeriodo.map(d=>({key:d.key,label:d.label,disp:d.dispEsperanza,util:d.utilEsperanza})),[promediosPorPeriodo]);
+  const serieDalkaPeriodo=useMemo(()=>promediosPorPeriodo.map(d=>({key:d.key,label:d.label,disp:d.dispDalka,util:d.utilDalka})),[promediosPorPeriodo]);
   // Período actual (según la granularidad elegida) para las tarjetas de
   // arriba — busca si ya hay faenas calzando ese período exacto.
   const periodoActualInfo=useMemo(()=>{
@@ -18863,19 +18868,29 @@ function DisponibilidadUtilizacion({user,data}){
 
       <div className="grid xl:grid-cols-2 gap-5">
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
-          <h2 className="font-bold text-gray-800 text-base mb-3">Promedio de Solo Disponibilidad por buque</h2>
-          <PromedioPeriodoChart datos={serieDisponibilidadPeriodo} height={240}/>
+          <h2 className="font-bold text-gray-800 text-base mb-3 flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full inline-block flex-shrink-0" style={{background:BUQUE_COLOR.ESPERANZA}}/>
+            Esperanza — Disponibilidad vs. Utilización
+          </h2>
+          <PromedioPeriodoChart datos={serieEsperanzaPeriodo}
+            series={[{key:"disp",label:"Solo Disponibilidad",color:DISP_UTIL_COLOR.disp},{key:"util",label:"Utilización",color:DISP_UTIL_COLOR.util}]}
+            height={240}/>
           <div className="flex items-center gap-4 text-xs text-gray-500 mt-2">
-            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:BUQUE_COLOR.ESPERANZA}}/>Esperanza</span>
-            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:BUQUE_COLOR.DALKA}}/>Dalka</span>
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:DISP_UTIL_COLOR.disp}}/>Solo Disponibilidad</span>
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:DISP_UTIL_COLOR.util}}/>Utilización</span>
           </div>
         </div>
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
-          <h2 className="font-bold text-gray-800 text-base mb-3">Promedio de Utilización por buque</h2>
-          <PromedioPeriodoChart datos={serieUtilizacionPeriodo} height={240}/>
+          <h2 className="font-bold text-gray-800 text-base mb-3 flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full inline-block flex-shrink-0" style={{background:BUQUE_COLOR.DALKA}}/>
+            Dalka — Disponibilidad vs. Utilización
+          </h2>
+          <PromedioPeriodoChart datos={serieDalkaPeriodo}
+            series={[{key:"disp",label:"Solo Disponibilidad",color:DISP_UTIL_COLOR.disp},{key:"util",label:"Utilización",color:DISP_UTIL_COLOR.util}]}
+            height={240}/>
           <div className="flex items-center gap-4 text-xs text-gray-500 mt-2">
-            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:BUQUE_COLOR.ESPERANZA}}/>Esperanza</span>
-            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:BUQUE_COLOR.DALKA}}/>Dalka</span>
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:DISP_UTIL_COLOR.disp}}/>Solo Disponibilidad</span>
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:DISP_UTIL_COLOR.util}}/>Utilización</span>
           </div>
         </div>
       </div>
