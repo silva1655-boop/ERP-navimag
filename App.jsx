@@ -14968,13 +14968,13 @@ function aplicaReglaGasto(txn,regla){
 
 // Reutilizada por la pestaña "Gestión" y por el Informe Gerencial de Gastos y
 // Presupuesto, para no mantener dos copias de la misma tabla.
-function TablaResumenTrimestral({resumenTrimestral}){
+function TablaResumenTrimestral({resumenTrimestral,tituloPeriodo="Trimestre"}){
   return(
     <table className="w-full text-xs border-separate" style={{borderSpacing:0}}>
       <thead>
         <tr>
           <th rowSpan={2} className="pb-2 pr-3 align-bottom border-b-2 border-gray-300 text-left text-gray-500 font-semibold">Período</th>
-          <th colSpan={3} className="py-1.5 text-center bg-blue-50 text-blue-800 font-bold border-b-2 border-blue-200 rounded-t-lg">Trimestre</th>
+          <th colSpan={3} className="py-1.5 text-center bg-blue-50 text-blue-800 font-bold border-b-2 border-blue-200 rounded-t-lg">{tituloPeriodo}</th>
           <th colSpan={3} className="py-1.5 text-center bg-indigo-50 text-indigo-800 font-bold border-b-2 border-indigo-200 border-l-2 border-l-gray-300 rounded-t-lg">Acumulado</th>
         </tr>
         <tr>
@@ -15435,6 +15435,24 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
       };
     });
   },[serieAnualCompleta,anioTrabajo]);
+
+  // Mismo criterio que resumenTrimestral pero mes a mes — para revisar el
+  // estado del gasto mensualmente en vez de esperar a que cierre el
+  // trimestre. serieAnualCompleta ya viene por mes, así que no hay que
+  // reagrupar nada, solo acumular corrido. Usa los mismos nombres de campo
+  // que resumenTrimestral (trimestre/realTrim/...) para poder reutilizar
+  // TablaResumenTrimestral tal cual, con tituloPeriodo="Mes".
+  const resumenMensual=useMemo(()=>{
+    let accReal=0,accPres=0;
+    return serieAnualCompleta.map(m=>{
+      accReal+=m.filtrado;accPres+=m.presupuesto;
+      return{
+        trimestre:new Date(m.mes+"-01T00:00:00").toLocaleDateString("es-CL",{month:"long",year:"numeric"}),
+        realTrim:m.filtrado,presTrim:m.presupuesto,varTrim:m.presupuesto>0?((m.presupuesto-m.filtrado)/m.presupuesto)*100:null,
+        realAcum:accReal,presAcum:accPres,varAcum:accPres>0?((accPres-accReal)/accPres)*100:null,
+      };
+    });
+  },[serieAnualCompleta]);
 
   // ═══ Informe Gerencial de Gastos y Presupuesto ═══════════════════════════
   // "Real sin filtro" = solo acotado por el rango de meses elegido (sin reglas
@@ -16765,6 +16783,13 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
         <TablaResumenTrimestral resumenTrimestral={resumenTrimestral}/>
       </div>
 
+      {/* ── Resumen Mensual ── */}
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 overflow-x-auto">
+        <h2 className="font-bold text-gray-800 text-sm mb-1">Resumen Mensual — Real filtrado vs. Presupuesto</h2>
+        <p className="text-gray-400 text-[10px] mb-3">Mismo cálculo que el Resumen Trimestral pero mes a mes, para revisar el estado del gasto sin esperar a que cierre el trimestre — acumulado corrido, año {anioTrabajo} completo.</p>
+        <TablaResumenTrimestral resumenTrimestral={resumenMensual} tituloPeriodo="Mes"/>
+      </div>
+
       {/* ── Gasto mensual - acumulado anual ── */}
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 overflow-x-auto">
         <h2 className="font-bold text-gray-800 text-sm mb-1">Gasto mensual — acumulado anual {anioTrabajo}</h2>
@@ -17708,6 +17733,17 @@ function DisponibilidadUtilizacion({user,data}){
   const [vistaDisponibilidad,setVistaDisponibilidad]=useState("gestion"); // gestion|informe
   const [informeAnio,setInformeAnio]=useState(new Date().getFullYear());
   const [informeTrimestre,setInformeTrimestre]=useState(Math.ceil((new Date().getMonth()+1)/3)); // 1-4
+  // Informe Gerencial: trimestral (como siempre) o mensual (pedido
+  // explícito, para revisar mes a mes sin esperar a que cierre el
+  // trimestre) — mismo informe, mismo cálculo, solo cambia el período.
+  const [informeModo,setInformeModo]=useState("trimestral"); // trimestral|mensual
+  const [informeMes,setInformeMes]=useState(new Date().getMonth()+1); // 1-12
+  const mesesPeriodoInforme=informeModo==="mensual"
+    ?[String(informeMes).padStart(2,"0")]
+    :TRIMESTRES_DEF[informeTrimestre-1].meses;
+  const periodoLabelInforme=informeModo==="mensual"
+    ?new Date(informeAnio,informeMes-1,1).toLocaleDateString("es-CL",{month:"long",year:"numeric"})
+    :`${TRIMESTRES_DEF[informeTrimestre-1].label} ${informeAnio}`;
   // Presupuesto/reglas de Gastos — livianos, se leen siempre (no solo con el
   // informe abierto) para no tener que esperar al cambiar de vista.
   const [reglasGasto,setReglasGasto]=useState([]);
@@ -17718,18 +17754,19 @@ function DisponibilidadUtilizacion({user,data}){
     return()=>{u1();u2();};
   },[]);
   // Los meses de transacciones sí son pesados (un doc por mes) — se traen al
-  // vuelo solo para los 3 meses del trimestre elegido, no en vivo.
+  // vuelo solo para los meses del período elegido (1 si es mensual, 3 si es
+  // trimestral), no en vivo.
   const [txnsInforme,setTxnsInforme]=useState({});
   const [cargandoTxnsInforme,setCargandoTxnsInforme]=useState(false);
   useEffect(()=>{
     let cancelado=false;
-    const meses=TRIMESTRES_DEF[informeTrimestre-1].meses.map(m=>`${informeAnio}-${m}`);
+    const meses=mesesPeriodoInforme.map(m=>`${informeAnio}-${m}`);
     setCargandoTxnsInforme(true);
     Promise.all(meses.map(mes=>getDoc(doc(db,COLL_GASTOS_TXN,mes)).then(snap=>[mes,snap.exists()?(snap.data().data||[]):[]])))
       .then(entries=>{if(!cancelado){setTxnsInforme(Object.fromEntries(entries));setCargandoTxnsInforme(false);}})
       .catch(err=>{console.error("Informe Gerencial — error leyendo gastos:",err);if(!cancelado)setCargandoTxnsInforme(false);});
     return()=>{cancelado=true;};
-  },[informeAnio,informeTrimestre]);
+  },[informeAnio,informeModo,informeTrimestre,informeMes]);
 
   const [detenciones,setDetenciones]=useState([]);
   const [loadingDetenciones,setLoadingDetenciones]=useState(true);
@@ -17967,11 +18004,14 @@ function DisponibilidadUtilizacion({user,data}){
   // ═══ Informe Gerencial ═══════════════════════════════════════════════════
   // Trimestres SIEMPRE calendario fijo (T1=ene-feb-mar...T4=oct-nov-dic),
   // igual criterio que TRIMESTRES_DEF en Gastos y Presupuesto — así el
-  // trimestre del informe coincide 1:1 con el de esa pestaña.
+  // trimestre del informe coincide 1:1 con el de esa pestaña. En modo
+  // mensual, mesesPeriodoInforme trae un solo mes — el resto del cálculo
+  // (KPIs, presupuesto vs. real, narrativa) es exactamente el mismo, solo
+  // cambia el rango de meses que se suma.
   const faenasDelTrimestreInforme=useMemo(()=>{
-    const mesesNum=TRIMESTRES_DEF[informeTrimestre-1].meses.map(Number);
+    const mesesNum=mesesPeriodoInforme.map(Number);
     return faenas.filter(f=>f.anio===informeAnio&&mesesNum.includes(f.mes));
-  },[faenas,informeAnio,informeTrimestre]);
+  },[faenas,informeAnio,mesesPeriodoInforme]);
 
   const resumenBuqueInforme=(fs)=>{
     const n=fs.length;
@@ -17990,7 +18030,7 @@ function DisponibilidadUtilizacion({user,data}){
   }),[faenasDelTrimestreInforme]);
 
   const informeMesAMes=useMemo(()=>{
-    return TRIMESTRES_DEF[informeTrimestre-1].meses.map(mesStr=>{
+    return mesesPeriodoInforme.map(mesStr=>{
       const mesNum=parseInt(mesStr);
       const fsMes=faenasDelTrimestreInforme.filter(f=>f.mes===mesNum);
       return{
@@ -18000,14 +18040,14 @@ function DisponibilidadUtilizacion({user,data}){
         DALKA:resumenBuqueInforme(fsMes.filter(f=>f.buque==="DALKA")),
       };
     });
-  },[faenasDelTrimestreInforme,informeTrimestre,informeAnio]);
+  },[faenasDelTrimestreInforme,mesesPeriodoInforme,informeAnio]);
 
-  // Presupuesto vs. real filtrado del trimestre, por buque — mismo motor de
+  // Presupuesto vs. real filtrado del período, por buque — mismo motor de
   // reglas y misma convención de Var% que el Resumen Trimestral de Gastos y
   // Presupuesto (categoría TOTAL, módulo marítimo — los tractos son de puerto).
   const reglasAplicablesInforme=useMemo(()=>reglasGasto.filter(r=>r.activo&&(r.modulo==="ambos"||r.modulo==="maritimo")),[reglasGasto]);
   const presupuestoInforme=useMemo(()=>{
-    const meses=TRIMESTRES_DEF[informeTrimestre-1].meses.map(m=>`${informeAnio}-${m}`);
+    const meses=mesesPeriodoInforme.map(m=>`${informeAnio}-${m}`);
     const presupuestoDelMes=(mes,vId)=>{
       const anio=parseInt(mes.slice(0,4));
       const exacto=presupuestoGasto.find(p=>p.modulo==="maritimo"&&(p.vesselId||null)===vId&&p.categoria==="TOTAL"&&p.anio===anio&&p.mes===mes);
@@ -18027,23 +18067,22 @@ function DisponibilidadUtilizacion({user,data}){
       return{real,pres,varPct:pres>0?((pres-real)/pres)*100:null};
     };
     return{ESPERANZA:porBuque("ESPERANZA"),DALKA:porBuque("DALKA")};
-  },[txnsInforme,reglasAplicablesInforme,presupuestoGasto,informeAnio,informeTrimestre]);
+  },[txnsInforme,reglasAplicablesInforme,presupuestoGasto,informeAnio,mesesPeriodoInforme]);
 
   // Párrafo de análisis automático — combina disponibilidad/utilización y
-  // presupuesto vs. real del trimestre en una lectura rápida tipo informe.
+  // presupuesto vs. real del período en una lectura rápida tipo informe.
   const informeNarrativa=useMemo(()=>{
-    const trimLabel=`${TRIMESTRES_DEF[informeTrimestre-1].label} ${informeAnio}`;
     const partes=[];
     [["Esperanza","ESPERANZA"],["Dalka","DALKA"]].forEach(([nombre,key])=>{
       const k=informeKPIsTrimestre[key];
       const p=presupuestoInforme[key];
       if(k.n===0&&p.pres===0){return;}
-      const dispTxt=k.dispProm!=null?`${Math.round(k.dispProm*100)}% de disponibilidad técnica y ${Math.round(k.utilProm*100)}% de utilización promedio (${k.n} faena${k.n===1?"":"s"})`:"sin faenas registradas";
+      const dispTxt=k.dispProm!=null?`${Math.round(k.dispProm*100)}% de solo disponibilidad y ${Math.round(k.utilProm*100)}% de utilización promedio (${k.n} faena${k.n===1?"":"s"})`:"sin faenas registradas";
       const presTxt=p.pres>0?`El gasto real filtrado fue de ${fmtCLP(p.real)} contra un presupuesto de ${fmtCLP(p.pres)}${p.varPct!=null?` (${p.varPct>=0?"+":""}${p.varPct.toFixed(1)}% de variación, ${p.varPct>=0?"dentro de lo presupuestado":"sobre presupuesto"})`:""}.`:"";
-      partes.push(`${nombre} tuvo ${dispTxt} durante ${trimLabel}. ${presTxt}`);
+      partes.push(`${nombre} tuvo ${dispTxt} durante ${periodoLabelInforme}. ${presTxt}`);
     });
-    return partes.join(" ")||`Sin datos suficientes para generar el análisis de ${trimLabel} todavía.`;
-  },[informeKPIsTrimestre,presupuestoInforme,informeTrimestre,informeAnio]);
+    return partes.join(" ")||`Sin datos suficientes para generar el análisis de ${periodoLabelInforme} todavía.`;
+  },[informeKPIsTrimestre,presupuestoInforme,periodoLabelInforme]);
 
   // Recalcula indisponibilidadHH/disponibilidadTecnica/utilizacion de una o más
   // Faenas a partir del arreglo de Detenciones actualizado, y guarda mantek_faena.
@@ -18469,7 +18508,7 @@ function DisponibilidadUtilizacion({user,data}){
             <div className="bg-gray-50 rounded-xl p-3 text-xs text-gray-700 space-y-1">
               <p><span className="font-bold">{previewHistorico.faenasFinal.length}</span> faena(s) y <span className="font-bold">{previewHistorico.detencionesFinal.length}</span> detención(es) leídas ({previewHistorico.totalFaenaRows} filas de Faena, {previewHistorico.totalDetRows} de Detenciones).</p>
               <p>
-                Validación de fórmula vs. columnas del Excel: Disponibilidad Técnica {previewHistorico.coincideDisp}/{previewHistorico.faenasFinal.length} coinciden (±1pp) · Utilización {previewHistorico.coincideUtil}/{previewHistorico.faenasFinal.length}.
+                Validación de fórmula vs. columnas del Excel: Solo Disponibilidad {previewHistorico.coincideDisp}/{previewHistorico.faenasFinal.length} coinciden (±1pp) · Utilización {previewHistorico.coincideUtil}/{previewHistorico.faenasFinal.length}.
                 {previewHistorico.difsGrandes.length>0&&` Las ${previewHistorico.difsGrandes.length} restantes difieren porque el Excel original arrastraba errores de fórmula en esas filas — el valor calculado acá es el correcto.`}
               </p>
             </div>
@@ -18588,7 +18627,7 @@ function DisponibilidadUtilizacion({user,data}){
             <div><p className="text-gray-400 text-[10px]">Hs. operación bruta</p><p className="font-bold text-gray-800">{fmtH(previewFaena.horasOperacionBruta)}</p></div>
             <div><p className="text-gray-400 text-[10px]">Hs. descontables</p><p className="font-bold text-gray-800">{fmtH(previewFaena.horasDescontables)}</p></div>
             <div><p className="text-gray-400 text-[10px]">Hs. operación</p><p className="font-bold text-gray-800">{fmtH(previewFaena.horasOperacion)}</p></div>
-            <div><p className="text-gray-400 text-[10px]">Disponibilidad Técnica</p><p className="font-bold text-gray-800">{fmtPct(previewFaena.disponibilidadTecnica)}</p></div>
+            <div><p className="text-gray-400 text-[10px]">Solo Disponibilidad</p><p className="font-bold text-gray-800">{fmtPct(previewFaena.disponibilidadTecnica)}</p></div>
             <div><p className="text-gray-400 text-[10px]">Utilización</p><p className="font-bold text-gray-800">{fmtPct(previewFaena.utilizacion)}</p></div>
             <div><p className="text-gray-400 text-[10px]">Cumplimiento</p><p className="font-bold text-gray-800">{fmtPct(previewFaena.cumplimiento)}</p></div>
             <div><p className="text-gray-400 text-[10px]">Semana / Mes / Año</p><p className="font-bold text-gray-800">S{previewFaena.semana} · {previewFaena.mes}/{previewFaena.anio}</p></div>
@@ -18619,9 +18658,9 @@ function DisponibilidadUtilizacion({user,data}){
         </div>
         {periodoActualInfo.datos?(
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <StatCard icon={Gauge} label="Disp. Técnica · Esperanza" value={periodoActualInfo.datos.nEsperanza>0?fmtPct(periodoActualInfo.datos.dispEsperanza):"—"} sub={periodoActualInfo.datos.nEsperanza>0?`${periodoActualInfo.datos.nEsperanza} faena(s)`:"Sin faenas"} color="blue"/>
+            <StatCard icon={Gauge} label="Solo Disp. · Esperanza" value={periodoActualInfo.datos.nEsperanza>0?fmtPct(periodoActualInfo.datos.dispEsperanza):"—"} sub={periodoActualInfo.datos.nEsperanza>0?`${periodoActualInfo.datos.nEsperanza} faena(s)`:"Sin faenas"} color="blue"/>
             <StatCard icon={TrendingUp} label="Utilización · Esperanza" value={periodoActualInfo.datos.nEsperanza>0?fmtPct(periodoActualInfo.datos.utilEsperanza):"—"} sub={periodoActualInfo.datos.nEsperanza>0?`${periodoActualInfo.datos.nEsperanza} faena(s)`:"Sin faenas"} color="cyan"/>
-            <StatCard icon={Gauge} label="Disp. Técnica · Dalka" value={periodoActualInfo.datos.nDalka>0?fmtPct(periodoActualInfo.datos.dispDalka):"—"} sub={periodoActualInfo.datos.nDalka>0?`${periodoActualInfo.datos.nDalka} faena(s)`:"Sin faenas"} color="blue"/>
+            <StatCard icon={Gauge} label="Solo Disp. · Dalka" value={periodoActualInfo.datos.nDalka>0?fmtPct(periodoActualInfo.datos.dispDalka):"—"} sub={periodoActualInfo.datos.nDalka>0?`${periodoActualInfo.datos.nDalka} faena(s)`:"Sin faenas"} color="blue"/>
             <StatCard icon={TrendingUp} label="Utilización · Dalka" value={periodoActualInfo.datos.nDalka>0?fmtPct(periodoActualInfo.datos.utilDalka):"—"} sub={periodoActualInfo.datos.nDalka>0?`${periodoActualInfo.datos.nDalka} faena(s)`:"Sin faenas"} color="cyan"/>
           </div>
         ):(
@@ -18631,7 +18670,7 @@ function DisponibilidadUtilizacion({user,data}){
 
       <div className="grid xl:grid-cols-2 gap-5">
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
-          <h2 className="font-bold text-gray-800 text-base mb-3">Promedio de Disponibilidad Técnica por buque</h2>
+          <h2 className="font-bold text-gray-800 text-base mb-3">Promedio de Solo Disponibilidad por buque</h2>
           <PromedioPeriodoChart datos={serieDisponibilidadPeriodo} height={240}/>
           <div className="flex items-center gap-4 text-xs text-gray-500 mt-2">
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:BUQUE_COLOR.ESPERANZA}}/>Esperanza</span>
@@ -18676,7 +18715,7 @@ function DisponibilidadUtilizacion({user,data}){
                 <th className="pb-2 pr-3">Terminal</th>
                 <th className="pb-2 pr-3">N° Faena</th>
                 <th className="pb-2 pr-3">Tractos OP/Util</th>
-                <th className="pb-2 pr-3">Disp. Técnica</th>
+                <th className="pb-2 pr-3">Solo Disp.</th>
                 <th className="pb-2 pr-3">Utilización</th>
                 <th className="pb-2 pr-3">Cumplimiento</th>
                 <th className="pb-2"></th>
@@ -18766,7 +18805,7 @@ function DisponibilidadUtilizacion({user,data}){
         )}
         {previewImpactoFaena&&(
           <div className="bg-gray-50 rounded-xl p-3 mb-3 text-xs text-gray-600">
-            Impacto en faena <b>{previewImpactoFaena.faena.numeroFaena}</b>: Disponibilidad Técnica {fmtPct(previewImpactoFaena.antes.disponibilidadTecnica)} → <b>{fmtPct(previewImpactoFaena.despues.disponibilidadTecnica)}</b>
+            Impacto en faena <b>{previewImpactoFaena.faena.numeroFaena}</b>: Solo Disponibilidad {fmtPct(previewImpactoFaena.antes.disponibilidadTecnica)} → <b>{fmtPct(previewImpactoFaena.despues.disponibilidadTecnica)}</b>
             {" · "}Utilización {fmtPct(previewImpactoFaena.antes.utilizacion)} → <b>{fmtPct(previewImpactoFaena.despues.utilizacion)}</b>
           </div>
         )}
@@ -18843,28 +18882,49 @@ function DisponibilidadUtilizacion({user,data}){
         <div className="space-y-5">
           <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
             <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
-              <h2 className="font-bold text-gray-800 text-base">
-                Informe Gerencial — {TRIMESTRES_DEF[informeTrimestre-1].label} {informeAnio}
+              <h2 className="font-bold text-gray-800 text-base capitalize">
+                Informe Gerencial — {periodoLabelInforme}
               </h2>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
+                  {[{key:"trimestral",label:"Trimestral"},{key:"mensual",label:"Mensual"}].map(m=>(
+                    <button key={m.key} onClick={()=>setInformeModo(m.key)}
+                      className={`px-3 py-1.5 rounded-md text-xs font-semibold transition ${informeModo===m.key?"bg-white shadow-sm text-blue-700":"text-gray-500 hover:text-gray-700"}`}>
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
                 <select value={informeAnio} onChange={e=>setInformeAnio(parseInt(e.target.value))}
                   className="px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs bg-white">
                   {Array.from(new Set([...faenas.map(f=>f.anio).filter(Boolean),new Date().getFullYear()])).sort((a,b)=>b-a).map(a=>(
                     <option key={a} value={a}>{a}</option>
                   ))}
                 </select>
-                <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
-                  {TRIMESTRES_DEF.map((t,i)=>(
-                    <button key={t.label} onClick={()=>setInformeTrimestre(i+1)}
-                      className={`px-3 py-1.5 rounded-md text-xs font-semibold transition ${informeTrimestre===i+1?"bg-white shadow-sm text-blue-700":"text-gray-500 hover:text-gray-700"}`}>
-                      {t.label}
-                    </button>
-                  ))}
-                </div>
+                {informeModo==="trimestral"?(
+                  <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
+                    {TRIMESTRES_DEF.map((t,i)=>(
+                      <button key={t.label} onClick={()=>setInformeTrimestre(i+1)}
+                        className={`px-3 py-1.5 rounded-md text-xs font-semibold transition ${informeTrimestre===i+1?"bg-white shadow-sm text-blue-700":"text-gray-500 hover:text-gray-700"}`}>
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+                ):(
+                  <select value={informeMes} onChange={e=>setInformeMes(parseInt(e.target.value))}
+                    className="px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs bg-white capitalize">
+                    {Array.from({length:12},(_,i)=>i+1).map(m=>(
+                      <option key={m} value={m} className="capitalize">
+                        {new Date(2000,m-1,1).toLocaleDateString("es-CL",{month:"long"})}
+                      </option>
+                    ))}
+                  </select>
+                )}
               </div>
             </div>
             <p className="text-xs text-gray-400 mb-1">
-              Trimestre calendario fijo: T1 ene-feb-mar · T2 abr-may-jun · T3 jul-ago-sep · T4 oct-nov-dic.
+              {informeModo==="trimestral"
+                ?"Trimestre calendario fijo: T1 ene-feb-mar · T2 abr-may-jun · T3 jul-ago-sep · T4 oct-nov-dic."
+                :"Informe de un solo mes — mismo cálculo que el trimestral, para revisar mensualmente sin esperar a que cierre el trimestre."}
               {cargandoTxnsInforme&&" Cargando datos de presupuesto..."}
             </p>
             <p className="text-sm text-gray-700 leading-relaxed bg-blue-50 border border-blue-100 rounded-xl p-4 mt-2">
@@ -18877,18 +18937,19 @@ function DisponibilidadUtilizacion({user,data}){
             const p=presupuestoInforme[buque];
             return(
               <div key={buque} className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
-                <h2 className="font-bold text-gray-800 text-base mb-4 flex items-center gap-2">
-                  <span className="w-2.5 h-2.5 rounded-full inline-block" style={{background:BUQUE_COLOR[buque]}}/>
-                  {nombre} — {TRIMESTRES_DEF[informeTrimestre-1].label} {informeAnio}
+                <h2 className="font-bold text-gray-800 text-base mb-4 flex items-center gap-2 capitalize">
+                  <span className="w-2.5 h-2.5 rounded-full inline-block flex-shrink-0" style={{background:BUQUE_COLOR[buque]}}/>
+                  {nombre} — {periodoLabelInforme}
                 </h2>
 
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
-                  <StatCard icon={Gauge} label="Disp. Técnica trimestral" value={k.n>0?fmtPct(k.dispProm):"—"} sub={`${k.n} faena(s)`} color="blue"/>
-                  <StatCard icon={TrendingUp} label="Utilización trimestral" value={k.n>0?fmtPct(k.utilProm):"—"} sub={`${k.n} faena(s)`} color="cyan"/>
-                  <StatCard icon={Clock} label="Horas indisponibilidad" value={fmtH(k.hhIndisp)} sub="suma del trimestre" color="amber"/>
+                  <StatCard icon={Gauge} label={informeModo==="mensual"?"Solo Disp. mensual":"Solo Disp. trimestral"} value={k.n>0?fmtPct(k.dispProm):"—"} sub={`${k.n} faena(s)`} color="blue"/>
+                  <StatCard icon={TrendingUp} label={informeModo==="mensual"?"Utilización mensual":"Utilización trimestral"} value={k.n>0?fmtPct(k.utilProm):"—"} sub={`${k.n} faena(s)`} color="cyan"/>
+                  <StatCard icon={Clock} label="Horas indisponibilidad" value={fmtH(k.hhIndisp)} sub={informeModo==="mensual"?"suma del mes":"suma del trimestre"} color="amber"/>
                   <StatCard icon={Truck} label="Tractos OP promedio" value={k.n>0?k.tractosOpProm.toFixed(1):"—"} sub="por faena" color="navy"/>
                 </div>
 
+                {informeModo==="trimestral"&&(<>
                 <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Mes a mes</p>
                 <div className="overflow-x-auto mb-5">
                   <table className="w-full text-sm border-separate" style={{borderSpacing:0}}>
@@ -18896,7 +18957,7 @@ function DisponibilidadUtilizacion({user,data}){
                       <tr>
                         <th className="pb-1.5 pr-3 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Mes</th>
                         <th className="pb-1.5 pr-3 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Faenas</th>
-                        <th className="pb-1.5 pr-3 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Disp. Técnica</th>
+                        <th className="pb-1.5 pr-3 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Solo Disp.</th>
                         <th className="pb-1.5 pr-3 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Utilización</th>
                         <th className="pb-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Hs. indisponibilidad</th>
                       </tr>
@@ -18917,10 +18978,11 @@ function DisponibilidadUtilizacion({user,data}){
                     </tbody>
                   </table>
                 </div>
+                </>)}
 
                 <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Presupuesto vs. real filtrado (marítimo · {nombre.toLowerCase()} · categoría TOTAL)</p>
                 {p.pres===0&&p.real===0?(
-                  <p className="text-gray-400 text-xs italic">Sin presupuesto ni gasto cargado para {nombre} en este trimestre.</p>
+                  <p className="text-gray-400 text-xs italic">Sin presupuesto ni gasto cargado para {nombre} en {informeModo==="mensual"?"este mes":"este trimestre"}.</p>
                 ):(
                   <div className="grid grid-cols-3 gap-3">
                     <div className="bg-gray-50 rounded-xl p-3">
