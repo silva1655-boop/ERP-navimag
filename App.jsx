@@ -18175,45 +18175,48 @@ function DisponibilidadUtilizacion({user,data}){
     });
   },[faenasDelTrimestreInforme,mesesPeriodoInforme,informeAnio]);
 
-  // Presupuesto vs. real filtrado del período, por buque — mismo motor de
-  // reglas y misma convención de Var% que el Resumen Trimestral de Gastos y
-  // Presupuesto (categoría TOTAL, módulo marítimo — los tractos son de puerto).
-  const reglasAplicablesInforme=useMemo(()=>reglasGasto.filter(r=>r.activo&&(r.modulo==="ambos"||r.modulo==="maritimo")),[reglasGasto]);
+  // Presupuesto vs. real filtrado del período — mismo motor de reglas y
+  // misma convención de Var% que el Resumen Trimestral de Gastos y
+  // Presupuesto, pero del módulo Taller (categoría TOTAL): Disponibilidad y
+  // Utilización es una vista exclusiva de Taller — Marítimo no tiene esta
+  // pestaña — así que el presupuesto a comparar es el de Taller, no el de la
+  // nave. El presupuesto de Taller no se carga separado por buque, por eso
+  // se muestra combinado (no por Esperanza/Dalka) para el período filtrado.
+  const reglasAplicablesInforme=useMemo(()=>reglasGasto.filter(r=>r.activo&&(r.modulo==="ambos"||r.modulo==="taller")),[reglasGasto]);
   const presupuestoInforme=useMemo(()=>{
     const meses=mesesPeriodoInforme.map(m=>`${informeAnio}-${m}`);
-    const presupuestoDelMes=(mes,vId)=>{
+    const presupuestoDelMes=(mes)=>{
       const anio=parseInt(mes.slice(0,4));
-      const exacto=presupuestoGasto.find(p=>p.modulo==="maritimo"&&(p.vesselId||null)===vId&&p.categoria==="TOTAL"&&p.anio===anio&&p.mes===mes);
+      const exacto=presupuestoGasto.find(p=>p.modulo==="taller"&&!p.vesselId&&p.categoria==="TOTAL"&&p.anio===anio&&p.mes===mes);
       if(exacto) return exacto.montoPresupuestado||0;
-      const anual=presupuestoGasto.find(p=>p.modulo==="maritimo"&&(p.vesselId||null)===vId&&p.categoria==="TOTAL"&&p.anio===anio&&!p.mes);
+      const anual=presupuestoGasto.find(p=>p.modulo==="taller"&&!p.vesselId&&p.categoria==="TOTAL"&&p.anio===anio&&!p.mes);
       return anual?(anual.montoPresupuestado||0)/12:0;
     };
-    const porBuque=(buque)=>{
-      const vId=buque.toLowerCase();
-      let real=0,pres=0;
-      meses.forEach(mes=>{
-        const rows=(txnsInforme[mes]||[]).filter(t=>t.modulo==="maritimo"&&t.vesselId===vId);
-        const filtradas=rows.filter(t=>!reglasAplicablesInforme.some(r=>aplicaReglaGasto(t,r)&&r.accion==="excluir"));
-        real+=filtradas.reduce((s,t)=>s+(t.valor||0),0);
-        pres+=presupuestoDelMes(mes,vId);
-      });
-      return{real,pres,varPct:pres>0?((pres-real)/pres)*100:null};
-    };
-    return{ESPERANZA:porBuque("ESPERANZA"),DALKA:porBuque("DALKA")};
+    let real=0,pres=0;
+    meses.forEach(mes=>{
+      const rows=(txnsInforme[mes]||[]).filter(t=>t.modulo==="taller");
+      const filtradas=rows.filter(t=>!reglasAplicablesInforme.some(r=>aplicaReglaGasto(t,r)&&r.accion==="excluir"));
+      real+=filtradas.reduce((s,t)=>s+(t.valor||0),0);
+      pres+=presupuestoDelMes(mes);
+    });
+    return{real,pres,varPct:pres>0?((pres-real)/pres)*100:null};
   },[txnsInforme,reglasAplicablesInforme,presupuestoGasto,informeAnio,mesesPeriodoInforme]);
 
-  // Párrafo de análisis automático — combina disponibilidad/utilización y
-  // presupuesto vs. real del período en una lectura rápida tipo informe.
+  // Párrafo de análisis automático — combina disponibilidad/utilización por
+  // buque y presupuesto vs. real de Taller (combinado, un solo párrafo) del
+  // período en una lectura rápida tipo informe.
   const informeNarrativa=useMemo(()=>{
     const partes=[];
     [["Esperanza","ESPERANZA"],["Dalka","DALKA"]].forEach(([nombre,key])=>{
       const k=informeKPIsTrimestre[key];
-      const p=presupuestoInforme[key];
-      if(k.n===0&&p.pres===0){return;}
-      const dispTxt=k.dispProm!=null?`${Math.round(k.dispProm*100)}% de solo disponibilidad y ${Math.round(k.utilProm*100)}% de utilización promedio (${k.n} faena${k.n===1?"":"s"})`:"sin faenas registradas";
-      const presTxt=p.pres>0?`El gasto real filtrado fue de ${fmtCLP(p.real)} contra un presupuesto de ${fmtCLP(p.pres)}${p.varPct!=null?` (${p.varPct>=0?"+":""}${p.varPct.toFixed(1)}% de variación, ${p.varPct>=0?"dentro de lo presupuestado":"sobre presupuesto"})`:""}.`:"";
-      partes.push(`${nombre} tuvo ${dispTxt} durante ${periodoLabelInforme}. ${presTxt}`);
+      if(k.n===0){return;}
+      const dispTxt=`${Math.round(k.dispProm*100)}% de solo disponibilidad y ${Math.round(k.utilProm*100)}% de utilización promedio (${k.n} faena${k.n===1?"":"s"})`;
+      partes.push(`${nombre} tuvo ${dispTxt} durante ${periodoLabelInforme}.`);
     });
+    const p=presupuestoInforme;
+    if(p.pres>0||p.real>0){
+      partes.push(`El gasto real de Taller filtrado fue de ${fmtCLP(p.real)} contra un presupuesto de ${fmtCLP(p.pres)}${p.varPct!=null?` (${p.varPct>=0?"+":""}${p.varPct.toFixed(1)}% de variación, ${p.varPct>=0?"dentro de lo presupuestado":"sobre presupuesto"})`:""}.`);
+    }
     return partes.join(" ")||`Sin datos suficientes para generar el análisis de ${periodoLabelInforme} todavía.`;
   },[informeKPIsTrimestre,presupuestoInforme,periodoLabelInforme]);
 
@@ -19067,7 +19070,6 @@ function DisponibilidadUtilizacion({user,data}){
 
           {[["Esperanza","ESPERANZA"],["Dalka","DALKA"]].map(([nombre,buque])=>{
             const k=informeKPIsTrimestre[buque];
-            const p=presupuestoInforme[buque];
             return(
               <div key={buque} className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
                 <h2 className="font-bold text-gray-800 text-base mb-4 flex items-center gap-2 capitalize">
@@ -19112,31 +19114,36 @@ function DisponibilidadUtilizacion({user,data}){
                   </table>
                 </div>
                 </>)}
-
-                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Presupuesto vs. real filtrado (marítimo · {nombre.toLowerCase()} · categoría TOTAL)</p>
-                {p.pres===0&&p.real===0?(
-                  <p className="text-gray-400 text-xs italic">Sin presupuesto ni gasto cargado para {nombre} en {informeModo==="mensual"?"este mes":"este trimestre"}.</p>
-                ):(
-                  <div className="grid grid-cols-3 gap-3">
-                    <div className="bg-gray-50 rounded-xl p-3">
-                      <p className="text-[10px] text-gray-400 uppercase tracking-wide">Real filtrado</p>
-                      <p className="font-bold text-gray-900 text-lg">{fmtCLP(p.real)}</p>
-                    </div>
-                    <div className="bg-gray-50 rounded-xl p-3">
-                      <p className="text-[10px] text-gray-400 uppercase tracking-wide">Presupuesto</p>
-                      <p className="font-bold text-gray-900 text-lg">{fmtCLP(p.pres)}</p>
-                    </div>
-                    <div className="bg-gray-50 rounded-xl p-3">
-                      <p className="text-[10px] text-gray-400 uppercase tracking-wide">Var %</p>
-                      <p className={`font-bold text-lg ${p.varPct==null?"text-gray-300":p.varPct>=0?"text-emerald-700":"text-red-700"}`}>
-                        {p.varPct==null?"—":`${p.varPct>=0?"+":""}${p.varPct.toFixed(1)}%`}
-                      </p>
-                    </div>
-                  </div>
-                )}
               </div>
             );
           })}
+
+          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
+            <h2 className="font-bold text-gray-800 text-base mb-1">Presupuesto vs. real filtrado — Taller · categoría TOTAL</h2>
+            <p className="text-xs text-gray-400 mb-4">
+              Presupuesto cargado en Gastos y Presupuesto (módulo Taller) para {periodoLabelInforme}. No se divide por buque porque el presupuesto de Taller se carga combinado, no por nave.
+            </p>
+            {presupuestoInforme.pres===0&&presupuestoInforme.real===0?(
+              <p className="text-gray-400 text-xs italic">Sin presupuesto ni gasto cargado en Taller para {informeModo==="mensual"?"este mes":"este trimestre"}.</p>
+            ):(
+              <div className="grid grid-cols-3 gap-3">
+                <div className="bg-gray-50 rounded-xl p-3">
+                  <p className="text-[10px] text-gray-400 uppercase tracking-wide">Real filtrado</p>
+                  <p className="font-bold text-gray-900 text-lg">{fmtCLP(presupuestoInforme.real)}</p>
+                </div>
+                <div className="bg-gray-50 rounded-xl p-3">
+                  <p className="text-[10px] text-gray-400 uppercase tracking-wide">Presupuesto</p>
+                  <p className="font-bold text-gray-900 text-lg">{fmtCLP(presupuestoInforme.pres)}</p>
+                </div>
+                <div className="bg-gray-50 rounded-xl p-3">
+                  <p className="text-[10px] text-gray-400 uppercase tracking-wide">Var %</p>
+                  <p className={`font-bold text-lg ${presupuestoInforme.varPct==null?"text-gray-300":presupuestoInforme.varPct>=0?"text-emerald-700":"text-red-700"}`}>
+                    {presupuestoInforme.varPct==null?"—":`${presupuestoInforme.varPct>=0?"+":""}${presupuestoInforme.varPct.toFixed(1)}%`}
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
