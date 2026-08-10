@@ -18225,44 +18225,69 @@ function DisponibilidadUtilizacion({user,data}){
 
   // Presupuesto vs. real filtrado del período — mismo motor de reglas y
   // misma convención de Var% que el Resumen Trimestral de Gastos y
-  // Presupuesto, pero del módulo Taller (categoría TOTAL): Disponibilidad y
-  // Utilización es una vista exclusiva de Taller — Marítimo no tiene esta
-  // pestaña — así que el presupuesto a comparar es el de Taller, no el de la
-  // nave. El presupuesto de Taller no se carga separado por buque, por eso
-  // se muestra combinado (no por Esperanza/Dalka) para el período filtrado.
+  // Presupuesto, pero del módulo Taller: Disponibilidad y Utilización es una
+  // vista exclusiva de Taller — Marítimo no tiene esta pestaña — así que el
+  // presupuesto a comparar es el de Taller, no el de la nave. El presupuesto
+  // de Taller no se carga separado por buque, por eso se muestra combinado
+  // (no por Esperanza/Dalka) para el período filtrado.
+  //
+  // Usa EXACTAMENTE los mismos filtros de categoría/centro/usuario/puntuales
+  // que estén elegidos en Gastos y Presupuesto → Filtros (persistidos en
+  // localStorage, se leen acá tal cual) — así el "Real filtrado" y el
+  // presupuesto de este informe coinciden con lo que se ve en esa otra
+  // pestaña para el mismo mes, en vez de recalcularse con otro criterio que
+  // ignoraba esos filtros. Se relee cada vez que se abre el informe (el
+  // componente se remonta al cambiar de página), así que siempre refleja
+  // los filtros vigentes al momento de mirar el informe.
+  const filtrosGastoInforme=useMemo(()=>({
+    categoria:leerLSJson("mantek_gastos_filtro_categoria",[]),
+    centro:leerLSJson("mantek_gastos_filtro_centro",[]),
+    usuario:leerLSJson("mantek_gastos_filtro_usuario",[]),
+    incluirPuntuales:leerLSJson("mantek_gastos_filtro_incluirPuntuales",true),
+  }),[vistaDisponibilidad]);
   const reglasAplicablesInforme=useMemo(()=>reglasGasto.filter(r=>r.activo&&(r.modulo==="ambos"||r.modulo==="taller")),[reglasGasto]);
   const presupuestoInforme=useMemo(()=>{
+    const{categoria:categoriasSel,centro:centrosSel,usuario:usuariosSel,incluirPuntuales}=filtrosGastoInforme;
     const meses=mesesPeriodoInforme.map(m=>`${informeAnio}-${m}`);
     // Si el presupuesto de Taller se cargó como una sola fila "TOTAL" para
-    // el mes exacto, se usa esa. Si no, y en cambio se cargó desglosado por
-    // categoría (mano de obra, repuestos, combustible, etc. — sin ninguna
-    // fila "TOTAL"), se suman todas las categorías cargadas para ese mes en
-    // vez de mostrar $0 — mismo criterio de "no hacer desaparecer lo
-    // cargado" que ya se aplicó al filtro de categoría de Gastos y
-    // Presupuesto. Por último, si tampoco hay nada mensual, cae al
-    // presupuesto anual (TOTAL o suma de categorías) prorrateado ÷12.
+    // el mes exacto, se usa esa. Si hay categoría(s) filtrada(s), se busca
+    // el presupuesto de esa(s) categoría(s) puntual(es) primero (igual
+    // criterio que presupuestoPorMes de Gastos y Presupuesto), con
+    // fallback a TOTAL si no hay nada cargado para esas categorías — para
+    // no hacer "desaparecer" un presupuesto TOTAL ya cargado. Por último,
+    // si tampoco hay nada mensual, cae al presupuesto anual prorrateado ÷12.
     const presupuestoDelMes=(mes)=>{
       const anio=parseInt(mes.slice(0,4));
       const deTaller=p=>p.modulo==="taller"&&!p.vesselId&&p.anio===anio;
-      const exactoTotal=presupuestoGasto.find(p=>deTaller(p)&&p.categoria==="TOTAL"&&p.mes===mes);
-      if(exactoTotal) return exactoTotal.montoPresupuestado||0;
-      const exactoCategorias=presupuestoGasto.filter(p=>deTaller(p)&&p.categoria!=="TOTAL"&&p.mes===mes);
-      if(exactoCategorias.length>0) return exactoCategorias.reduce((s,p)=>s+(p.montoPresupuestado||0),0);
-      const anualTotal=presupuestoGasto.find(p=>deTaller(p)&&p.categoria==="TOTAL"&&!p.mes);
-      if(anualTotal) return(anualTotal.montoPresupuestado||0)/12;
-      const anualCategorias=presupuestoGasto.filter(p=>deTaller(p)&&p.categoria!=="TOTAL"&&!p.mes);
-      if(anualCategorias.length>0) return anualCategorias.reduce((s,p)=>s+(p.montoPresupuestado||0),0)/12;
-      return 0;
+      const montoDeCategoria=cat=>{
+        const exacto=presupuestoGasto.find(p=>deTaller(p)&&p.categoria===cat&&p.mes===mes);
+        if(exacto) return exacto.montoPresupuestado||0;
+        const anual=presupuestoGasto.find(p=>deTaller(p)&&p.categoria===cat&&!p.mes);
+        return anual?(anual.montoPresupuestado||0)/12:0;
+      };
+      const hayFiltroCategoria=categoriasSel.length>0;
+      const cats=hayFiltroCategoria?categoriasSel:["TOTAL"];
+      const suma=cats.reduce((s,c)=>s+montoDeCategoria(c),0);
+      if(hayFiltroCategoria&&suma===0) return montoDeCategoria("TOTAL");
+      return suma;
     };
     let real=0,pres=0;
     meses.forEach(mes=>{
       const rows=(txnsInforme[mes]||[]).filter(t=>t.modulo==="taller");
-      const filtradas=rows.filter(t=>!reglasAplicablesInforme.some(r=>aplicaReglaGasto(t,r)&&r.accion==="excluir"));
+      const filtradas=rows.filter(t=>{
+        const reglaExcluida=reglasAplicablesInforme.some(r=>aplicaReglaGasto(t,r)&&r.accion==="excluir");
+        if(reglaExcluida) return false;
+        if(!incluirPuntuales&&reglasAplicablesInforme.some(r=>aplicaReglaGasto(t,r)&&r.accion==="marcar_puntual")) return false;
+        if(centrosSel.length>0&&!centrosSel.includes(t.centroCoste)) return false;
+        if(categoriasSel.length>0&&!categoriasSel.includes(t.descripClaseCoste)) return false;
+        if(usuariosSel.length>0&&!usuariosSel.includes(t.usuario)) return false;
+        return true;
+      });
       real+=filtradas.reduce((s,t)=>s+(t.valor||0),0);
       pres+=presupuestoDelMes(mes);
     });
     return{real,pres,varPct:pres>0?((pres-real)/pres)*100:null};
-  },[txnsInforme,reglasAplicablesInforme,presupuestoGasto,informeAnio,mesesPeriodoInforme]);
+  },[txnsInforme,reglasAplicablesInforme,presupuestoGasto,informeAnio,mesesPeriodoInforme,filtrosGastoInforme]);
 
   // Párrafo de análisis automático — combina disponibilidad/utilización por
   // buque y presupuesto vs. real de Taller (combinado, un solo párrafo) del
@@ -19193,12 +19218,19 @@ function DisponibilidadUtilizacion({user,data}){
           })}
 
           <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
-            <h2 className="font-bold text-gray-800 text-base mb-1">Presupuesto vs. real filtrado — Taller · categoría TOTAL</h2>
+            <h2 className="font-bold text-gray-800 text-base mb-1">Presupuesto vs. real filtrado — Taller</h2>
             <p className="text-xs text-gray-400 mb-4">
-              Presupuesto cargado en Gastos y Presupuesto (módulo Taller) para {periodoLabelInforme}. No se divide por buque porque el presupuesto de Taller se carga combinado, no por nave.
+              Presupuesto y gasto real de Taller para {periodoLabelInforme}, con los mismos filtros elegidos en Gastos y Presupuesto → Filtros
+              {(filtrosGastoInforme.categoria.length>0||filtrosGastoInforme.centro.length>0||filtrosGastoInforme.usuario.length>0)?(
+                <> ({[
+                  filtrosGastoInforme.categoria.length>0&&`${filtrosGastoInforme.categoria.length} categoría(s)`,
+                  filtrosGastoInforme.centro.length>0&&`${filtrosGastoInforme.centro.length} centro(s)`,
+                  filtrosGastoInforme.usuario.length>0&&`${filtrosGastoInforme.usuario.length} usuario(s)`,
+                ].filter(Boolean).join(", ")})</>
+              ):" (sin filtros activos, categoría TOTAL)"}. No se divide por buque porque el presupuesto de Taller se carga combinado, no por nave.
             </p>
             {presupuestoInforme.pres===0&&presupuestoInforme.real===0?(
-              <p className="text-gray-400 text-xs italic">Sin presupuesto ni gasto cargado en Taller para {informeModo==="mensual"?"este mes":"este trimestre"}.</p>
+              <p className="text-gray-400 text-xs italic">Sin presupuesto ni gasto cargado en Taller para {informeModo==="mensual"?"este mes":"este trimestre"}{(filtrosGastoInforme.categoria.length>0||filtrosGastoInforme.centro.length>0||filtrosGastoInforme.usuario.length>0)?" con los filtros activos":""}.</p>
             ):(
               <div className="grid grid-cols-3 gap-3">
                 <div className="bg-gray-50 rounded-xl p-3">
