@@ -14505,6 +14505,7 @@ const GASTO_COL_MAP={
 // diferencia de GASTO_COL_MAP), simplemente quedan vacías.
 const GASTO_COL_MAP_OPCIONALES={
   textoPedido:["textodepedido","textopedido","textobrevepedido","textobrevedepedido","textobreve"],
+  textoCabecera:["textocabecera","textodecabecera","textocabeceradoccompras","textocabeceradocumentodecompras","textocabeceradedocumentodecompras","cabeceratexto"],
 };
 function hashGasto(str){
   let h=0;
@@ -14573,6 +14574,7 @@ function parseGastosXLSXRows(rows){
       material:String(row[colIdx.material]??"").trim(),
       descripcionMaterial:String(row[colIdx.descripcionMaterial]??"").trim(),
       textoPedido:colIdx.textoPedido!==undefined?String(row[colIdx.textoPedido]??"").trim():"",
+      textoCabecera:colIdx.textoCabecera!==undefined?String(row[colIdx.textoCabecera]??"").trim():"",
       usuario,
       fechaContabilizacion:fecha.toISOString(),
       centroCoste,
@@ -14799,7 +14801,10 @@ function DonutRing({pct,size=56,strokeWidth=7}){
 
 // Dona de distribución (categoría / centro de costo) + leyenda con % y monto
 const DONUT_COLORS=["#2563eb","#16a34a","#D97706","#7C3AED","#DC2626","#0891B2","#DB2777","#65A30D"];
-function DonutChart({items,size=132,strokeWidth=20,centerLabel="Total",centerValue}){
+// fmtFn: formato de los montos (compacto por defecto, pasa fmtCLP para
+// número completo). onItemClick: si viene, cada fila de la leyenda es
+// clickeable (para abrir el detalle completo de esa categoría/centro).
+function DonutChart({items,size=132,strokeWidth=20,centerLabel="Total",centerValue,fmtFn=fmtCompactCLP,onItemClick}){
   if(!items||items.length===0) return(
     <div className="flex items-center justify-center h-32 text-gray-300 text-xs">Sin datos</div>
   );
@@ -14817,23 +14822,28 @@ function DonutChart({items,size=132,strokeWidth=20,centerLabel="Total",centerVal
           acc+=frac;
           return(
             <circle key={i} cx={size/2} cy={size/2} r={r} fill="none" stroke={DONUT_COLORS[i%DONUT_COLORS.length]} strokeWidth={strokeWidth}
-              strokeDasharray={`${dash} ${c-dash}`} strokeDashoffset={dashOffset} transform={`rotate(-90 ${size/2} ${size/2})`}>
-              <title>{d.nombre}: {fmtCompactCLP(d.valor)} ({d.pct}%)</title>
+              strokeDasharray={`${dash} ${c-dash}`} strokeDashoffset={dashOffset} transform={`rotate(-90 ${size/2} ${size/2})`}
+              className={onItemClick?"cursor-pointer":""} onClick={onItemClick?()=>onItemClick(d):undefined}>
+              <title>{d.nombre}: {fmtFn(d.valor)} ({d.pct}%)</title>
             </circle>
           );
         })}
         <text x={size/2} y={size/2-6} textAnchor="middle" fontSize="9" fill="#9CA3AF">{centerLabel}</text>
-        <text x={size/2} y={size/2+10} textAnchor="middle" fontSize="12" fontWeight="700" fill="#111827">{centerValue||fmtCompactCLP(total)}</text>
+        <text x={size/2} y={size/2+10} textAnchor="middle" fontSize="12" fontWeight="700" fill="#111827">{centerValue||fmtFn(total)}</text>
       </svg>
       <div className="space-y-1.5 flex-1 min-w-0">
-        {items.slice(0,6).map((d,i)=>(
-          <div key={i} className="flex items-center gap-2 text-xs">
-            <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{background:DONUT_COLORS[i%DONUT_COLORS.length]}}/>
-            <span className="text-gray-600 truncate flex-1" title={d.nombre}>{d.nombre}</span>
-            <span className="text-gray-400 flex-shrink-0">{fmtCompactCLP(d.valor)}</span>
-            <span className="text-gray-800 font-semibold w-10 text-right flex-shrink-0">{d.pct}%</span>
-          </div>
-        ))}
+        {items.slice(0,6).map((d,i)=>{
+          const Fila=onItemClick?"button":"div";
+          return(
+            <Fila key={i} onClick={onItemClick?()=>onItemClick(d):undefined}
+              className={`flex items-center gap-2 text-xs w-full ${onItemClick?"hover:bg-gray-50 rounded-lg -mx-1 px-1 py-0.5 transition text-left":""}`}>
+              <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{background:DONUT_COLORS[i%DONUT_COLORS.length]}}/>
+              <span className="text-gray-600 truncate flex-1" title={d.nombre}>{d.nombre}</span>
+              <span className="text-gray-400 flex-shrink-0">{fmtFn(d.valor)}</span>
+              <span className="text-gray-800 font-semibold w-10 text-right flex-shrink-0">{d.pct}%</span>
+            </Fila>
+          );
+        })}
       </div>
     </div>
   );
@@ -15088,6 +15098,10 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
   const [verTodasTxns,setVerTodasTxns]=useState(false);
   const [vistaGastos,setVistaGastos]=useState("gestion"); // gestion|informe
   const [usuarioExpandido,setUsuarioExpandido]=useState(null);
+  // Detalle al hacer clic en una categoría de "Distribución del gasto por
+  // categoría" — {nombre,valor,pct} del item clickeado, o null si el modal
+  // está cerrado.
+  const [categoriaDetalle,setCategoriaDetalle]=useState(null);
   const fileInputRef=useRef(null);
   const presupuestoFileRef=useRef(null);
   const vesselIdActual=activeModule==="maritimo"?(activeBarco||null):null;
@@ -15261,15 +15275,23 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
   // presupuesto que corresponda — se suman las de cada categoría seleccionada
   // (o "TOTAL" si no hay ninguna categoría filtrada).
   const presupuestoPorMes=(mes,categorias)=>{
-    const cats=(categorias&&categorias.length>0)?categorias:["TOTAL"];
     const anio=parseInt(mes.slice(0,4));
     const vId=activeModule==="maritimo"?(activeBarco||null):null;
-    return cats.reduce((sum,cat)=>{
+    const montoDeCategoria=cat=>{
       const exacto=presupuesto.find(p=>p.modulo===activeModule&&(p.vesselId||null)===vId&&p.categoria===cat&&p.anio===anio&&p.mes===mes);
-      if(exacto) return sum+(exacto.montoPresupuestado||0);
+      if(exacto) return exacto.montoPresupuestado||0;
       const anual=presupuesto.find(p=>p.modulo===activeModule&&(p.vesselId||null)===vId&&p.categoria===cat&&p.anio===anio&&!p.mes);
-      return sum+(anual?(anual.montoPresupuestado||0)/12:0);
-    },0);
+      return anual?(anual.montoPresupuestado||0)/12:0;
+    };
+    const hayFiltroCategoria=categorias&&categorias.length>0;
+    const cats=hayFiltroCategoria?categorias:["TOTAL"];
+    const suma=cats.reduce((sum,cat)=>sum+montoDeCategoria(cat),0);
+    // Caso típico: solo se cargó presupuesto "TOTAL" (sin desglosar por
+    // categoría). Si se filtra por categoría y ninguna tiene presupuesto
+    // propio cargado, antes esto quedaba en $0 — "el presupuesto
+    // desaparecía". Mejor mostrar el TOTAL como referencia que nada.
+    if(hayFiltroCategoria&&suma===0) return montoDeCategoria("TOTAL");
+    return suma;
   };
 
   const serieMensual=useMemo(()=>{
@@ -15875,6 +15897,16 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
     return Object.entries(porCat).sort((a,b)=>b[1]-a[1]).map(([nombre,valor])=>({nombre,valor,pct:Math.round((valor/total)*1000)/10}));
   },[txnsFiltradas]);
 
+  // Transacciones detrás de la categoría clickeada en el donut — mismo
+  // filtro que arma distribucionCategoria (txnsFiltradas sin excluidas),
+  // acotado a la categoría elegida.
+  const txnsCategoriaDetalle=useMemo(()=>{
+    if(!categoriaDetalle) return[];
+    return txnsFiltradas
+      .filter(t=>!t._reglaExcluida&&(t.descripClaseCoste||"(sin categoría)")===categoriaDetalle.nombre)
+      .sort((a,b)=>(b.fechaContabilizacion||"").localeCompare(a.fechaContabilizacion||""));
+  },[txnsFiltradas,categoriaDetalle]);
+
   const distribucionCentro=useMemo(()=>{
     const porCentro={};
     txnsFiltradas.filter(t=>!t._reglaExcluida).forEach(t=>{
@@ -16221,7 +16253,8 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
       <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-4 gap-4">
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
           <h2 className="font-bold text-gray-800 text-sm mb-3">Distribución del gasto por categoría</h2>
-          <DonutChart items={distribucionCategoria}/>
+          <DonutChart items={distribucionCategoria} fmtFn={fmtCLP} onItemClick={setCategoriaDetalle}/>
+          <p className="text-gray-300 text-[10px] mt-2">Click en una categoría para ver el detalle completo.</p>
         </div>
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
           <h2 className="font-bold text-gray-800 text-sm mb-3">Distribución por centro de costo</h2>
@@ -16290,6 +16323,8 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
                     <th className="text-left py-1.5 font-medium">Centro</th>
                     <th className="text-left py-1.5 font-medium">Categoría</th>
                     <th className="text-left py-1.5 font-medium">Descripción</th>
+                    <th className="text-left py-1.5 font-medium">Texto Breve</th>
+                    <th className="text-left py-1.5 font-medium">Texto Cabecera</th>
                     <th className="text-right py-1.5 font-medium">Monto</th>
                     <th className="text-left py-1.5 font-medium">Estado</th>
                   </tr></thead>
@@ -16300,9 +16335,11 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
                         <td className="py-1.5 font-mono text-blue-600">{t.documentoCabecera||"—"}</td>
                         <td className="py-1.5 font-mono text-gray-500">{t.centroCoste}</td>
                         <td className="py-1.5">{t.descripClaseCoste}</td>
-                        <td className="py-1.5 text-gray-600 truncate max-w-[160px]" title={`${t.descripcionMaterial||""} ${t.textoPedido||""}`}>
-                          {t.descripcionMaterial||t.textoPedido||t.denominacionObjeto||"—"}
+                        <td className="py-1.5 text-gray-600 truncate max-w-[160px]" title={t.descripcionMaterial||t.denominacionObjeto||""}>
+                          {t.descripcionMaterial||t.denominacionObjeto||"—"}
                         </td>
+                        <td className="py-1.5 text-gray-600 truncate max-w-[160px]" title={t.textoPedido||""}>{t.textoPedido||"—"}</td>
+                        <td className="py-1.5 text-gray-600 truncate max-w-[160px]" title={t.textoCabecera||""}>{t.textoCabecera||"—"}</td>
                         <td className="py-1.5 text-right font-semibold">{fmtCLP(t.valor)}</td>
                         <td className="py-1.5">
                           {t._reglaExcluida?(
@@ -16797,6 +16834,46 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
         <TablaGastoMensualAcumulado serie={serieAnualCompleta}/>
       </div>
       </>)}
+
+      {categoriaDetalle&&(
+        <Modal title={`Detalle — ${categoriaDetalle.nombre}`} onClose={()=>setCategoriaDetalle(null)} extraWide>
+          <p className="text-gray-500 text-sm mb-4">
+            <span className="font-bold text-gray-900">{fmtCLP(categoriaDetalle.valor)}</span> · {categoriaDetalle.pct}% del gasto filtrado · {txnsCategoriaDetalle.length} transacción(es)
+          </p>
+          {txnsCategoriaDetalle.length===0?(
+            <p className="text-gray-400 text-sm italic">Sin transacciones para esta categoría con los filtros actuales.</p>
+          ):(
+            <div className="overflow-x-auto max-h-[60vh] overflow-y-auto">
+              <table className="w-full text-xs">
+                <thead><tr className="text-gray-400 border-b border-gray-100 sticky top-0 bg-white">
+                  <th className="text-left py-1.5 pr-3 font-medium">Fecha</th>
+                  <th className="text-left py-1.5 pr-3 font-medium">Documento</th>
+                  <th className="text-left py-1.5 pr-3 font-medium">Centro</th>
+                  <th className="text-left py-1.5 pr-3 font-medium">Descripción</th>
+                  <th className="text-left py-1.5 pr-3 font-medium">Texto Breve</th>
+                  <th className="text-left py-1.5 pr-3 font-medium">Texto Cabecera</th>
+                  <th className="text-left py-1.5 pr-3 font-medium">Usuario</th>
+                  <th className="text-right py-1.5 font-medium">Monto</th>
+                </tr></thead>
+                <tbody>
+                  {txnsCategoriaDetalle.map((t,i)=>(
+                    <tr key={i} className="border-b border-gray-50 last:border-0">
+                      <td className="py-1.5 pr-3 font-mono text-gray-500 whitespace-nowrap">{t.fechaContabilizacion?t.fechaContabilizacion.slice(0,10):"—"}</td>
+                      <td className="py-1.5 pr-3 font-mono text-blue-600">{t.documentoCabecera||"—"}</td>
+                      <td className="py-1.5 pr-3 font-mono text-gray-500">{t.centroCoste}</td>
+                      <td className="py-1.5 pr-3 text-gray-600 truncate max-w-[160px]" title={t.descripcionMaterial||t.denominacionObjeto||""}>{t.descripcionMaterial||t.denominacionObjeto||"—"}</td>
+                      <td className="py-1.5 pr-3 text-gray-600 truncate max-w-[160px]" title={t.textoPedido||""}>{t.textoPedido||"—"}</td>
+                      <td className="py-1.5 pr-3 text-gray-600 truncate max-w-[160px]" title={t.textoCabecera||""}>{t.textoCabecera||"—"}</td>
+                      <td className="py-1.5 pr-3 text-gray-600">{t.usuario||"—"}</td>
+                      <td className="py-1.5 text-right font-semibold">{fmtCLP(t.valor)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Modal>
+      )}
     </div>
   );
 }
