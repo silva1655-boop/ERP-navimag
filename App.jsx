@@ -414,6 +414,59 @@ const COLL_SGN      = "mantek_sgn_v1";
 // Colecciones de nombre fijo (no dependen del módulo activo) — un solo panel
 // analiza Taller y Marítimo a la vez, filtrando por el campo `modulo` de cada fila.
 const COLL_GASTOS_TXN="mantek_gastos_transacciones";
+// Transacciones de un mes muy cargado (ej. un mes con >2000 filas) pueden
+// superar el límite de 1MB por documento de Firestore — antes de esto, esos
+// meses simplemente se descartaban al importar ("Mes X: superó el límite,
+// no se guardó"), perdiendo silenciosamente toda la información del mes.
+// Ahora un mes se reparte en varios documentos (shards) cuando hace falta:
+// "2026-04" es el shard 0, "2026-04__1" el shard 1, etc. — se sigue leyendo
+// mientras exista el siguiente shard, así que un mes que entra en 1 solo
+// documento (la mayoría) funciona exactamente igual que antes.
+const GASTOS_TXN_SHARD_LIMIT_KB=900; // margen bajo el límite real (1024KB)
+const gastosTxnDocId=(mes,shard)=>shard>0?`${mes}__${shard}`:mes;
+// El shard 0 guarda cuántos shards en total tiene el mes (shardCount) — así
+// alcanza con leer/escuchar el shard 0 para saber si hace falta traer más.
+// Un mes viejo (de antes de este esquema) no tiene shardCount → se asume 1
+// (todo en el shard 0, exactamente el comportamiento de siempre).
+async function leerTxnsDelMes(mes){
+  const snap0=await getDoc(doc(db,COLL_GASTOS_TXN,mes));
+  if(!snap0.exists()) return[];
+  const d0=snap0.data();
+  let todas=d0.data||[];
+  const shardCount=d0.shardCount||1;
+  for(let shard=1;shard<shardCount;shard++){
+    const snap=await getDoc(doc(db,COLL_GASTOS_TXN,gastosTxnDocId(mes,shard)));
+    if(snap.exists()) todas=todas.concat(snap.data().data||[]);
+  }
+  return todas;
+}
+// Parte `arr` en la menor cantidad de trozos que quepan bajo el límite y los
+// guarda como shard 0, 1, 2... Borra shards sobrantes de una escritura
+// anterior si ahora el mes entra en menos documentos (ej. se borró un
+// import grande).
+async function guardarTxnsDelMes(mes,arr){
+  const chunks=[];
+  let actual=[];
+  for(const t of arr){
+    actual.push(t);
+    if(JSON.stringify({data:actual}).length/1024>GASTOS_TXN_SHARD_LIMIT_KB){
+      actual.pop();
+      chunks.push(actual);
+      actual=[t];
+    }
+  }
+  if(actual.length>0||chunks.length===0) chunks.push(actual);
+  await setDoc(doc(db,COLL_GASTOS_TXN,mes),{data:chunks[0],shardCount:chunks.length});
+  for(let i=1;i<chunks.length;i++){
+    await setDoc(doc(db,COLL_GASTOS_TXN,gastosTxnDocId(mes,i)),{data:chunks[i]});
+  }
+  for(let shard=chunks.length;;shard++){
+    const ref=doc(db,COLL_GASTOS_TXN,gastosTxnDocId(mes,shard));
+    const snap=await getDoc(ref);
+    if(!snap.exists()) break;
+    await deleteDoc(ref);
+  }
+}
 const COLL_GASTOS_CONFIG_CENTROS="mantek_config_centros_coste";
 const COLL_GASTOS_REGLAS="mantek_gastos_reglas_filtro";
 const COLL_GASTOS_PRESUPUESTO="mantek_gastos_presupuesto";
@@ -14505,7 +14558,7 @@ const GASTO_COL_MAP={
 // diferencia de GASTO_COL_MAP), simplemente quedan vacías.
 const GASTO_COL_MAP_OPCIONALES={
   textoPedido:["textodepedido","textopedido","textobrevepedido","textobrevedepedido","textobreve"],
-  textoCabecera:["textocabecera","textodecabecera","textocabeceradoccompras","textocabeceradocumentodecompras","textocabeceradedocumentodecompras","cabeceratexto"],
+  textoCabecera:["textocabecera","textodecabecera","textocabeceradoccompras","textocabeceradocumentodecompras","textocabeceradedocumentodecompras","textodecabeceradedocumento","textocabeceradedocumento","textodecabeceradocumento","cabeceratexto"],
 };
 function hashGasto(str){
   let h=0;
@@ -15143,8 +15196,20 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
 
   useEffect(()=>{
     if(mesesIndex.length===0) return;
-    const unsubs=mesesIndex.map(mes=>onSnapshot(doc(db,COLL_GASTOS_TXN,mes),snap=>{
-      const rows=snap.exists()?(snap.data().data||[]):[];
+    // El shard 0 de cada mes queda escuchado en vivo (onSnapshot) — como
+    // guardarTxnsDelMes siempre reescribe el shard 0 en cada import (aunque
+    // el cambio haya sido en un shard más alto), esto dispara igual el
+    // refresco. Los shards 1+ (meses grandes, poco frecuentes) se traen con
+    // una lectura puntual cada vez que el shard 0 cambia.
+    const unsubs=mesesIndex.map(mes=>onSnapshot(doc(db,COLL_GASTOS_TXN,mes),async snap=>{
+      if(!snap.exists()){setTxnsPorMes(r=>({...r,[mes]:[]}));return;}
+      const d0=snap.data();
+      let rows=d0.data||[];
+      const shardCount=d0.shardCount||1;
+      for(let shard=1;shard<shardCount;shard++){
+        const s=await getDoc(doc(db,COLL_GASTOS_TXN,gastosTxnDocId(mes,shard)));
+        if(s.exists()) rows=rows.concat(s.data().data||[]);
+      }
       setTxnsPorMes(r=>({...r,[mes]:rows}));
     }));
     return()=>unsubs.forEach(u=>u());
@@ -15718,9 +15783,7 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
       const centrosNoMapeados=new Set();
       let totalInsertadas=0,totalDuplicadas=0,totalReclasificadas=0;
       for(const [mes,txns] of Object.entries(porMes)){
-        const ref=doc(db,COLL_GASTOS_TXN,mes);
-        const snap=await getDoc(ref);
-        const existentes=snap.exists()?(snap.data().data||[]):[];
+        const existentes=await leerTxnsDelMes(mes);
         const indicePorHash=new Map(existentes.map((t,i)=>[t.hashDedupe,i]));
         const nuevas=[];
         let huboReclasificacion=false;
@@ -15753,13 +15816,10 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
         });
         if(nuevas.length>0||huboReclasificacion){
           const mergedArr=[...existentes,...nuevas];
-          const sizeKB=Math.round(JSON.stringify({data:mergedArr}).length/1024);
-          if(sizeKB>1000){
-            errores.push(`Mes ${mes}: ${sizeKB}KB supera el límite de Firestore (1MB) — no se guardó. Hay que particionar este mes (ej. por centro de costo) antes de reintentar.`);
-            continue;
-          }
-          if(sizeKB>800) errores.push(`Mes ${mes}: ${sizeKB}KB — acercándose al límite de Firestore (1MB por documento).`);
-          await setDoc(ref,{data:mergedArr});
+          // guardarTxnsDelMes particiona sola en varios documentos si el mes
+          // no entra en uno solo (ej. abril con 2000+ filas) — antes esto se
+          // descartaba entero al superar 1MB, perdiendo todo el mes.
+          await guardarTxnsDelMes(mes,mergedArr);
           totalInsertadas+=nuevas.length;
         }
       }
@@ -15790,10 +15850,8 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
     setReclasificarResult(null);
     let total=0;
     for(const mes of mesesIndex){
-      const ref=doc(db,COLL_GASTOS_TXN,mes);
-      const snap=await getDoc(ref);
-      if(!snap.exists()) continue;
-      const rows=snap.data().data||[];
+      const rows=await leerTxnsDelMes(mes);
+      if(rows.length===0) continue;
       let cambiaron=false;
       const actualizadas=rows.map(t=>{
         const cfg=configCentros.find(c=>c.centroCoste===t.centroCoste);
@@ -15806,7 +15864,7 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
         }
         return t;
       });
-      if(cambiaron) await setDoc(ref,{data:actualizadas});
+      if(cambiaron) await guardarTxnsDelMes(mes,actualizadas);
     }
     setReclasificando(false);
     setReclasificarResult(total);
@@ -15838,13 +15896,11 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
     setEliminandoImportId(importId);
     let totalBorradas=0;
     for(const mes of meses){
-      const ref=doc(db,COLL_GASTOS_TXN,mes);
-      const snap=await getDoc(ref);
-      if(!snap.exists()) continue;
-      const rows=snap.data().data||[];
+      const rows=await leerTxnsDelMes(mes);
+      if(rows.length===0) continue;
       const restantes=rows.filter(t=>t.importId!==importId);
       totalBorradas+=rows.length-restantes.length;
-      await setDoc(ref,{data:restantes});
+      await guardarTxnsDelMes(mes,restantes);
     }
     setEliminandoImportId(null);
     alert(`✅ ${totalBorradas} fila(s) eliminada(s) de esta importación. Ya podés volver a subir el archivo corregido.`);
@@ -17839,7 +17895,7 @@ function DisponibilidadUtilizacion({user,data}){
     let cancelado=false;
     const meses=mesesPeriodoInforme.map(m=>`${informeAnio}-${m}`);
     setCargandoTxnsInforme(true);
-    Promise.all(meses.map(mes=>getDoc(doc(db,COLL_GASTOS_TXN,mes)).then(snap=>[mes,snap.exists()?(snap.data().data||[]):[]])))
+    Promise.all(meses.map(mes=>leerTxnsDelMes(mes).then(rows=>[mes,rows])))
       .then(entries=>{if(!cancelado){setTxnsInforme(Object.fromEntries(entries));setCargandoTxnsInforme(false);}})
       .catch(err=>{console.error("Informe Gerencial — error leyendo gastos:",err);if(!cancelado)setCargandoTxnsInforme(false);});
     return()=>{cancelado=true;};
