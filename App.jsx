@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, Component } from "react";
 import emailjs from "@emailjs/browser";
 import * as XLSX from "xlsx";
+import html2canvas from "html2canvas";
 import {
 AlertTriangle, CheckCircle, Clock, Wrench, BarChart2, Package,
 Users, FileText, Bell, LogOut, ChevronRight, Plus, X,
@@ -17933,6 +17934,10 @@ function DisponibilidadUtilizacion({user,data}){
   // trimestral), no en vivo.
   const [txnsInforme,setTxnsInforme]=useState({});
   const [cargandoTxnsInforme,setCargandoTxnsInforme]=useState(false);
+  // Exportar el informe como imagen (PNG) — para pegar en chat o
+  // presentaciones sin tener que hacer una captura de pantalla manual.
+  const informeRef=useRef(null);
+  const [exportandoImagen,setExportandoImagen]=useState(false);
   useEffect(()=>{
     let cancelado=false;
     const meses=mesesPeriodoInforme.map(m=>`${informeAnio}-${m}`);
@@ -18306,6 +18311,45 @@ function DisponibilidadUtilizacion({user,data}){
     }
     return partes.join(" ")||`Sin datos suficientes para generar el análisis de ${periodoLabelInforme} todavía.`;
   },[informeKPIsTrimestre,presupuestoInforme,periodoLabelInforme]);
+
+  // Promedio combinado (Esperanza + Dalka juntas) del período — mismo motor
+  // que informeKPIsTrimestre pero sin separar por buque, para tener de un
+  // vistazo el total de la operación de Taller, no solo nave por nave.
+  const informeKPIsCombinado=useMemo(()=>resumenBuqueInforme(faenasDelTrimestreInforme),[faenasDelTrimestreInforme]);
+
+  // Exportar el informe (narrativa + KPIs por buque + combinado + presupuesto)
+  // como imagen PNG — para pegar en chat o presentaciones sin tener que
+  // recurrir a una captura de pantalla manual. Copia al portapapeles cuando
+  // el navegador lo soporta y además siempre descarga el archivo.
+  const exportarInformeComoImagen=async()=>{
+    if(!informeRef.current) return;
+    setExportandoImagen(true);
+    try{
+      const canvas=await html2canvas(informeRef.current,{backgroundColor:"#F3F4F6",scale:2,useCORS:true});
+      const blob=await new Promise(resolve=>canvas.toBlob(resolve,"image/png"));
+      if(!blob){setExportandoImagen(false);return;}
+      let copiado=false;
+      if(navigator.clipboard&&window.ClipboardItem){
+        try{
+          await navigator.clipboard.write([new window.ClipboardItem({"image/png":blob})]);
+          copiado=true;
+        }catch(err){/* portapapeles no disponible/permitido — igual se descarga */}
+      }
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement("a");
+      a.href=url;
+      a.download=`informe-disponibilidad-${periodoLabelInforme.replace(/\s+/g,"-")}.png`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      if(copiado) alert("✅ Imagen copiada al portapapeles (Ctrl+V / Cmd+V para pegarla donde quieras) y también descargada.");
+    }catch(err){
+      console.error("Exportar informe como imagen:",err);
+      alert("No se pudo generar la imagen. Probá de nuevo.");
+    }
+    setExportandoImagen(false);
+  };
 
   // Recalcula indisponibilidadHH/disponibilidadTecnica/utilizacion de una o más
   // Faenas a partir del arreglo de Detenciones actualizado, y guarda mantek_faena.
@@ -19154,6 +19198,10 @@ function DisponibilidadUtilizacion({user,data}){
                     ))}
                   </select>
                 )}
+                <button onClick={exportarInformeComoImagen} disabled={exportandoImagen}
+                  className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition flex items-center gap-1.5 disabled:opacity-50">
+                  <Camera size={14}/>{exportandoImagen?"Generando…":"Exportar como imagen"}
+                </button>
               </div>
             </div>
             <p className="text-xs text-gray-400 mb-1">
@@ -19165,6 +19213,23 @@ function DisponibilidadUtilizacion({user,data}){
             <p className="text-sm text-gray-700 leading-relaxed bg-blue-50 border border-blue-100 rounded-xl p-4 mt-2">
               {informeNarrativa}
             </p>
+          </div>
+
+          {/* Todo lo que sigue (combinado + por buque + presupuesto) es lo
+              que se captura al "Exportar como imagen" — los controles de
+              arriba (toggle, selects, botón) quedan afuera a propósito. */}
+          <div ref={informeRef} className="space-y-5">
+          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
+            <h2 className="font-bold text-gray-800 text-base mb-4 flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full inline-block flex-shrink-0 bg-gradient-to-r from-blue-600 to-amber-500"/>
+              Promedio Combinado (Esperanza + Dalka) — {periodoLabelInforme}
+            </h2>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <StatCard icon={Gauge} label={informeModo==="mensual"?"Solo Disp. mensual":"Solo Disp. trimestral"} value={informeKPIsCombinado.n>0?fmtPct(informeKPIsCombinado.dispProm):"—"} sub={`${informeKPIsCombinado.n} faena(s)`} color="blue"/>
+              <StatCard icon={TrendingUp} label={informeModo==="mensual"?"Utilización mensual":"Utilización trimestral"} value={informeKPIsCombinado.n>0?fmtPct(informeKPIsCombinado.utilProm):"—"} sub={`${informeKPIsCombinado.n} faena(s)`} color="cyan"/>
+              <StatCard icon={Clock} label="Horas indisponibilidad" value={fmtH(informeKPIsCombinado.hhIndisp)} sub={informeModo==="mensual"?"suma del mes":"suma del trimestre"} color="amber"/>
+              <StatCard icon={Truck} label="Tractos OP promedio" value={informeKPIsCombinado.n>0?informeKPIsCombinado.tractosOpProm.toFixed(1):"—"} sub="por faena" color="navy"/>
+            </div>
           </div>
 
           {[["Esperanza","ESPERANZA"],["Dalka","DALKA"]].map(([nombre,buque])=>{
@@ -19249,6 +19314,7 @@ function DisponibilidadUtilizacion({user,data}){
                 </div>
               </div>
             )}
+          </div>
           </div>
         </div>
       )}
