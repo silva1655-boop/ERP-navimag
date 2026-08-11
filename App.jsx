@@ -10658,11 +10658,11 @@ if(isMaritimo){
               {eq?.location&&<p className="flex items-center gap-1"><MapPin size={10}/>Ubicación: <span className="font-medium">{eq.location}</span></p>}
               <p>Última OT cerrada: <span className="font-mono">{lastOT?lastOT.code+" · "+lastOT.closedAt?.slice(0,10):"Sin historial"}</span></p>
               {lastOT?.horometroCierre!=null&&<p>Horómetro cierre: <span className="font-mono">{parseFloat(lastOT.horometroCierre).toLocaleString()} h</span></p>}
-              {isMaritimo?(
+              {planForm.tipoPlan!=="Calendario"&&(isMaritimo?(
                 eq?.avgHorasMensuales!=null&&<p>Promedio de uso: <span className="font-mono font-bold">{eq.avgHorasMensuales} h/mes</span></p>
               ):(
                 avgA>0&&<p>Avg entre mantenciones: <span className="font-mono font-bold">{avgA} h</span> {eq?.avgOperatingHoursLearned!=null?"(aprendido)":"(manual)"}</p>
-              )}
+              ))}
             </div>
             );
           })()}
