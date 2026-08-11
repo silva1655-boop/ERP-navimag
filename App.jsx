@@ -1743,7 +1743,8 @@ const ROLE_DEFAULT_PERMS={
 const getUserPerms=(u)=>{
   // csilva/jimunoz: acceso total a toda la app (Taller + Marítimo) — pisa
   // rol y permisos por completo, sin importar lo que devuelva mantek-auth.
-  // Mismo allowlist que ya usan Gastos y Disponibilidad.
+  // Mismo allowlist que ya usan Gastos y Disponibilidad. Los superusuarios
+  // siempre tienen acceso completo — nunca quedan en "readonly".
   if(canAccessGastos(u)){
     const full={};
     Object.keys(ROLE_DEFAULT_PERMS.admin).forEach(k=>{full[k]=true;});
@@ -1752,12 +1753,28 @@ const getUserPerms=(u)=>{
   const base=(u?.permisos&&Object.keys(u.permisos).length>0)
     ?{...(ROLE_DEFAULT_PERMS[u?.role]||{}),...u.permisos}
     :(ROLE_DEFAULT_PERMS[u?.role]||{});
+  // Cada permiso puede ser true (acceso completo), false (sin acceso) o
+  // "readonly" (override manual — ve el módulo pero no puede crear/editar/
+  // eliminar, ver canEditPerm más abajo). ROLE_DEFAULT_PERMS siempre trae
+  // booleanos — "readonly" solo existe como override manual en u.permisos,
+  // nunca como default de rol.
+  const resolved={};
+  Object.entries(base).forEach(([k,v])=>{resolved[k]=v==="readonly"?"readonly":!!v;});
   // gastos/disponibilidad/gruas_arrendadas no son permisos por rol — son
   // allowlists fijas de usuarios, así que siempre se resuelven desde
   // canAccessGastos/canAccessDisponibilidad/canAccessGruasExternas, nunca
   // desde ROLE_DEFAULT_PERMS ni desde los permisos editables por usuario.
-  return {...base, gastos:canAccessGastos(u), disponibilidad:canAccessDisponibilidad(u), gruas_arrendadas:canAccessGruasExternas(u)};
+  return {...resolved, gastos:canAccessGastos(u), disponibilidad:canAccessDisponibilidad(u), gruas_arrendadas:canAccessGruasExternas(u)};
 };
+// Un permiso da acceso VISIBLE al módulo si es true o "readonly" — usado
+// por Sidebar/Topbar para filtrar el nav (a diferencia de canEditPerm, que
+// exige acceso completo).
+const permVisible=(v)=>v===true||v==="readonly";
+// Verifica si el usuario puede EDITAR (crear/editar/eliminar) dentro de un
+// módulo, no solo verlo. Si el permiso es "readonly" retorna false —
+// componentes con botones de crear/editar/eliminar deben ocultarlos cuando
+// esto da false. Ej: const puedeEditar=canEditPerm(user,"workorders");
+const canEditPerm=(user,permKey)=>getUserPerms(user)[permKey]===true;
 
 const SGN_ROLE_PERMS={
   admin_sgn:  {sgn_dashboard:true, sgn_hallazgos:true, sgn_mis_hallazgos:true, sgn_reportes:true, sgn_usuarios:true, sgn_accidentes:true, sgn_actas:true},
@@ -2770,7 +2787,7 @@ return(
   {categoria&&(
     <div className="flex items-center gap-1 px-5 border-t border-gray-100 overflow-x-auto">
       {categoria.paginas
-        .filter(p=>getUserPerms(user)[p.key]===true)
+        .filter(p=>permVisible(getUserPerms(user)[p.key]))
         .map(p=>(
           <button key={p.key} onClick={()=>onNav(p.key)}
             className={`px-3.5 py-2.5 text-sm font-medium border-b-2 transition whitespace-nowrap
@@ -2820,7 +2837,7 @@ return(
 <nav className="flex-shrink-0 flex flex-col gap-1.5 p-3">
 {Object.entries(navCategorias).map(([catKey,cat])=>{
   const perms=extPerms||getUserPerms(user);
-  const paginasVisibles=cat.paginas.filter(p=>perms[p.key]===true);
+  const paginasVisibles=cat.paginas.filter(p=>permVisible(perms[p.key]));
   if(paginasVisibles.length===0) return null;
   const catActiva=getCategoriaActiva(active,navCategorias)===catKey;
   const Icon=cat.icon;
@@ -20938,13 +20955,13 @@ return(
   )}
 
   {showPerms&&(
-    <Modal title={`Permisos — ${showPerms.name}`} onClose={()=>{setShowPerms(null);setEditPerms({});}}>
+    <Modal title={`Permisos — ${showPerms.name}`} onClose={()=>{setShowPerms(null);setEditPerms({});}} wide>
       <div className="space-y-3">
         <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 text-xs text-purple-700 flex items-start gap-2">
           <Key size={13} className="flex-shrink-0 mt-0.5"/>
           <div>
             <p className="font-bold mb-0.5">Permisos base del rol: {ROLE_CFG[showPerms.role]?.label}</p>
-            <p>Los toggles en <strong>morado</strong> son overrides manuales que sobrescriben el rol. Deja en "Por rol" para usar los permisos por defecto.</p>
+            <p>Los que quedan en <strong>morado</strong> o <strong>azul</strong> son overrides manuales que sobrescriben el rol. Usá "↩ Rol" para volver al permiso por defecto. "Solo Ver" deja entrar al módulo pero oculta crear/editar/eliminar.</p>
           </div>
         </div>
 
@@ -20959,12 +20976,13 @@ return(
             return(
               <div key={key}
                 className={`flex items-center gap-3 p-3 rounded-xl border transition
-                  ${isOverrideEnabled?"border-purple-200 bg-purple-50":
+                  ${effectivePerm==="readonly"?"border-blue-200 bg-blue-50":
+                    isOverrideEnabled?"border-purple-200 bg-purple-50":
                     hasOverride&&!effectivePerm&&defaultPerm?"border-red-100 bg-red-50":
                     "border-gray-100 bg-gray-50"}`}>
                 <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0
-                  ${effectivePerm?"text-white":"text-gray-300 bg-gray-200"}`}
-                  style={effectivePerm?{background:isOverrideEnabled?"#7C3AED":NV.navy}:{}}>
+                  ${effectivePerm===false?"text-gray-300 bg-gray-200":"text-white"}`}
+                  style={effectivePerm===true?{background:isOverrideEnabled?"#7C3AED":NV.navy}:effectivePerm==="readonly"?{background:"#3B82F6"}:{}}>
                   <Icon size={14}/>
                 </div>
                 <div className="flex-1 min-w-0">
@@ -20972,14 +20990,52 @@ return(
                     {item.label}
                   </p>
                   <p className="text-xs text-gray-400">
-                    {isOverrideEnabled?"✏️ Override manual — ":
-                     hasOverride&&!effectivePerm&&defaultPerm?"🚫 Bloqueado manualmente — ":
-                     hasOverride?"✏️ Override manual — ":
-                     "Por rol — "}
-                    {defaultPerm?"habilitado por defecto":"deshabilitado por defecto"}
+                    {effectivePerm==="readonly"?"👁 Solo lectura — puede ver pero no editar":(<>
+                      {isOverrideEnabled?"✏️ Override manual — ":
+                       hasOverride&&!effectivePerm&&defaultPerm?"🚫 Bloqueado manualmente — ":
+                       hasOverride?"✏️ Override manual — ":
+                       "Por rol — "}
+                      {defaultPerm?"habilitado por defecto":"deshabilitado por defecto"}
+                    </>)}
                   </p>
                 </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
+                <div className="flex gap-1 flex-shrink-0">
+                  <button
+                    onClick={()=>{
+                      if(defaultPerm===true){
+                        const n={...editPerms};delete n[key];setEditPerms(n);
+                      } else {
+                        setEditPerms(p=>({...p,[key]:true}));
+                      }
+                    }}
+                    className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition whitespace-nowrap
+                      ${effectivePerm===true
+                        ?"bg-emerald-100 text-emerald-700 border-emerald-400"
+                        :"bg-white text-gray-400 border-gray-200 hover:border-emerald-300 hover:text-emerald-600"}`}>
+                    ✅ Activo
+                  </button>
+                  <button
+                    onClick={()=>setEditPerms(p=>({...p,[key]:"readonly"}))}
+                    className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition whitespace-nowrap
+                      ${effectivePerm==="readonly"
+                        ?"bg-blue-100 text-blue-700 border-blue-400"
+                        :"bg-white text-gray-400 border-gray-200 hover:border-blue-300 hover:text-blue-600"}`}>
+                    👁 Solo Ver
+                  </button>
+                  <button
+                    onClick={()=>{
+                      if(defaultPerm===false){
+                        const n={...editPerms};delete n[key];setEditPerms(n);
+                      } else {
+                        setEditPerms(p=>({...p,[key]:false}));
+                      }
+                    }}
+                    className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition whitespace-nowrap
+                      ${effectivePerm===false
+                        ?"bg-red-100 text-red-700 border-red-400"
+                        :"bg-white text-gray-400 border-gray-200 hover:border-red-300 hover:text-red-600"}`}>
+                    ❌ Sin acceso
+                  </button>
                   {hasOverride&&(
                     <button
                       onClick={()=>{
@@ -20987,26 +21043,10 @@ return(
                         delete n[key];
                         setEditPerms(n);
                       }}
-                      className="text-xs text-gray-400 hover:text-gray-600 px-2 py-1 rounded border border-gray-200 bg-white transition">
-                      Por rol
+                      className="px-2 py-1 rounded-lg text-[10px] text-gray-400 hover:text-gray-600 border border-gray-200 bg-white transition whitespace-nowrap">
+                      ↩ Rol
                     </button>
                   )}
-                  <button
-                    onClick={()=>{
-                      const newVal=!effectivePerm;
-                      if(newVal===defaultPerm){
-                        const n={...editPerms};delete n[key];setEditPerms(n);
-                      } else {
-                        setEditPerms(p=>({...p,[key]:newVal}));
-                      }
-                    }}
-                    className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0
-                      ${effectivePerm
-                        ?isOverrideEnabled?"bg-purple-500":"bg-emerald-500"
-                        :hasOverride&&defaultPerm?"bg-red-400":"bg-gray-300"}`}>
-                    <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform
-                      ${effectivePerm?"translate-x-5":"translate-x-0.5"}`}/>
-                  </button>
                 </div>
               </div>
             );
@@ -21018,7 +21058,7 @@ return(
             <span className="flex-shrink-0">⚠️</span>
             <span>
               <strong>{Object.keys(editPerms).length} override{Object.keys(editPerms).length!==1?"s":""} activo{Object.keys(editPerms).length!==1?"s":""}</strong> —
-              {Object.entries(editPerms).map(([k,v])=>`${NAV_ITEMS[k]?.label||k}: ${v?"✅":"❌"}`).join(", ")}
+              {Object.entries(editPerms).map(([k,v])=>`${NAV_ITEMS[k]?.label||k}: ${v===true?"✅ Activo":v==="readonly"?"👁 Solo ver":"❌ Sin acceso"}`).join(", ")}
             </span>
           </div>
         )}
