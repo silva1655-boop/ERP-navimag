@@ -5418,7 +5418,10 @@ if(rep.status==="completada"&&sel.planId){
   setData(d=>({...d,plans:updP}));
   saveData("plans",updP);
 }
-if(rep.status==="completada"){
+// Marítimo usa un único promedio manual en horas mensuales (avgHorasMensuales,
+// ver Equipment) — no recalcula "aprendido" al cerrar OT. Taller mantiene el
+// comportamiento original.
+if(rep.status==="completada"&&activeModule!=="maritimo"){
   const closingH_l=parseFloat(rep.horometro)||equip.find(e=>e.id===sel.equipId)?.hours||0;
   const wosForCalc=wos.map(w=>w.id===sel.id?{...w,horometroCierre:closingH_l,closedAt:new Date().toISOString(),status:"completada"}:w);
   const learned=calcAvgLearned(sel.equipId,wosForCalc,data.hourmeterReadings||[]);
@@ -7644,7 +7647,7 @@ const generateNextEquipmentCode=equipList=>{
 const validateUniqueEquipmentCode=(equipList,code,editId)=>!equipList.some(e=>e.code===code&&e.id!==editId);
 
 // ─── EQUIPMENT ───────────────────────────────────────────────────────────────
-const EMPTY_EQ={code:"",name:"",serialNumber:"",type:"",location:"",criticality:"B",status:"operativo",hours:"",lastMaint:"",nextMaint:"",fechaVencimientoExtintor:"",avgOperatingHours:"",avgOperatingHoursLearned:null,avgLearnedSamples:0,avgLearnedAt:"",avgPreference:"learned"};
+const EMPTY_EQ={code:"",name:"",serialNumber:"",type:"",location:"",criticality:"B",status:"operativo",hours:"",lastMaint:"",nextMaint:"",fechaVencimientoExtintor:"",avgHorasMensuales:"",avgOperatingHours:"",avgOperatingHoursLearned:null,avgLearnedSamples:0,avgLearnedAt:"",avgPreference:"learned"};
 const getAlertasExtintor=equip=>equip
   .filter(e=>e.fechaVencimientoExtintor)
   .map(e=>({eq:e,diasRestantes:Math.ceil((new Date(e.fechaVencimientoExtintor)-new Date())/(1000*60*60*24))}))
@@ -7743,8 +7746,8 @@ function parseEquipMaritimoXLSXRows(rows, existingEquip){
         id:uid(),code,name,modelo,tipo,ubicacion,status,hours,
         lastHourmeterUpdate:fechaHoro,buque,estrategia,
         serialNumber:"",criticality:"medio",createdAt:now,
-        avgOperatingHours:null,avgOperatingHoursLearned:null,
-        avgLearnedSamples:0,avgLearnedAt:"",avgPreference:"learned",
+        avgHorasMensuales:null,avgOperatingHours:null,avgOperatingHoursLearned:null,
+        avgLearnedSamples:0,avgLearnedAt:"",avgPreference:"manual",
       });
     }
   });
@@ -7890,11 +7893,19 @@ const saveEquip=async()=>{
   if(isMar){
     if(!validateUniqueEquipmentCode(equip,form.code,editTarget?.id)){alert(`El código ${form.code} ya existe.`);return;}
     const now=new Date().toISOString();
-    const parsedAvg=isSup&&form.avgOperatingHours!==""?parseFloat(form.avgOperatingHours)||null:null;
-    const avgPref=form.avgPreference||"learned";
+    // Marítimo: un solo promedio, manual, en horas MENSUALES (pedido
+    // explícito — antes había un toggle "aprendido/manual" en horas por
+    // día que confundía). Se guarda tal cual en avgHorasMensuales para
+    // mostrarlo/editarlo, y además se deriva a horas/día en
+    // avgOperatingHours (con avgPreference forzado a "manual") para poder
+    // seguir usando getAvgActivo/estimarFechaDesdeHorometro sin tocarlas —
+    // esas dos siguen trabajando en horas/día para toda la app, Taller
+    // incluido, que no cambia.
+    const avgMensual=isSup&&form.avgHorasMensuales!==""?parseFloat(form.avgHorasMensuales)||null:null;
+    const avgDiarioDerivado=avgMensual!=null?Math.round((avgMensual/30.44)*10)/10:null;
     const updated=editTarget
-      ?equip.map(e=>e.id===editTarget.id?{...e,name:form.name,serialNumber:form.serialNumber||"",criticality:normalizeCriticality(form.criticality),status:form.status,...(isSup?{avgOperatingHours:parsedAvg,avgPreference:avgPref}:{})}:e)
-      :[...equip,{id:uid(),code:form.code,name:form.name,serialNumber:form.serialNumber||"",criticality:normalizeCriticality(form.criticality||"alto"),status:form.status||"operativo",hours:parseInt(form.hours)||0,lastHourmeterUpdate:now,createdAt:now,avgOperatingHours:isSup?parsedAvg:null,avgOperatingHoursLearned:null,avgLearnedSamples:0,avgLearnedAt:"",avgPreference:"learned"}];
+      ?equip.map(e=>e.id===editTarget.id?{...e,name:form.name,serialNumber:form.serialNumber||"",criticality:normalizeCriticality(form.criticality),status:form.status,...(isSup?{avgHorasMensuales:avgMensual,avgOperatingHours:avgDiarioDerivado,avgPreference:"manual"}:{})}:e)
+      :[...equip,{id:uid(),code:form.code,name:form.name,serialNumber:form.serialNumber||"",criticality:normalizeCriticality(form.criticality||"alto"),status:form.status||"operativo",hours:parseInt(form.hours)||0,lastHourmeterUpdate:now,createdAt:now,avgHorasMensuales:isSup?avgMensual:null,avgOperatingHours:isSup?avgDiarioDerivado:null,avgOperatingHoursLearned:null,avgLearnedSamples:0,avgLearnedAt:"",avgPreference:"manual"}];
     setData(d=>({...d,equip:updated}));
     try{await saveData("equipment",updated);setShowForm(false);}catch(e){alert("⚠️ Error al guardar el equipo.");}
     return;
@@ -8187,7 +8198,7 @@ return(
       <td className="px-4 py-2.5"><Badge s={e.status}/></td>
       <td className="px-4 py-2.5">
         <span className="text-gray-700 font-mono text-sm font-semibold">{(e.hours||0).toLocaleString()}<span className="text-gray-400 text-xs ml-0.5">h</span></span>
-        {(()=>{const av=(e.avgPreference||"learned")==="learned"&&e.avgOperatingHoursLearned!=null?e.avgOperatingHoursLearned:e.avgOperatingHours;return av!=null?<p className="text-gray-400 text-xs mt-0.5">prom. {av}h {e.avgOperatingHoursLearned!=null?"(aprendido)":"(manual)"}</p>:null;})()}
+        {e.avgHorasMensuales!=null&&<p className="text-gray-400 text-xs mt-0.5">prom. {e.avgHorasMensuales}h/mes</p>}
       </td>
       <td className="px-4 py-2.5 hidden lg:table-cell text-xs text-gray-400">
         {e.lastHourmeterUpdate?e.lastHourmeterUpdate.slice(0,10):"—"}
@@ -8859,31 +8870,15 @@ className="w-24 border border-blue-400 rounded-lg px-2 py-1 text-gray-900 text-x
   </div>
   )}
   <div>
-    <label className="text-gray-500 text-xs font-medium mb-1 block">PROMEDIO HORAS ENTRE MANTENCIONES</label>
-    {editTarget?.avgOperatingHoursLearned!=null&&(
-      <div className="mb-2 px-3 py-2 rounded-lg bg-blue-50 border border-blue-200 text-blue-700 text-xs flex items-center gap-2">
-        <span className="font-semibold">Aprendido:</span>
-        <span className="font-mono font-bold">{editTarget.avgOperatingHoursLearned} h</span>
-        <span className="text-blue-400">({editTarget.avgLearnedSamples||0} muestras)</span>
+    <label className="text-gray-500 text-xs font-medium mb-1 block">PROMEDIO DE HORAS MENSUALES</label>
+    {isSup?(
+      <div className="space-y-1">
+        <input type="number" step="1" min="0" value={form.avgHorasMensuales||""} onChange={e=>setForm(f=>({...f,avgHorasMensuales:e.target.value}))} className={iCls} placeholder="ej: 500"/>
+        <p className="text-gray-400 text-xs">Ingreso manual — se usa para proyectar la fecha aproximada del próximo PM por horómetro en los planes de este equipo.</p>
       </div>
+    ):(
+      editTarget?.avgHorasMensuales!=null&&<div className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-gray-500 text-sm font-mono">{editTarget.avgHorasMensuales} h/mes</div>
     )}
-    {isSup&&(
-      <div className="space-y-2">
-        <div className="flex gap-2">
-          {["learned","manual"].map(opt=>(
-            <button key={opt} onClick={()=>setForm(f=>({...f,avgPreference:opt}))}
-              className={`flex-1 py-1 rounded text-xs font-medium border transition-colors ${(form.avgPreference||"learned")===opt?"bg-blue-600 text-white border-blue-600":"bg-white text-gray-500 border-gray-300 hover:border-blue-300"}`}>
-              {opt==="learned"?"Usar aprendido":"Usar manual"}
-            </button>
-          ))}
-        </div>
-        {(form.avgPreference||"learned")==="manual"&&(
-          <input type="number" step="1" min="0" value={form.avgOperatingHours||""} onChange={e=>setForm(f=>({...f,avgOperatingHours:e.target.value}))} className={iCls} placeholder="ej: 250"/>
-        )}
-        <p className="text-gray-400 text-xs">"Aprendido" se calcula automáticamente del historial de OTs cerradas</p>
-      </div>
-    )}
-    {!isSup&&editTarget&&(()=>{const effAvg=((editTarget.avgPreference||"learned")==="learned"&&editTarget.avgOperatingHoursLearned!=null)?editTarget.avgOperatingHoursLearned:editTarget.avgOperatingHours;return effAvg!=null?<div className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-gray-500 text-sm font-mono">{effAvg} h</div>:null;})()}
   </div>
 </div>
 ):(
@@ -9959,6 +9954,10 @@ if(isMaritimo){
                       )
                     )}
                     <p className="text-gray-400 text-[10px]">{esCalA?(daysLeft!==null?(daysLeft>=0?"restantes":"vencida"):"—"):(remaining!==null?(remaining>=0?"restantes":"vencida"):"—")}</p>
+                    {!esCalA&&nextDue>0&&(()=>{
+                      const proy=proyeccionPMHorometro(currentH,nextDue,eqA);
+                      return proy&&!proy.vencido?<p className="text-blue-500 text-[10px] font-semibold mt-0.5">≈ {fmt(proy.fecha)}</p>:null;
+                    })()}
                   </div>
                 </div>
                 {esCalA?(
@@ -10612,6 +10611,17 @@ if(isMaritimo){
             ?`${(parseFloat(planForm.lastHorometro)+(parseFloat(planForm.frequency)||0)).toLocaleString()} h`
             :"—"}
       </p>
+      {planForm.tipoPlan!=="Calendario"&&planForm.equipId&&planForm.lastHorometro&&planForm.frequency&&(()=>{
+        const eq=equip.find(e=>e.id===planForm.equipId);
+        const target=parseFloat(planForm.lastHorometro)+(parseFloat(planForm.frequency)||0);
+        const proy=proyeccionPMHorometro(eq?.hours||0,target,eq);
+        if(!proy) return isMaritimo?<p className="text-amber-600 text-xs mt-0.5">Cargá el promedio de horas mensuales del equipo para ver la fecha aproximada.</p>:null;
+        return(
+          <p className="text-blue-600 text-xs font-semibold mt-0.5">
+            {proy.vencido?"⚠️ Ya alcanzó el horómetro objetivo":`≈ ${proy.dias} día(s) (~${proy.semanas} semana(s)) — ${fmt(proy.fecha)}`}
+          </p>
+        );
+      })()}
     </div>
   </div>
   <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -10648,7 +10658,11 @@ if(isMaritimo){
               {eq?.location&&<p className="flex items-center gap-1"><MapPin size={10}/>Ubicación: <span className="font-medium">{eq.location}</span></p>}
               <p>Última OT cerrada: <span className="font-mono">{lastOT?lastOT.code+" · "+lastOT.closedAt?.slice(0,10):"Sin historial"}</span></p>
               {lastOT?.horometroCierre!=null&&<p>Horómetro cierre: <span className="font-mono">{parseFloat(lastOT.horometroCierre).toLocaleString()} h</span></p>}
-              {avgA>0&&<p>Avg entre mantenciones: <span className="font-mono font-bold">{avgA} h</span> {eq?.avgOperatingHoursLearned!=null?"(aprendido)":"(manual)"}</p>}
+              {isMaritimo?(
+                eq?.avgHorasMensuales!=null&&<p>Promedio de uso: <span className="font-mono font-bold">{eq.avgHorasMensuales} h/mes</span></p>
+              ):(
+                avgA>0&&<p>Avg entre mantenciones: <span className="font-mono font-bold">{avgA} h</span> {eq?.avgOperatingHoursLearned!=null?"(aprendido)":"(manual)"}</p>
+              )}
             </div>
             );
           })()}
@@ -24901,6 +24915,26 @@ function estimarFechaDesdeHorometro(hActual,hObjetivo,eq){
   const fecha=new Date();
   fecha.setDate(fecha.getDate()+diasFaltantes);
   return fecha.toISOString().slice(0,10);
+}
+
+// Igual que estimarFechaDesdeHorometro pero además devuelve el desglose en
+// días/semanas (pedido explícito para los planes por horómetro de
+// Marítimo, que ahora cargan un único promedio manual en horas mensuales
+// — ver avgHorasMensuales en Equipment, ya convertido a horas/día en
+// avgOperatingHours al guardar el equipo). No duplica el cálculo de
+// fecha, solo lo reexpresa para mostrarlo en el formulario de planes.
+function proyeccionPMHorometro(hActual,hObjetivo,eq){
+  const avg=(eq?.avgPreference==="manual"
+    ?parseFloat(eq?.avgOperatingHours)||null
+    :eq?.avgOperatingHoursLearned||parseFloat(eq?.avgOperatingHours)||null
+  );
+  if(!avg||avg<=0) return null;
+  const horasFaltantes=hObjetivo-hActual;
+  if(horasFaltantes<=0) return{vencido:true,horasFaltantes,dias:0,semanas:0,fecha:new Date().toISOString().slice(0,10)};
+  const dias=Math.ceil(horasFaltantes/avg);
+  const fecha=new Date();
+  fecha.setDate(fecha.getDate()+dias);
+  return{vencido:false,horasFaltantes,dias,semanas:Math.round(dias/7*10)/10,fecha:fecha.toISOString().slice(0,10)};
 }
 
 // ─── AUTO PM OT GENERATION ───────────────────────────────────────────────────
