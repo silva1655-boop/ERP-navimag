@@ -14818,27 +14818,33 @@ const GASTOS_LINE_SERIES=[
 function GastosLineChart({series,height=240,width=700}){
   const [hoverIdx,setHoverIdx]=useState(null);
   const [visibles,setVisibles]=useState({real:false,filtrado:true,presupuesto:true,proyectado:true});
+  const [zoomRange,setZoomRange]=useState(null);
+  const [brush,setBrush]=useState(null);
   if(!series||series.length<2) return(
     <div className="flex items-center justify-center h-32 text-gray-300 text-xs">Sin datos suficientes</div>
   );
-  const hayPresupuesto=series.some(s=>s.presupuesto>0);
-  const hayProyeccion=series.some(s=>s.proyectado!=null);
+  const startIdx=zoomRange?zoomRange[0]:0;
+  const endIdx=zoomRange?zoomRange[1]:series.length-1;
+  const seriesVis=series.slice(startIdx,endIdx+1);
+  const hayPresupuesto=seriesVis.some(s=>s.presupuesto>0);
+  const hayProyeccion=seriesVis.some(s=>s.proyectado!=null);
   const activas=GASTOS_LINE_SERIES.filter(s=>visibles[s.key]&&(s.key!=="presupuesto"||hayPresupuesto)&&(s.key!=="proyectado"||hayProyeccion));
-  const max=Math.max(...series.flatMap(s=>GASTOS_LINE_SERIES.map(cfg=>visibles[cfg.key]?(s[cfg.key]||0):0)),1);
+  const max=Math.max(...seriesVis.flatMap(s=>GASTOS_LINE_SERIES.map(cfg=>visibles[cfg.key]?(s[cfg.key]||0):0)),1);
   const W=width,H=height;
   const pad={t:28,b:26,l:56,r:16};
   const cW=W-pad.l-pad.r,cH=H-pad.t-pad.b;
-  const xAt=i=>pad.l+(i/(series.length-1||1))*cW;
+  const xAt=i=>pad.l+(i/(seriesVis.length-1||1))*cW;
   const yAt=v=>pad.t+cH-(Math.max(v,0)/max)*cH;
+  const bandW=cW/(seriesVis.length||1);
   // Cada serie puede tener huecos (null) — se saltan al armar el path en vez
   // de graficarlos como 0, para que "proyectado" no arranque desde el piso.
   const pathFor=key=>{
-    const pts=series.map((s,i)=>({i,v:s[key]})).filter(p=>p.v!=null);
+    const pts=seriesVis.map((s,i)=>({i,v:s[key]})).filter(p=>p.v!=null);
     if(pts.length<2) return "";
     return pts.map((p,idx)=>`${idx===0?"M":"L"}${xAt(p.i).toFixed(1)},${yAt(p.v).toFixed(1)}`).join(" ");
   };
   const serieBase=visibles.filtrado?"filtrado":visibles.real?"real":null;
-  const areaD=serieBase?pathFor(serieBase)+` L${xAt(series.length-1).toFixed(1)},${(pad.t+cH).toFixed(1)} L${xAt(0).toFixed(1)},${(pad.t+cH).toFixed(1)} Z`:null;
+  const areaD=serieBase?pathFor(serieBase)+` L${xAt(seriesVis.length-1).toFixed(1)},${(pad.t+cH).toFixed(1)} L${xAt(0).toFixed(1)},${(pad.t+cH).toFixed(1)} Z`:null;
 
   // Grilla horizontal: 4 líneas a valores redondos entre 0 y max
   const gridlines=Array.from({length:4},(_,i)=>{
@@ -14847,20 +14853,19 @@ function GastosLineChart({series,height=240,width=700}){
   });
 
   const ultimoPunto=key=>{
-    for(let i=series.length-1;i>=0;i--) if(series[i][key]!=null) return series[i];
+    for(let i=seriesVis.length-1;i>=0;i--) if(seriesVis[i][key]!=null) return seriesVis[i];
     return null;
   };
 
-  const handleHover=(e)=>{
+  const idxFromClientX=(e)=>{
     const rect=e.currentTarget.getBoundingClientRect();
-    // El rect interactivo cubre de pad.l a pad.l+cW en unidades del viewBox.
     const relX=pad.l+(e.clientX-rect.left)/rect.width*cW;
     let closest=0,minDist=Infinity;
-    series.forEach((s,i)=>{
+    seriesVis.forEach((s,i)=>{
       const d=Math.abs(xAt(i)-relX);
       if(d<minDist){minDist=d;closest=i;}
     });
-    setHoverIdx(closest);
+    return{closest,relX:relX-pad.l};
   };
 
   return(
@@ -14888,7 +14893,7 @@ function GastosLineChart({series,height=240,width=700}){
             strokeDasharray={cfg.dash||undefined} strokeLinecap="round" strokeLinejoin="round"/>
         ))}
 
-        {activas.map(cfg=>series.map((s,i)=>{
+        {activas.map(cfg=>seriesVis.map((s,i)=>{
           if(s[cfg.key]==null) return null;
           return(
             <circle key={`${cfg.key}-${i}`} cx={xAt(i)} cy={yAt(s[cfg.key])} r={cfg.key==="proyectado"?2.5:3}
@@ -14903,19 +14908,36 @@ function GastosLineChart({series,height=240,width=700}){
           const p=ultimoPunto(cfg.key);
           if(!p) return null;
           return(
-            <text key={cfg.key} x={xAt(series.indexOf(p))} y={yAt(p[cfg.key])-9} textAnchor="middle" fontSize="9" fontWeight="700" fill={cfg.color}>
+            <text key={cfg.key} x={xAt(seriesVis.indexOf(p))} y={yAt(p[cfg.key])-9} textAnchor="middle" fontSize="9" fontWeight="700" fill={cfg.color}>
               {fmtCompactCLP(p[cfg.key])}
             </text>
           );
         })}
 
-        {series.map((s,i)=>(<text key={i} x={xAt(i)} y={H-6} textAnchor="middle" fontSize="9" fill={s.proyectado!=null&&s.filtrado==null?"#c4cad3":"#9CA3AF"}>{s.mes.slice(5)}</text>))}
+        {seriesVis.map((s,i)=>(<text key={i} x={xAt(i)} y={H-6} textAnchor="middle" fontSize="9" fill={s.proyectado!=null&&s.filtrado==null?"#c4cad3":"#9CA3AF"}>{s.mes.slice(5)}</text>))}
 
-        {/* Overlay interactivo — crosshair + tooltip al pasar el mouse */}
+        {/* Overlay interactivo — crosshair + tooltip al pasar el mouse, arrastrar hace zoom */}
         <rect x={pad.l} y={pad.t} width={cW} height={cH} fill="transparent"
-          onMouseMove={handleHover} onMouseLeave={()=>setHoverIdx(null)} style={{cursor:"crosshair"}}/>
+          onMouseDown={e=>{const{relX}=idxFromClientX(e);setBrush({x0:relX,x1:relX});}}
+          onMouseMove={e=>{
+            const{closest,relX}=idxFromClientX(e);
+            setHoverIdx(closest);
+            if(brush) setBrush(b=>b?{...b,x1:relX}:null);
+          }}
+          onMouseUp={()=>{
+            if(brush&&Math.abs(brush.x1-brush.x0)>bandW*0.6){
+              const i0=Math.max(0,Math.min(seriesVis.length-1,Math.round(Math.min(brush.x0,brush.x1)/bandW)));
+              const i1=Math.max(0,Math.min(seriesVis.length-1,Math.round(Math.max(brush.x0,brush.x1)/bandW)));
+              if(i1>i0) setZoomRange([startIdx+i0,startIdx+i1]);
+            }
+            setBrush(null);
+          }}
+          onMouseLeave={()=>{setHoverIdx(null);setBrush(null);}} style={{cursor:"crosshair"}}/>
+        {brush&&Math.abs(brush.x1-brush.x0)>2&&(
+          <rect x={pad.l+Math.min(brush.x0,brush.x1)} y={pad.t} width={Math.abs(brush.x1-brush.x0)} height={cH} fill="#3b82f6" opacity="0.12" style={{pointerEvents:"none"}}/>
+        )}
         {hoverIdx!=null&&(()=>{
-          const s=series[hoverIdx];
+          const s=seriesVis[hoverIdx];
           const boxW=130,boxH=16+activas.length*12;
           let boxX=xAt(hoverIdx)+10;
           if(boxX+boxW>W-4) boxX=xAt(hoverIdx)-boxW-10;
@@ -14944,6 +14966,9 @@ function GastosLineChart({series,height=240,width=700}){
             {cfg.label}
           </button>
         ))}
+        {zoomRange&&(
+          <button type="button" onClick={()=>setZoomRange(null)} className="text-xs text-blue-600 hover:underline font-semibold">↺ Restablecer zoom</button>
+        )}
       </div>
     </div>
   );
@@ -15059,17 +15084,28 @@ function DonutChart({items,size=132,strokeWidth=20,centerLabel="Total",centerVal
 // eje propio a la derecha (0-120%, independiente de la escala de $ de las
 // barras) con una línea de referencia marcada en 100% ("gastado = presupuestado"),
 // para que no se confunda con la escala de las barras a la izquierda.
-function GastoMensualChart({serie,onClickMes,mesSeleccionado,height=260,width=760}){
+// comparacion (opcional): mismo shape que `serie` ({mes,real,presupuesto}),
+// alineado 1:1 índice a índice — se dibuja como línea punteada de "Real año
+// anterior" superpuesta, para el toggle "Comparar con año anterior".
+// Zoom: arrastrar sobre el gráfico acota a ese rango de meses (recalcula
+// escalas sobre el rango visible); "↺ Restablecer zoom" lo saca.
+function GastoMensualChart({serie,comparacion,onClickMes,mesSeleccionado,height=260,width=760}){
   const [hoverIdx,setHoverIdx]=useState(null);
+  const [zoomRange,setZoomRange]=useState(null);
+  const [brush,setBrush]=useState(null);
   if(!serie||serie.length===0) return(
     <div className="flex items-center justify-center h-32 text-gray-300 text-xs">Sin meses en el rango seleccionado.</div>
   );
   const W=width,H=height;
   const pad={t:24,b:26,l:52,r:46};
   const cW=W-pad.l-pad.r,cH=H-pad.t-pad.b;
-  const n=serie.length;
+  const startIdx=zoomRange?zoomRange[0]:0;
+  const endIdx=zoomRange?zoomRange[1]:serie.length-1;
+  const serieVis=serie.slice(startIdx,endIdx+1);
+  const comparacionVis=comparacion?comparacion.slice(startIdx,endIdx+1):null;
+  const n=serieVis.length;
   const bandW=cW/n;
-  const maxVal=Math.max(...serie.flatMap(m=>[m.real,m.presupuesto]),1);
+  const maxVal=Math.max(...serieVis.flatMap(m=>[m.real,m.presupuesto]),...(comparacionVis?comparacionVis.map(m=>m.real):[]),1);
   const yAt=v=>pad.t+cH-(Math.max(v,0)/maxVal)*cH;
   const xCentro=i=>pad.l+bandW*i+bandW/2;
   const PCT_MAX=120;
@@ -15081,8 +15117,10 @@ function GastoMensualChart({serie,onClickMes,mesSeleccionado,height=260,width=76
   // (un segmento queda rojo si cualquiera de sus dos puntos se pasó) para
   // que el quiebre se note apenas cruza la línea de 100%, no solo en el punto.
   const colorPct=pct=>pct>100?"#dc2626":"#16a34a";
-  const puntosPct=serie.map((m,i)=>({...m,idx:i})).filter(m=>m.pct!=null);
+  const puntosPct=serieVis.map((m,i)=>({...m,idx:i})).filter(m=>m.pct!=null);
+  const puntosCmp=comparacionVis?comparacionVis.map((m,i)=>({...m,idx:i})).filter(m=>m.real!=null):[];
   return(
+    <div>
     <svg width="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{display:"block",height:`${H}px`}}>
       {gridlines.map((g,i)=>(
         <g key={i}>
@@ -15095,7 +15133,7 @@ function GastoMensualChart({serie,onClickMes,mesSeleccionado,height=260,width=76
         <text key={t.v} x={W-pad.r+6} y={t.y+3} fontSize="9" fill={t.v===100?"#16a34a":"#B0B7C0"} fontWeight={t.v===100?"700":"400"}>{t.v}%</text>
       ))}
       <line x1={pad.l} x2={W-pad.r} y1={yPct(100)} y2={yPct(100)} stroke="#16a34a" strokeWidth="1" strokeDasharray="3,3" opacity="0.4"/>
-      {serie.map((m,i)=>{
+      {serieVis.map((m,i)=>{
         const barW=Math.min(bandW*0.22,22);
         const xReal=xCentro(i)-barW-2;
         const xPres=xCentro(i)+2;
@@ -15108,6 +15146,18 @@ function GastoMensualChart({serie,onClickMes,mesSeleccionado,height=260,width=76
           </g>
         );
       })}
+      {puntosCmp.length>1&&puntosCmp.slice(1).map((m,i)=>{
+        const prev=puntosCmp[i];
+        return(
+          <line key={"cmp-"+i} x1={xCentro(prev.idx)} y1={yAt(prev.real)} x2={xCentro(m.idx)} y2={yAt(m.real)}
+            stroke="#9CA3AF" strokeWidth="1.5" strokeDasharray="4,3" opacity="0.7"/>
+        );
+      })}
+      {puntosCmp.map((m,i)=>(
+        <circle key={"cmp-pt-"+i} cx={xCentro(m.idx)} cy={yAt(m.real)} r="2.5" fill="white" stroke="#9CA3AF" strokeWidth="1.5" opacity="0.85">
+          <title>Real {m.mes} (año anterior): {fmtCompactCLP(m.real)}</title>
+        </circle>
+      ))}
       {puntosPct.slice(1).map((m,i)=>{
         const prev=puntosPct[i];
         return(
@@ -15125,25 +15175,43 @@ function GastoMensualChart({serie,onClickMes,mesSeleccionado,height=260,width=76
       ))}
 
       {/* Overlay interactivo — hover resalta el mes y muestra un tooltip con
-          Real/Presupuesto/% Ejecución, independiente del click (que selecciona
-          el mes para el detalle de transacciones de abajo). */}
+          Real/Presupuesto/% Ejecución (click selecciona el mes para el
+          detalle de transacciones de abajo); arrastrar hace zoom. */}
       <rect x={pad.l} y={pad.t} width={cW} height={cH} fill="transparent"
+        onMouseDown={e=>{
+          const rect=e.currentTarget.getBoundingClientRect();
+          const relX=(e.clientX-rect.left)/rect.width*cW;
+          setBrush({x0:relX,x1:relX});
+        }}
         onMouseMove={e=>{
           const rect=e.currentTarget.getBoundingClientRect();
           const relX=(e.clientX-rect.left)/rect.width*cW;
           setHoverIdx(Math.max(0,Math.min(n-1,Math.floor(relX/bandW))));
+          if(brush) setBrush(b=>b?{...b,x1:relX}:null);
         }}
-        onMouseLeave={()=>setHoverIdx(null)}
-        onClick={()=>onClickMes&&hoverIdx!=null&&onClickMes(serie[hoverIdx].mes)}
-        style={{cursor:onClickMes?"pointer":"default"}}/>
+        onMouseLeave={()=>{setHoverIdx(null);setBrush(null);}}
+        onMouseUp={()=>{
+          if(brush&&Math.abs(brush.x1-brush.x0)>bandW*0.6){
+            const i0=Math.max(0,Math.min(n-1,Math.floor(Math.min(brush.x0,brush.x1)/bandW)));
+            const i1=Math.max(0,Math.min(n-1,Math.floor(Math.max(brush.x0,brush.x1)/bandW)));
+            if(i1>i0){setZoomRange([startIdx+i0,startIdx+i1]);setBrush(null);return;}
+          }
+          setBrush(null);
+          if(onClickMes&&hoverIdx!=null) onClickMes(serieVis[hoverIdx].mes);
+        }}
+        style={{cursor:onClickMes?"pointer":"crosshair"}}/>
+      {brush&&Math.abs(brush.x1-brush.x0)>2&&(
+        <rect x={pad.l+Math.min(brush.x0,brush.x1)} y={pad.t} width={Math.abs(brush.x1-brush.x0)} height={cH} fill="#3b82f6" opacity="0.12" style={{pointerEvents:"none"}}/>
+      )}
       {hoverIdx!=null&&(()=>{
-        const m=serie[hoverIdx];
+        const m=serieVis[hoverIdx];
         if(mesSeleccionado===m.mes) return null; // ya tiene su propio resaltado de fondo
         return <rect x={pad.l+bandW*hoverIdx} y={pad.t} width={bandW} height={cH} fill="#F3F4F6" style={{pointerEvents:"none"}}/>;
       })()}
       {hoverIdx!=null&&(()=>{
-        const m=serie[hoverIdx];
-        const boxW=142,boxH=m.pct!=null?58:44;
+        const m=serieVis[hoverIdx];
+        const cmp=comparacionVis&&comparacionVis[hoverIdx];
+        const boxW=150,boxH=44+(m.pct!=null?12:0)+(cmp&&cmp.real!=null?12:0);
         let boxX=xCentro(hoverIdx)-boxW/2;
         boxX=Math.max(pad.l,Math.min(boxX,W-pad.r-boxW));
         const boxY=pad.t+4;
@@ -15155,10 +15223,17 @@ function GastoMensualChart({serie,onClickMes,mesSeleccionado,height=260,width=76
             <text x={boxX+8} y={boxY+26} fontSize="9.5" fill="#2563eb">Real: {fmtCompactCLP(m.real)}</text>
             <text x={boxX+8} y={boxY+38} fontSize="9.5" fill="#6B7280">Presupuesto: {fmtCompactCLP(m.presupuesto)}</text>
             {m.pct!=null&&<text x={boxX+8} y={boxY+50} fontSize="9.5" fontWeight="700" fill={colorPct(m.pct)}>% Ejecución: {m.pct}%</text>}
+            {cmp&&cmp.real!=null&&<text x={boxX+8} y={boxY+50+(m.pct!=null?12:0)} fontSize="9.5" fill="#9CA3AF">Año anterior: {fmtCompactCLP(cmp.real)}</text>}
           </g>
         );
       })()}
     </svg>
+    {zoomRange&&(
+      <div className="text-center mt-0.5">
+        <button type="button" onClick={()=>setZoomRange(null)} className="text-[10px] text-blue-600 hover:underline font-semibold">↺ Restablecer zoom</button>
+      </div>
+    )}
+    </div>
   );
 }
 
@@ -15355,6 +15430,7 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
   const [importandoPresupuesto,setImportandoPresupuesto]=useState(false);
   const [mostrarFiltros,setMostrarFiltros]=useState(false);
   const [verTodasTxns,setVerTodasTxns]=useState(false);
+  const [compararAnioAnterior,setCompararAnioAnterior]=useState(false);
   const [vistaGastos,setVistaGastos]=useState("gestion"); // gestion|informe
   const [usuarioExpandido,setUsuarioExpandido]=useState(null);
   // Detalle al hacer clic en una categoría de "Distribución del gasto por
@@ -15606,6 +15682,27 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
       return{mes,real,presupuesto:presupuestoMes,pct};
     });
   },[mesesEnRango,txnsFiltradas,incluirPuntuales,presupuesto,filtrosCategoria,activeModule,activeBarco]);
+
+  // Mismo cálculo que serieMensual (mismos filtros de centro/categoría/
+  // usuario/puntuales) pero un año antes, mes a mes alineado 1:1 con
+  // mesesEnRango — para el toggle "Comparar con año anterior" del gráfico
+  // de gasto mensual. Usa txnsAnotadas (todo el histórico) en vez de
+  // txnsFiltradas porque este último ya viene acotado al rango de fecha
+  // elegido, que no incluye el año anterior.
+  const serieMensualAnioAnterior=useMemo(()=>{
+    const base=txnsAnotadas.filter(t=>
+      (filtrosCentro.length===0||filtrosCentro.includes(t.centroCoste))&&
+      (filtrosCategoria.length===0||filtrosCategoria.includes(t.descripClaseCoste))&&
+      (filtrosUsuario.length===0||filtrosUsuario.includes(t.usuario))
+    );
+    return mesesEnRango.map(mes=>{
+      const [anio,mm]=mes.split("-");
+      const mesAnterior=`${parseInt(anio)-1}-${mm}`;
+      const rows=base.filter(t=>t.mes===mesAnterior&&!t._reglaExcluida&&(incluirPuntuales||!t._reglaPuntual));
+      const real=rows.reduce((s,t)=>s+(t.valor||0),0);
+      return{mes:mesAnterior,real,presupuesto:presupuestoPorMes(mesAnterior,filtrosCategoria)};
+    });
+  },[mesesEnRango,txnsAnotadas,filtrosCentro,filtrosCategoria,filtrosUsuario,incluirPuntuales,presupuesto]);
 
   // ── Motor de pronóstico (Bloque 6) ──
   // Trabaja sobre el año del último mes cargado, con la base "real filtrado
@@ -16453,12 +16550,19 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
             <h2 className="font-bold text-gray-800 text-sm">Gasto mensual — presupuesto vs. real filtrado</h2>
             <ExportBar targetRef={refGastoMensualChart} filename={`gasto-mensual-${activeModule}-${anioTrabajo}`}/>
           </div>
-          <p className="text-gray-300 text-[10px] mb-2">Click en un mes para ver el detalle de transacciones abajo.</p>
+          <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+            <p className="text-gray-300 text-[10px]">Click en un mes para ver el detalle abajo · arrastrá para hacer zoom.</p>
+            <label className="flex items-center gap-1.5 text-[10px] text-gray-500 cursor-pointer flex-shrink-0">
+              <input type="checkbox" checked={compararAnioAnterior} onChange={e=>setCompararAnioAnterior(e.target.checked)} className="w-3 h-3"/>
+              Comparar con año anterior
+            </label>
+          </div>
           <div ref={refGastoMensualChart}>
-            <GastoMensualChart serie={serieMensual} onClickMes={setMesDetalle} mesSeleccionado={mesDetalle}/>
+            <GastoMensualChart serie={serieMensual} comparacion={compararAnioAnterior?serieMensualAnioAnterior:null} onClickMes={setMesDetalle} mesSeleccionado={mesDetalle}/>
             <div className="flex items-center gap-4 mt-1 justify-center flex-wrap">
               <span className="flex items-center gap-1.5 text-xs text-gray-500"><span className="w-2.5 h-2.5 rounded-sm bg-blue-500 inline-block"/>Real filtrado</span>
               <span className="flex items-center gap-1.5 text-xs text-gray-500"><span className="w-2.5 h-2.5 rounded-sm bg-gray-300 inline-block"/>Presupuesto</span>
+              {compararAnioAnterior&&<span className="flex items-center gap-1.5 text-xs text-gray-500"><span className="w-3 h-0.5 border-t border-dashed border-gray-400 inline-block"/>Real año anterior</span>}
               <span className="flex items-center gap-1.5 text-xs text-gray-500">
                 % Ejecución (real ÷ presupuesto del mes, eje derecho):
                 <span className="w-3 h-0.5 bg-emerald-600 inline-block rounded ml-1"/>≤100%
@@ -17216,22 +17320,42 @@ const DISP_UTIL_COLOR={disp:"#1D4ED8",util:"#0E7490"}; // azul=Disponibilidad, c
 // (series=[disp,util]). El tamaño del período (mes/trimestre/semestre/año)
 // lo decide quien arma `datos` (cada punto trae su propio `key` para el
 // React key y `label` ya formateado para el eje).
-function PromedioPeriodoChart({datos,series,height=180,width=620}){
+//
+// Interactividad: leyenda clickeable (oculta/muestra cada serie), click en
+// un punto "fija" su tooltip (se puede soltar el mouse sin que desaparezca),
+// arrastrar sobre el gráfico hace zoom a ese rango de períodos, y
+// `comparacion` (opcional, mismo shape/largo que `datos`) se dibuja como
+// líneas punteadas semitransparentes superpuestas — para comparar contra
+// el período anterior sin abrir un gráfico aparte.
+function PromedioPeriodoChart({datos,series,comparacion,comparacionLabel="Período anterior",height=180,width=620,onPointClick}){
   const [hoverIdx,setHoverIdx]=useState(null);
+  const [pinnedIdx,setPinnedIdx]=useState(null);
+  const [visibles,setVisibles]=useState(null);
+  const [zoomRange,setZoomRange]=useState(null); // [startIdx,endIdx] absolutos en `datos`, null = sin zoom
+  const [brush,setBrush]=useState(null); // {x0,x1} mientras se arrastra
   const pad={l:34,r:10,t:10,b:22};
   const cW=width-pad.l-pad.r, cH=height-pad.t-pad.b;
   const s=series||[{key:"ESPERANZA",label:"Esperanza",color:BUQUE_COLOR.ESPERANZA},{key:"DALKA",label:"Dalka",color:BUQUE_COLOR.DALKA}];
+  const visKeys=visibles||Object.fromEntries(s.map(serie=>[serie.key,true]));
   if(!datos||datos.length===0) return <p className="text-gray-400 text-xs italic py-6 text-center">Sin datos suficientes todavía.</p>;
-  const n=datos.length;
+
+  const startIdx=zoomRange?zoomRange[0]:0;
+  const endIdx=zoomRange?zoomRange[1]:datos.length-1;
+  const datosVisibles=datos.slice(startIdx,endIdx+1);
+  const comparacionVisible=comparacion?comparacion.slice(startIdx,endIdx+1):null;
+  const n=datosVisibles.length;
   const x=i=>pad.l+(n<=1?cW/2:i/(n-1)*cW);
   const y=v=>pad.t+cH-(v??0)*cH;
   const bandW=n<=1?cW:cW/(n-1);
-  const buildPath=key=>{
-    const pts=datos.map((d,i)=>({i,v:d[key]})).filter(p=>p.v!=null);
+  const activos=s.filter(serie=>visKeys[serie.key]);
+  const buildPath=(arr,key)=>{
+    const pts=arr.map((d,i)=>({i,v:d[key]})).filter(p=>p.v!=null);
     if(pts.length<1) return "";
     return pts.map((p,idx)=>`${idx===0?"M":"L"}${x(p.i).toFixed(1)},${y(p.v).toFixed(1)}`).join(" ");
   };
+
   return(
+    <div>
     <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className="w-full" style={{height}}>
       {[0,0.25,0.5,0.75,1].map(g=>(
         <g key={g}>
@@ -17239,42 +17363,91 @@ function PromedioPeriodoChart({datos,series,height=180,width=620}){
           <text x={pad.l-6} y={y(g)+3} textAnchor="end" fontSize="9" fill="#9CA3AF">{Math.round(g*100)}%</text>
         </g>
       ))}
-      {s.map(serie=><path key={serie.key} d={buildPath(serie.key)} fill="none" stroke={serie.color} strokeWidth="2"/>)}
-      {datos.map((d,i)=>(
+      {comparacionVisible&&activos.map(serie=>(
+        <path key={"cmp-"+serie.key} d={buildPath(comparacionVisible,serie.key)} fill="none" stroke={serie.color} strokeWidth="1.5" strokeDasharray="4,3" opacity="0.45"/>
+      ))}
+      {activos.map(serie=><path key={serie.key} d={buildPath(datosVisibles,serie.key)} fill="none" stroke={serie.color} strokeWidth="2"/>)}
+      {datosVisibles.map((d,i)=>(
         <g key={d.key}>
-          {s.map(serie=>d[serie.key]!=null&&<circle key={serie.key} cx={x(i)} cy={y(d[serie.key])} r="3" fill={serie.color}/>)}
+          {activos.map(serie=>d[serie.key]!=null&&(
+            <circle key={serie.key} cx={x(i)} cy={y(d[serie.key])} r={pinnedIdx===i?4:3} fill={serie.color} style={{cursor:"pointer"}}
+              onClick={()=>{setPinnedIdx(p=>p===i?null:i);onPointClick&&onPointClick(d);}}/>
+          ))}
           <text x={x(i)} y={height-6} textAnchor="middle" fontSize="9" fill="#9CA3AF">{d.label}</text>
         </g>
       ))}
 
-      {/* Overlay interactivo — crosshair + tooltip al pasar el mouse */}
+      {/* Overlay interactivo — hover/click para tooltip, arrastrar para zoom */}
       <rect x={pad.l-bandW/2} y={pad.t} width={cW+bandW} height={cH} fill="transparent"
+        onMouseDown={e=>{
+          const rect=e.currentTarget.getBoundingClientRect();
+          const relX=(e.clientX-rect.left)/rect.width*(cW+bandW)-bandW/2;
+          setBrush({x0:relX,x1:relX});
+        }}
         onMouseMove={e=>{
           const rect=e.currentTarget.getBoundingClientRect();
           const relX=(e.clientX-rect.left)/rect.width*(cW+bandW)-bandW/2;
           const idx=n<=1?0:Math.round(relX/bandW);
           setHoverIdx(Math.max(0,Math.min(n-1,idx)));
+          if(brush) setBrush(b=>b?{...b,x1:relX}:null);
         }}
-        onMouseLeave={()=>setHoverIdx(null)} style={{cursor:"crosshair"}}/>
-      {hoverIdx!=null&&(()=>{
-        const d=datos[hoverIdx];
-        const filas=s.filter(serie=>d[serie.key]!=null).map(serie=>({label:serie.label,v:d[serie.key],color:serie.color}));
+        onMouseUp={()=>{
+          if(brush&&Math.abs(brush.x1-brush.x0)>bandW*0.6){
+            const i0=Math.max(0,Math.min(n-1,Math.round(Math.min(brush.x0,brush.x1)/bandW)));
+            const i1=Math.max(0,Math.min(n-1,Math.round(Math.max(brush.x0,brush.x1)/bandW)));
+            if(i1>i0){setZoomRange([startIdx+i0,startIdx+i1]);setPinnedIdx(null);}
+          }
+          setBrush(null);
+        }}
+        onMouseLeave={()=>{setHoverIdx(null);setBrush(null);}}
+        style={{cursor:"crosshair"}}/>
+      {brush&&Math.abs(brush.x1-brush.x0)>2&&(
+        <rect x={pad.l+Math.min(brush.x0,brush.x1)} y={pad.t} width={Math.abs(brush.x1-brush.x0)} height={cH} fill="#3b82f6" opacity="0.12" style={{pointerEvents:"none"}}/>
+      )}
+      {(pinnedIdx!=null||hoverIdx!=null)&&(()=>{
+        const idx=pinnedIdx!=null?pinnedIdx:hoverIdx;
+        const d=datosVisibles[idx];
+        if(!d) return null;
+        const filas=activos.filter(serie=>d[serie.key]!=null).map(serie=>({label:serie.label,v:d[serie.key],color:serie.color}));
         if(filas.length===0) return null;
-        const boxW=120,boxH=16+filas.length*12;
-        let boxX=x(hoverIdx)+8;
-        if(boxX+boxW>width-4) boxX=x(hoverIdx)-boxW-8;
+        const boxW=128,boxH=16+filas.length*12;
+        let boxX=x(idx)+8;
+        if(boxX+boxW>width-4) boxX=x(idx)-boxW-8;
         return(
-          <g style={{pointerEvents:"none"}}>
-            <line x1={x(hoverIdx)} x2={x(hoverIdx)} y1={pad.t} y2={pad.t+cH} stroke="#94a3b8" strokeWidth="1" strokeDasharray="3,2"/>
+          <g style={{pointerEvents:pinnedIdx!=null?"auto":"none"}}>
+            <line x1={x(idx)} x2={x(idx)} y1={pad.t} y2={pad.t+cH} stroke="#94a3b8" strokeWidth="1" strokeDasharray="3,2"/>
             <rect x={boxX} y={pad.t+2} width={boxW} height={boxH} rx="6" fill="white" stroke="#E5E7EB" strokeWidth="1"/>
-            <text x={boxX+8} y={pad.t+2+13} fontSize="9.5" fontWeight="700" fill="#111827">{d.label}</text>
-            {filas.map((f,idx)=>(
-              <text key={f.label} x={boxX+8} y={pad.t+2+13+(idx+1)*12} fontSize="9.5" fill={f.color}>{f.label}: {Math.round(f.v*100)}%</text>
+            <text x={boxX+8} y={pad.t+2+13} fontSize="9.5" fontWeight="700" fill="#111827">{d.label}{pinnedIdx!=null&&" 📌"}</text>
+            {filas.map((f,fi)=>(
+              <text key={f.label} x={boxX+8} y={pad.t+2+13+(fi+1)*12} fontSize="9.5" fill={f.color}>{f.label}: {Math.round(f.v*100)}%</text>
             ))}
+            {pinnedIdx!=null&&(
+              <text x={boxX+boxW-8} y={pad.t+2+13} textAnchor="end" fontSize="10" fill="#9CA3AF" fontWeight="700" style={{cursor:"pointer"}} onClick={()=>setPinnedIdx(null)}>✕</text>
+            )}
           </g>
         );
       })()}
     </svg>
+    <div className="flex items-center justify-center gap-3 mt-1 flex-wrap">
+      {s.map(serie=>(
+        <button key={serie.key} type="button"
+          onClick={()=>setVisibles(v=>({...(v||Object.fromEntries(s.map(x=>[x.key,true]))),[serie.key]:!(v?v[serie.key]:true)}))}
+          className={`flex items-center gap-1.5 text-xs px-1.5 py-0.5 rounded transition ${visKeys[serie.key]?"text-gray-600":"text-gray-300"}`}>
+          <span className="w-3 h-0.5 inline-block rounded" style={{background:visKeys[serie.key]?serie.color:"#E5E7EB"}}/>
+          {serie.label}
+        </button>
+      ))}
+      {comparacion&&(
+        <span className="text-[10px] text-gray-400 flex items-center gap-1">
+          <span className="w-3 border-t border-dashed border-gray-400 inline-block"/>{comparacionLabel}
+        </span>
+      )}
+      {zoomRange&&(
+        <button type="button" onClick={()=>setZoomRange(null)} className="text-[10px] text-blue-600 hover:underline font-semibold ml-1">↺ Restablecer zoom</button>
+      )}
+    </div>
+    {!zoomRange&&datos.length>4&&<p className="text-[10px] text-gray-300 text-center mt-0.5">Arrastrá sobre el gráfico para hacer zoom en un rango.</p>}
+    </div>
   );
 }
 
@@ -19181,10 +19354,6 @@ function DisponibilidadUtilizacion({user,data}){
             <PromedioPeriodoChart datos={serieEsperanzaPeriodo}
               series={[{key:"disp",label:"Solo Disponibilidad",color:DISP_UTIL_COLOR.disp},{key:"util",label:"Utilización",color:DISP_UTIL_COLOR.util}]}
               height={240}/>
-            <div className="flex items-center gap-4 text-xs text-gray-500 mt-2">
-              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:DISP_UTIL_COLOR.disp}}/>Solo Disponibilidad</span>
-              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:DISP_UTIL_COLOR.util}}/>Utilización</span>
-            </div>
           </div>
         </div>
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
@@ -19199,10 +19368,6 @@ function DisponibilidadUtilizacion({user,data}){
             <PromedioPeriodoChart datos={serieDalkaPeriodo}
               series={[{key:"disp",label:"Solo Disponibilidad",color:DISP_UTIL_COLOR.disp},{key:"util",label:"Utilización",color:DISP_UTIL_COLOR.util}]}
               height={240}/>
-            <div className="flex items-center gap-4 text-xs text-gray-500 mt-2">
-              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:DISP_UTIL_COLOR.disp}}/>Solo Disponibilidad</span>
-              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:DISP_UTIL_COLOR.util}}/>Utilización</span>
-            </div>
           </div>
         </div>
       </div>
