@@ -14655,6 +14655,157 @@ const fmtCompactCLP=(v)=>{
 };
 const fmtCLP=(n)=>"$"+Math.round(n||0).toLocaleString("es-CL");
 
+// ─── EXPORTAR: imagen / Excel / PDF ────────────────────────────────────────
+// Infraestructura genérica reutilizable en cualquier card (gráfico o tabla)
+// de la app — pensada para Gastos y Presupuesto y Disponibilidad y
+// Utilización, pero sin nada específico de esos módulos.
+
+// Captura un nodo del DOM como PNG (vía html2canvas), lo copia al
+// portapapeles cuando el navegador lo soporta (para pegar directo en un
+// chat) y siempre lo descarga. Devuelve true si además se copió.
+async function exportarNodoComoImagen(node,filename){
+  if(!node) return false;
+  // Tablas largas suelen vivir en un contenedor "max-h-* overflow-y-auto"
+  // (para no alargar la página) — html2canvas por defecto solo captura lo
+  // que se ve recortado por ese scroll. Se libera temporalmente cualquier
+  // hijo con scroll vertical activo para capturar la tabla completa, no
+  // solo lo que estaba visible en pantalla al momento de exportar.
+  const scrollables=[node,...node.querySelectorAll("*")].filter(el=>{
+    const cs=getComputedStyle(el);
+    return(cs.overflowY==="auto"||cs.overflowY==="scroll")&&el.scrollHeight>el.clientHeight+2;
+  });
+  const prevStyles=scrollables.map(el=>({el,maxHeight:el.style.maxHeight,overflow:el.style.overflow,overflowY:el.style.overflowY}));
+  scrollables.forEach(el=>{el.style.maxHeight="none";el.style.overflow="visible";el.style.overflowY="visible";});
+  let canvas;
+  try{
+    canvas=await html2canvas(node,{backgroundColor:"#FFFFFF",scale:2,useCORS:true});
+  }finally{
+    prevStyles.forEach(({el,maxHeight,overflow,overflowY})=>{el.style.maxHeight=maxHeight;el.style.overflow=overflow;el.style.overflowY=overflowY;});
+  }
+  const blob=await new Promise(resolve=>canvas.toBlob(resolve,"image/png"));
+  if(!blob) return false;
+  let copiado=false;
+  if(navigator.clipboard&&window.ClipboardItem){
+    try{
+      await navigator.clipboard.write([new window.ClipboardItem({"image/png":blob})]);
+      copiado=true;
+    }catch(err){/* portapapeles no disponible/permitido — igual se descarga */}
+  }
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");
+  a.href=url;
+  a.download=filename.endsWith(".png")?filename:filename+".png";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  return copiado;
+}
+
+// Arma un .xlsx de una sola hoja a partir de encabezados + filas (arrays
+// planos) usando la misma librería xlsx que el proyecto ya usa para
+// importar — nada nuevo que aprender del lado de quien lo recibe.
+function exportarFilasComoExcel(sheetName,headers,rows,filename){
+  const ws=XLSX.utils.aoa_to_sheet([headers,...rows]);
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,(sheetName||"Datos").slice(0,31)); // Excel limita el nombre de hoja a 31 caracteres
+  XLSX.writeFile(wb,filename.endsWith(".xlsx")?filename:filename+".xlsx");
+}
+
+// Abre una ventana con una tabla estilizada e invoca el diálogo de
+// impresión del navegador — "Guardar como PDF" ahí da un PDF real sin
+// tener que sumar una librería nueva. Mismo patrón visual que
+// printMonthlyReport (Taller) para que todos los PDF de la app se vean
+// consistentes.
+function imprimirTablaPDF(titulo,subtitulo,headers,rows){
+  const esc=s=>String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  const w=window.open("","_blank","width=900,height=700");
+  if(!w){alert("El navegador bloqueó la ventana de impresión — habilitá pop-ups para este sitio.");return;}
+  w.document.write(`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"/><title>${esc(titulo)}</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;}
+    body{font-family:Arial,sans-serif;font-size:12px;color:#1a1a1a;background:#fff;}
+    .header{background:#002060;color:#fff;padding:16px 28px;}
+    .header-title{font-size:18px;font-weight:bold;letter-spacing:0.5px;}
+    .header-sub{font-size:12px;opacity:0.85;margin-top:3px;}
+    .body{padding:20px 28px;}
+    table{width:100%;border-collapse:collapse;}
+    th{background:#e8f2fb;color:#002060;font-size:11px;text-align:left;padding:6px 10px;border:1px solid #c0d8ee;}
+    td{padding:6px 10px;border:1px solid #dde6f0;font-size:11px;vertical-align:top;}
+    .footer{margin-top:24px;font-size:10px;color:#999;border-top:1px solid #dde6f0;padding-top:10px;}
+    @media print{body{margin:0;}}
+  </style></head><body>
+  <div class="header">
+    <div class="header-title">NAVIMAG</div>
+    <div class="header-sub">${esc(titulo)}${subtitulo?" — "+esc(subtitulo):""}</div>
+  </div>
+  <div class="body">
+    <table>
+      <tr>${headers.map(h=>`<th>${esc(h)}</th>`).join("")}</tr>
+      ${rows.map(r=>`<tr>${r.map(c=>`<td>${esc(c)}</td>`).join("")}</tr>`).join("")}
+      ${rows.length===0?`<tr><td colspan="${headers.length}" style="text-align:center;color:#9ca3af;">Sin datos</td></tr>`:""}
+    </table>
+    <div class="footer">Generado el ${esc(new Date().toLocaleString("es-CL"))} · ERP Navimag</div>
+  </div>
+  </body></html>`);
+  w.document.close();
+  w.focus();
+  w.print();
+}
+
+// Barra de íconos para exportar una card — 📷 siempre (captura targetRef
+// como imagen); 📊 Excel y 🖨️ PDF solo si se les pasa la data ya armada
+// (excelData/pdfData) — así un gráfico puede traer solo la imagen y una
+// tabla las 3 opciones, sin condicionales repetidos en cada card.
+function ExportBar({targetRef,filename,excelData,pdfData,className=""}){
+  const [busy,setBusy]=useState(false);
+  const onImagen=async()=>{
+    if(!targetRef?.current||busy) return;
+    setBusy(true);
+    try{
+      const copiado=await exportarNodoComoImagen(targetRef.current,filename);
+      if(copiado) alert("✅ Imagen copiada al portapapeles (Ctrl+V / Cmd+V para pegarla) y también descargada.");
+    }catch(err){
+      console.error("Exportar imagen:",err);
+      alert("No se pudo generar la imagen. Probá de nuevo.");
+    }
+    setBusy(false);
+  };
+  const onExcel=()=>{
+    if(!excelData) return;
+    try{
+      exportarFilasComoExcel(excelData.sheetName||filename,excelData.headers,excelData.rows,filename);
+    }catch(err){
+      console.error("Exportar Excel:",err);
+      alert("No se pudo generar el Excel.");
+    }
+  };
+  const onPDF=()=>{
+    if(!pdfData) return;
+    imprimirTablaPDF(pdfData.titulo||filename,pdfData.subtitulo,pdfData.headers,pdfData.rows);
+  };
+  return(
+    <div className={`flex items-center gap-1 flex-shrink-0 ${className}`}>
+      <button type="button" onClick={onImagen} disabled={busy} title="Descargar como imagen"
+        className="p-1.5 rounded-lg border border-gray-200 text-gray-400 hover:bg-gray-50 hover:text-gray-700 transition disabled:opacity-50">
+        <Camera size={13}/>
+      </button>
+      {excelData&&(
+        <button type="button" onClick={onExcel} title="Descargar Excel"
+          className="p-1.5 rounded-lg border border-gray-200 text-gray-400 hover:bg-gray-50 hover:text-gray-700 transition">
+          <FileDown size={13}/>
+        </button>
+      )}
+      {pdfData&&(
+        <button type="button" onClick={onPDF} title="Imprimir / Guardar como PDF"
+          className="p-1.5 rounded-lg border border-gray-200 text-gray-400 hover:bg-gray-50 hover:text-gray-700 transition">
+          <Printer size={13}/>
+        </button>
+      )}
+    </div>
+  );
+}
+
 // Series: real (sin filtrar), filtrado (con filtros en vivo), presupuesto,
 // proyectado (pronóstico, arranca del último punto filtrado). Cada una se
 // puede activar/desactivar clickeando su etiqueta en la leyenda.
@@ -15036,51 +15187,78 @@ function aplicaReglaGasto(txn,regla){
 // Solo Disponibilidad promedio de Taller ese período) — pensada para el
 // Resumen Mensual, para poder cruzar presupuesto y disponibilidad sin
 // tener que ir a buscarla a la pestaña de Disponibilidad y Utilización.
-function TablaResumenTrimestral({resumenTrimestral,tituloPeriodo="Trimestre",mostrarDisponibilidad=false}){
+// exportInfo (opcional): {filename,sheetName,pdfTitulo,pdfSubtitulo} — si se
+// pasa, la tabla queda envuelta en su propio ref y aparece una ExportBar
+// (imagen/Excel/PDF) arriba a la derecha, armada a partir de las mismas
+// filas que ya se están renderizando.
+function TablaResumenTrimestral({resumenTrimestral,tituloPeriodo="Trimestre",tituloAcumulado="Acumulado",mostrarDisponibilidad=false,exportInfo}){
   const semaforoDisp=v=>v==null?"text-gray-300 bg-gray-50":v>=0.9?"text-green-700 bg-green-50":v>=0.75?"text-amber-700 bg-amber-50":"text-red-700 bg-red-50";
+  const ref=useRef(null);
+  const headers=[
+    "Período",...(mostrarDisponibilidad?["Disp."]:[]),
+    `${tituloPeriodo} · Real`,`${tituloPeriodo} · Presupuesto`,`${tituloPeriodo} · Var %`,
+    `${tituloAcumulado} · Real`,`${tituloAcumulado} · Presupuesto`,`${tituloAcumulado} · Var %`,
+  ];
+  const fmtVar=v=>v==null?"—":`${v>=0?"+":""}${v.toFixed(1)}%`;
+  const rows=resumenTrimestral.map(r=>[
+    r.trimestre,...(mostrarDisponibilidad?[r.dispProm!=null?`${Math.round(r.dispProm*100)}%`:"—"]:[]),
+    fmtCLP(r.realTrim),fmtCLP(r.presTrim),fmtVar(r.varTrim),
+    fmtCLP(r.realAcum),fmtCLP(r.presAcum),fmtVar(r.varAcum),
+  ]);
   return(
-    <table className="w-full text-xs border-separate" style={{borderSpacing:0}}>
-      <thead>
-        <tr>
-          <th rowSpan={2} className="pb-2 pr-3 align-bottom border-b-2 border-gray-300 text-left text-gray-500 font-semibold">Período</th>
-          {mostrarDisponibilidad&&(
-            <th rowSpan={2} className="pb-2 pr-3 align-bottom border-b-2 border-gray-300 text-left text-gray-500 font-semibold">Disp.</th>
-          )}
-          <th colSpan={3} className="py-1.5 text-center bg-blue-50 text-blue-800 font-bold border-b-2 border-blue-200 rounded-t-lg">{tituloPeriodo}</th>
-          <th colSpan={3} className="py-1.5 text-center bg-indigo-50 text-indigo-800 font-bold border-b-2 border-indigo-200 border-l-2 border-l-gray-300 rounded-t-lg">Acumulado</th>
-        </tr>
-        <tr>
-          <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Real</th>
-          <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Presupuesto</th>
-          <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Var %</th>
-          <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 border-l-2 border-l-gray-300 text-left text-gray-600 font-semibold">Real</th>
-          <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Presupuesto</th>
-          <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Var %</th>
-        </tr>
-      </thead>
-      <tbody>
-        {resumenTrimestral.map((r,i)=>(
-          <tr key={r.trimestre} className={`border-b border-gray-200 ${i%2===1?"bg-gray-50/70":""}`}>
-            <td className="py-2.5 pr-3 font-bold text-gray-900">{r.trimestre}</td>
+    <div>
+      {exportInfo&&(
+        <div className="flex justify-end mb-2">
+          <ExportBar targetRef={ref} filename={exportInfo.filename}
+            excelData={{sheetName:exportInfo.sheetName,headers,rows}}
+            pdfData={{titulo:exportInfo.pdfTitulo,subtitulo:exportInfo.pdfSubtitulo,headers,rows}}/>
+        </div>
+      )}
+      <div ref={ref}>
+      <table className="w-full text-xs border-separate" style={{borderSpacing:0}}>
+        <thead>
+          <tr>
+            <th rowSpan={2} className="pb-2 pr-3 align-bottom border-b-2 border-gray-300 text-left text-gray-500 font-semibold">Período</th>
             {mostrarDisponibilidad&&(
-              <td className="py-2.5 pr-3">
-                {r.dispProm!=null?<span className={`font-semibold px-1.5 py-0.5 rounded ${semaforoDisp(r.dispProm)}`}>{Math.round(r.dispProm*100)}%</span>:<span className="text-gray-300">—</span>}
-              </td>
+              <th rowSpan={2} className="pb-2 pr-3 align-bottom border-b-2 border-gray-300 text-left text-gray-500 font-semibold">Disp.</th>
             )}
-            <td className="py-2.5 pr-3 text-gray-900 font-medium">{fmtCLP(r.realTrim)}</td>
-            <td className="py-2.5 pr-3 text-gray-600">{fmtCLP(r.presTrim)}</td>
-            <td className={`py-2.5 pr-3 font-bold ${r.varTrim==null?"text-gray-300":r.varTrim>=0?"text-emerald-700":"text-red-700"}`}>
-              {r.varTrim==null?"—":`${r.varTrim>=0?"+":""}${r.varTrim.toFixed(1)}%`}
-            </td>
-            <td className="py-2.5 pr-3 text-gray-900 font-medium border-l-2 border-gray-300">{fmtCLP(r.realAcum)}</td>
-            <td className="py-2.5 pr-3 text-gray-600">{fmtCLP(r.presAcum)}</td>
-            <td className={`py-2.5 pr-3 font-bold ${r.varAcum==null?"text-gray-300":r.varAcum>=0?"text-emerald-700":"text-red-700"}`}>
-              {r.varAcum==null?"—":`${r.varAcum>=0?"+":""}${r.varAcum.toFixed(1)}%`}
-            </td>
+            <th colSpan={3} className="py-1.5 text-center bg-blue-50 text-blue-800 font-bold border-b-2 border-blue-200 rounded-t-lg">{tituloPeriodo}</th>
+            <th colSpan={3} className="py-1.5 text-center bg-indigo-50 text-indigo-800 font-bold border-b-2 border-indigo-200 border-l-2 border-l-gray-300 rounded-t-lg">{tituloAcumulado}</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+          <tr>
+            <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Real</th>
+            <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Presupuesto</th>
+            <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Var %</th>
+            <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 border-l-2 border-l-gray-300 text-left text-gray-600 font-semibold">Real</th>
+            <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Presupuesto</th>
+            <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Var %</th>
+          </tr>
+        </thead>
+        <tbody>
+          {resumenTrimestral.map((r,i)=>(
+            <tr key={r.trimestre} className={`border-b border-gray-200 ${i%2===1?"bg-gray-50/70":""}`}>
+              <td className="py-2.5 pr-3 font-bold text-gray-900">{r.trimestre}</td>
+              {mostrarDisponibilidad&&(
+                <td className="py-2.5 pr-3">
+                  {r.dispProm!=null?<span className={`font-semibold px-1.5 py-0.5 rounded ${semaforoDisp(r.dispProm)}`}>{Math.round(r.dispProm*100)}%</span>:<span className="text-gray-300">—</span>}
+                </td>
+              )}
+              <td className="py-2.5 pr-3 text-gray-900 font-medium">{fmtCLP(r.realTrim)}</td>
+              <td className="py-2.5 pr-3 text-gray-600">{fmtCLP(r.presTrim)}</td>
+              <td className={`py-2.5 pr-3 font-bold ${r.varTrim==null?"text-gray-300":r.varTrim>=0?"text-emerald-700":"text-red-700"}`}>
+                {r.varTrim==null?"—":`${r.varTrim>=0?"+":""}${r.varTrim.toFixed(1)}%`}
+              </td>
+              <td className="py-2.5 pr-3 text-gray-900 font-medium border-l-2 border-gray-300">{fmtCLP(r.realAcum)}</td>
+              <td className="py-2.5 pr-3 text-gray-600">{fmtCLP(r.presAcum)}</td>
+              <td className={`py-2.5 pr-3 font-bold ${r.varAcum==null?"text-gray-300":r.varAcum>=0?"text-emerald-700":"text-red-700"}`}>
+                {r.varAcum==null?"—":`${r.varAcum>=0?"+":""}${r.varAcum.toFixed(1)}%`}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      </div>
+    </div>
   );
 }
 
@@ -15088,44 +15266,58 @@ function TablaResumenTrimestral({resumenTrimestral,tituloPeriodo="Trimestre",mos
 // por mes del año de trabajo) — el acumulado se calcula acá mismo, siempre
 // sobre datos reales (nunca proyección, a diferencia del gráfico "Acumulado
 // anual" que sí puede incluir pronóstico).
-function TablaGastoMensualAcumulado({serie}){
+function TablaGastoMensualAcumulado({serie,exportInfo}){
+  const ref=useRef(null);
   if(!serie||serie.length===0) return <p className="text-gray-400 text-xs italic">Sin datos para este año.</p>;
   let accReal=0,accFiltrado=0,accPres=0;
   const filas=serie.map(m=>{
     accReal+=m.real;accFiltrado+=m.filtrado;accPres+=m.presupuesto;
     return{...m,accReal,accFiltrado,accPres};
   });
+  const headers=["Mes","Mensual · Real","Mensual · Filtrado","Mensual · Presupuesto","Acumulado · Real","Acumulado · Filtrado","Acumulado · Presupuesto"];
+  const rows=filas.map(m=>[m.mes,fmtCLP(m.real),fmtCLP(m.filtrado),fmtCLP(m.presupuesto),fmtCLP(m.accReal),fmtCLP(m.accFiltrado),fmtCLP(m.accPres)]);
   return(
-    <table className="w-full text-xs border-separate" style={{borderSpacing:0}}>
-      <thead>
-        <tr>
-          <th rowSpan={2} className="pb-2 pr-3 align-bottom border-b-2 border-gray-300 text-left text-gray-500 font-semibold">Mes</th>
-          <th colSpan={3} className="py-1.5 text-center bg-blue-50 text-blue-800 font-bold border-b-2 border-blue-200 rounded-t-lg">Mensual</th>
-          <th colSpan={3} className="py-1.5 text-center bg-indigo-50 text-indigo-800 font-bold border-b-2 border-indigo-200 border-l-2 border-l-gray-300 rounded-t-lg">Acumulado anual</th>
-        </tr>
-        <tr>
-          <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Real</th>
-          <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Filtrado</th>
-          <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Presupuesto</th>
-          <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 border-l-2 border-l-gray-300 text-left text-gray-600 font-semibold">Real</th>
-          <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Filtrado</th>
-          <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Presupuesto</th>
-        </tr>
-      </thead>
-      <tbody>
-        {filas.map((m,i)=>(
-          <tr key={m.mes} className={`border-b border-gray-200 ${i%2===1?"bg-gray-50/70":""}`}>
-            <td className="py-2 pr-3 font-bold text-gray-900">{m.mes}</td>
-            <td className="py-2 pr-3 text-gray-700">{fmtCLP(m.real)}</td>
-            <td className="py-2 pr-3 text-gray-900 font-medium">{fmtCLP(m.filtrado)}</td>
-            <td className="py-2 pr-3 text-gray-600">{fmtCLP(m.presupuesto)}</td>
-            <td className="py-2 pr-3 text-gray-700 border-l-2 border-gray-300">{fmtCLP(m.accReal)}</td>
-            <td className="py-2 pr-3 text-gray-900 font-bold">{fmtCLP(m.accFiltrado)}</td>
-            <td className="py-2 pr-3 text-gray-600">{fmtCLP(m.accPres)}</td>
+    <div>
+      {exportInfo&&(
+        <div className="flex justify-end mb-2">
+          <ExportBar targetRef={ref} filename={exportInfo.filename}
+            excelData={{sheetName:exportInfo.sheetName,headers,rows}}
+            pdfData={{titulo:exportInfo.pdfTitulo,subtitulo:exportInfo.pdfSubtitulo,headers,rows}}/>
+        </div>
+      )}
+      <div ref={ref}>
+      <table className="w-full text-xs border-separate" style={{borderSpacing:0}}>
+        <thead>
+          <tr>
+            <th rowSpan={2} className="pb-2 pr-3 align-bottom border-b-2 border-gray-300 text-left text-gray-500 font-semibold">Mes</th>
+            <th colSpan={3} className="py-1.5 text-center bg-blue-50 text-blue-800 font-bold border-b-2 border-blue-200 rounded-t-lg">Mensual</th>
+            <th colSpan={3} className="py-1.5 text-center bg-indigo-50 text-indigo-800 font-bold border-b-2 border-indigo-200 border-l-2 border-l-gray-300 rounded-t-lg">Acumulado anual</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+          <tr>
+            <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Real</th>
+            <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Filtrado</th>
+            <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Presupuesto</th>
+            <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 border-l-2 border-l-gray-300 text-left text-gray-600 font-semibold">Real</th>
+            <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Filtrado</th>
+            <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Presupuesto</th>
+          </tr>
+        </thead>
+        <tbody>
+          {filas.map((m,i)=>(
+            <tr key={m.mes} className={`border-b border-gray-200 ${i%2===1?"bg-gray-50/70":""}`}>
+              <td className="py-2 pr-3 font-bold text-gray-900">{m.mes}</td>
+              <td className="py-2 pr-3 text-gray-700">{fmtCLP(m.real)}</td>
+              <td className="py-2 pr-3 text-gray-900 font-medium">{fmtCLP(m.filtrado)}</td>
+              <td className="py-2 pr-3 text-gray-600">{fmtCLP(m.presupuesto)}</td>
+              <td className="py-2 pr-3 text-gray-700 border-l-2 border-gray-300">{fmtCLP(m.accReal)}</td>
+              <td className="py-2 pr-3 text-gray-900 font-bold">{fmtCLP(m.accFiltrado)}</td>
+              <td className="py-2 pr-3 text-gray-600">{fmtCLP(m.accPres)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      </div>
+    </div>
   );
 }
 
@@ -15176,6 +15368,15 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
   const fileInputRef=useRef(null);
   const presupuestoFileRef=useRef(null);
   const vesselIdActual=activeModule==="maritimo"?(activeBarco||null):null;
+  // Refs para "Descargar como imagen" (ExportBar) — uno por card de
+  // gráfico/tabla que no tiene su propio ref interno.
+  const refGastoMensualChart=useRef(null);
+  const refGastosLineChart=useRef(null);
+  const refDonutCategoria=useRef(null);
+  const refDonutCentro=useRef(null);
+  const refCentrosCostoTabla=useRef(null);
+  const refUsuariosTabla=useRef(null);
+  const refDetalleTxnsTabla=useRef(null);
 
   useEffect(()=>{
     const unsub1=onSnapshot(doc(db,COLL_GASTOS_CONFIG_CENTROS,"config"),snap=>{
@@ -16248,23 +16449,33 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
       {/* ── Gasto mensual + Acumulado anual ── */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
-          <h2 className="font-bold text-gray-800 text-sm mb-1">Gasto mensual — presupuesto vs. real filtrado</h2>
+          <div className="flex items-start justify-between gap-2 mb-1">
+            <h2 className="font-bold text-gray-800 text-sm">Gasto mensual — presupuesto vs. real filtrado</h2>
+            <ExportBar targetRef={refGastoMensualChart} filename={`gasto-mensual-${activeModule}-${anioTrabajo}`}/>
+          </div>
           <p className="text-gray-300 text-[10px] mb-2">Click en un mes para ver el detalle de transacciones abajo.</p>
-          <GastoMensualChart serie={serieMensual} onClickMes={setMesDetalle} mesSeleccionado={mesDetalle}/>
-          <div className="flex items-center gap-4 mt-1 justify-center flex-wrap">
-            <span className="flex items-center gap-1.5 text-xs text-gray-500"><span className="w-2.5 h-2.5 rounded-sm bg-blue-500 inline-block"/>Real filtrado</span>
-            <span className="flex items-center gap-1.5 text-xs text-gray-500"><span className="w-2.5 h-2.5 rounded-sm bg-gray-300 inline-block"/>Presupuesto</span>
-            <span className="flex items-center gap-1.5 text-xs text-gray-500">
-              % Ejecución (real ÷ presupuesto del mes, eje derecho):
-              <span className="w-3 h-0.5 bg-emerald-600 inline-block rounded ml-1"/>≤100%
-              <span className="w-3 h-0.5 bg-red-600 inline-block rounded ml-1"/>&gt;100% (sobre presupuesto)
-            </span>
+          <div ref={refGastoMensualChart}>
+            <GastoMensualChart serie={serieMensual} onClickMes={setMesDetalle} mesSeleccionado={mesDetalle}/>
+            <div className="flex items-center gap-4 mt-1 justify-center flex-wrap">
+              <span className="flex items-center gap-1.5 text-xs text-gray-500"><span className="w-2.5 h-2.5 rounded-sm bg-blue-500 inline-block"/>Real filtrado</span>
+              <span className="flex items-center gap-1.5 text-xs text-gray-500"><span className="w-2.5 h-2.5 rounded-sm bg-gray-300 inline-block"/>Presupuesto</span>
+              <span className="flex items-center gap-1.5 text-xs text-gray-500">
+                % Ejecución (real ÷ presupuesto del mes, eje derecho):
+                <span className="w-3 h-0.5 bg-emerald-600 inline-block rounded ml-1"/>≤100%
+                <span className="w-3 h-0.5 bg-red-600 inline-block rounded ml-1"/>&gt;100% (sobre presupuesto)
+              </span>
+            </div>
           </div>
         </div>
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
-          <h2 className="font-bold text-gray-800 text-sm mb-1">Acumulado anual — real vs. presupuesto{metodoElegido?" vs. proyección":""}</h2>
+          <div className="flex items-start justify-between gap-2 mb-1">
+            <h2 className="font-bold text-gray-800 text-sm">Acumulado anual — real vs. presupuesto{metodoElegido?" vs. proyección":""}</h2>
+            <ExportBar targetRef={refGastosLineChart} filename={`gasto-acumulado-${activeModule}-${anioTrabajo}`}/>
+          </div>
           <p className="text-gray-300 text-[10px] mb-2">Siempre muestra el año {anioTrabajo} completo, sin importar el filtro de rango de meses. Click en la leyenda para mostrar/ocultar cada serie.</p>
-          <GastosLineChart series={serieAcumulada}/>
+          <div ref={refGastosLineChart}>
+            <GastosLineChart series={serieAcumulada}/>
+          </div>
         </div>
       </div>
 
@@ -16272,40 +16483,8 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 overflow-x-auto">
         <h2 className="font-bold text-gray-800 text-sm mb-1">Resumen Trimestral — Real filtrado vs. Presupuesto</h2>
         <p className="text-gray-400 text-[10px] mb-3">Por trimestre y acumulado entre trimestres, año {anioTrabajo} completo. Var % = (Presupuesto − Real) ÷ Presupuesto — negativo es gasto por encima de lo presupuestado.</p>
-        <table className="w-full text-xs border-separate" style={{borderSpacing:0}}>
-          <thead>
-            <tr>
-              <th rowSpan={2} className="pb-2 pr-3 align-bottom border-b-2 border-gray-300 text-left text-gray-500 font-semibold">Período</th>
-              <th colSpan={3} className="py-1.5 text-center bg-blue-50 text-blue-800 font-bold border-b-2 border-blue-200 rounded-t-lg">Trimestre</th>
-              <th colSpan={3} className="py-1.5 text-center bg-indigo-50 text-indigo-800 font-bold border-b-2 border-indigo-200 border-l-2 border-l-gray-300 rounded-t-lg">Acumulado {anioTrabajo}</th>
-            </tr>
-            <tr>
-              <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Real</th>
-              <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Presupuesto</th>
-              <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Var %</th>
-              <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 border-l-2 border-l-gray-300 text-left text-gray-600 font-semibold">Real</th>
-              <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Presupuesto</th>
-              <th className="pb-1.5 pr-3 pt-1.5 border-b-2 border-gray-300 text-left text-gray-600 font-semibold">Var %</th>
-            </tr>
-          </thead>
-          <tbody>
-            {resumenTrimestral.map((r,i)=>(
-              <tr key={r.trimestre} className={`border-b border-gray-200 ${i%2===1?"bg-gray-50/70":""}`}>
-                <td className="py-2.5 pr-3 font-bold text-gray-900">{r.trimestre}</td>
-                <td className="py-2.5 pr-3 text-gray-900 font-medium">{fmtCLP(r.realTrim)}</td>
-                <td className="py-2.5 pr-3 text-gray-600">{fmtCLP(r.presTrim)}</td>
-                <td className={`py-2.5 pr-3 font-bold ${r.varTrim==null?"text-gray-300":r.varTrim>=0?"text-emerald-700":"text-red-700"}`}>
-                  {r.varTrim==null?"—":`${r.varTrim>=0?"+":""}${r.varTrim.toFixed(1)}%`}
-                </td>
-                <td className="py-2.5 pr-3 text-gray-900 font-medium border-l-2 border-gray-300">{fmtCLP(r.realAcum)}</td>
-                <td className="py-2.5 pr-3 text-gray-600">{fmtCLP(r.presAcum)}</td>
-                <td className={`py-2.5 pr-3 font-bold ${r.varAcum==null?"text-gray-300":r.varAcum>=0?"text-emerald-700":"text-red-700"}`}>
-                  {r.varAcum==null?"—":`${r.varAcum>=0?"+":""}${r.varAcum.toFixed(1)}%`}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <TablaResumenTrimestral resumenTrimestral={resumenTrimestral} tituloAcumulado={`Acumulado ${anioTrabajo}`}
+          exportInfo={{filename:`resumen-trimestral-${activeModule}-${anioTrabajo}`,sheetName:"Resumen Trimestral",pdfTitulo:"Resumen Trimestral",pdfSubtitulo:`Real filtrado vs. Presupuesto — ${anioTrabajo}`}}/>
       </div>
 
       {/* ── Pronóstico ── */}
@@ -16346,13 +16525,23 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
       {/* ── Distribución + Top 5 equipos + Alertas ── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-4 gap-4">
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
-          <h2 className="font-bold text-gray-800 text-sm mb-3">Distribución del gasto por categoría</h2>
-          <DonutChart items={distribucionCategoria} fmtFn={fmtCLP} onItemClick={setCategoriaDetalle}/>
+          <div className="flex items-start justify-between gap-2 mb-3">
+            <h2 className="font-bold text-gray-800 text-sm">Distribución del gasto por categoría</h2>
+            <ExportBar targetRef={refDonutCategoria} filename={`distribucion-categoria-${activeModule}`}/>
+          </div>
+          <div ref={refDonutCategoria}>
+            <DonutChart items={distribucionCategoria} fmtFn={fmtCLP} onItemClick={setCategoriaDetalle}/>
+          </div>
           <p className="text-gray-300 text-[10px] mt-2">Click en una categoría para ver el detalle completo.</p>
         </div>
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
-          <h2 className="font-bold text-gray-800 text-sm mb-3">Distribución por centro de costo</h2>
-          <DonutChart items={distribucionCentro}/>
+          <div className="flex items-start justify-between gap-2 mb-3">
+            <h2 className="font-bold text-gray-800 text-sm">Distribución por centro de costo</h2>
+            <ExportBar targetRef={refDonutCentro} filename={`distribucion-centro-costo-${activeModule}`}/>
+          </div>
+          <div ref={refDonutCentro}>
+            <DonutChart items={distribucionCentro}/>
+          </div>
         </div>
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
           <h2 className="font-bold text-gray-800 text-sm mb-3">Top 5 equipos por gasto</h2>
@@ -16397,19 +16586,35 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
       {/* ── Detalle de transacciones + Carga rápida de presupuesto ── */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center justify-between mb-3 gap-2">
             <h2 className="font-bold text-gray-800 text-sm">
               {verTodasTxns?"Todas las transacciones filtradas":`Detalle de transacciones${mesDetalle?` (${mesDetalle})`:""}`}
             </h2>
-            <button onClick={()=>setVerTodasTxns(v=>!v)} className="text-xs text-blue-600 hover:underline font-semibold flex-shrink-0">
-              {verTodasTxns?"← Ver por mes":"Ver todas →"}
-            </button>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <ExportBar targetRef={refDetalleTxnsTabla} filename={`detalle-transacciones-${activeModule}`}
+                excelData={{sheetName:"Detalle transacciones",
+                  headers:["Fecha","Documento","Centro","Categoría","Descripción","Texto Breve","Texto Cabecera","Monto","Estado"],
+                  rows:(verTodasTxns?txnsRecientes:txnsDetalle).map(t=>[
+                    t.fechaContabilizacion?t.fechaContabilizacion.slice(0,10):"—",t.documentoCabecera||"—",t.centroCoste,t.descripClaseCoste,
+                    t.descripcionMaterial||t.denominacionObjeto||"—",t.textoPedido||"—",t.textoCabecera||"—",t.valor||0,
+                    t._reglaExcluida?"Excluida":t._reglaPuntual?"Puntual":"Normal",
+                  ])}}
+                pdfData={{titulo:"Detalle de transacciones",subtitulo:mesDetalle||undefined,
+                  headers:["Fecha","Documento","Centro","Categoría","Monto","Estado"],
+                  rows:(verTodasTxns?txnsRecientes:txnsDetalle).map(t=>[
+                    t.fechaContabilizacion?t.fechaContabilizacion.slice(0,10):"—",t.documentoCabecera||"—",t.centroCoste,t.descripClaseCoste,fmtCLP(t.valor),
+                    t._reglaExcluida?"Excluida":t._reglaPuntual?"Puntual":"Normal",
+                  ])}}/>
+              <button onClick={()=>setVerTodasTxns(v=>!v)} className="text-xs text-blue-600 hover:underline font-semibold flex-shrink-0">
+                {verTodasTxns?"← Ver por mes":"Ver todas →"}
+              </button>
+            </div>
           </div>
           {(()=>{
             const filas=verTodasTxns?txnsRecientes:txnsDetalle;
             if(filas.length===0) return <p className="text-gray-400 text-xs italic">Sin transacciones con los filtros actuales.</p>;
             return(
-              <div className="overflow-x-auto max-h-96 overflow-y-auto">
+              <div ref={refDetalleTxnsTabla} className="overflow-x-auto max-h-96 overflow-y-auto">
                 <table className="w-full text-xs">
                   <thead><tr className="text-gray-400 border-b border-gray-100 sticky top-0 bg-white">
                     <th className="text-left py-1.5 font-medium">Fecha</th>
@@ -16828,16 +17033,24 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
 
       {/* ── Centro(s) de costo ── */}
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 overflow-x-auto">
-        <h2 className="font-bold text-gray-800 text-sm mb-1">
-          {filtrosCentro.length>0?"Centro(s) de costo seleccionado(s)":"Centros de costo con mayor gasto en el período"}
-        </h2>
+        <div className="flex items-start justify-between gap-2 mb-1">
+          <h2 className="font-bold text-gray-800 text-sm">
+            {filtrosCentro.length>0?"Centro(s) de costo seleccionado(s)":"Centros de costo con mayor gasto en el período"}
+          </h2>
+          <ExportBar targetRef={refCentrosCostoTabla} filename={`centros-costo-${activeModule}`}
+            excelData={{sheetName:"Centros de costo",headers:["Centro de costo","Módulo","Buque","Transacciones","Total"],
+              rows:informeCentrosSeleccionados.map(c=>[c.centroCoste,c.modulo||(c.mapeado?"—":"sin mapear"),c.vesselId||"—",c.count,c.total])}}
+            pdfData={{titulo:"Centros de costo",subtitulo:filtrosCentro.length>0?"Seleccionados en Filtros":"Mayor gasto en el período",
+              headers:["Centro de costo","Módulo","Buque","Transacciones","Total"],
+              rows:informeCentrosSeleccionados.map(c=>[c.centroCoste,c.modulo||(c.mapeado?"—":"sin mapear"),c.vesselId||"—",c.count,fmtCLP(c.total)])}}/>
+        </div>
         <p className="text-gray-400 text-[10px] mb-3">
           {filtrosCentro.length>0?"Especificaciones del/los centro(s) elegido(s) en \"Filtros\".":'Ningún centro seleccionado en "Filtros" — se muestran los 10 de mayor actividad. Elegí uno específico ahí para acotar este bloque.'}
         </p>
         {informeCentrosSeleccionados.length===0?(
           <p className="text-gray-400 text-xs italic">Sin actividad en este período.</p>
         ):(
-          <table className="w-full text-xs">
+          <table ref={refCentrosCostoTabla} className="w-full text-xs">
             <thead><tr className="text-gray-400 border-b border-gray-100">
               <th className="text-left py-1.5 font-medium">Centro de costo</th>
               <th className="text-left py-1.5 font-medium">Módulo</th>
@@ -16862,8 +17075,17 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
 
       {/* ── Usuarios que asignaron gastos ── */}
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
-        <h2 className="font-bold text-gray-800 text-sm mb-1">Usuarios que asignaron gastos en el período</h2>
+        <div className="flex items-start justify-between gap-2 mb-1">
+          <h2 className="font-bold text-gray-800 text-sm">Usuarios que asignaron gastos en el período</h2>
+          <ExportBar targetRef={refUsuariosTabla} filename={`usuarios-gasto-${activeModule}`}
+            excelData={{sheetName:"Usuarios",headers:["Usuario","Transacciones","Total"],
+              rows:informeUsuarios.map(u=>[u.usuario,u.count,u.total])}}
+            pdfData={{titulo:"Usuarios que asignaron gastos",subtitulo:"Período filtrado",
+              headers:["Usuario","Transacciones","Total"],
+              rows:informeUsuarios.map(u=>[u.usuario,u.count,fmtCLP(u.total)])}}/>
+        </div>
         <p className="text-gray-400 text-[10px] mb-3">Click en un usuario para ver el detalle de sus transacciones.</p>
+        <div ref={refUsuariosTabla}>
         {informeUsuarios.length===0?(
           <p className="text-gray-400 text-xs italic">Sin transacciones en este período.</p>
         ):(
@@ -16905,13 +17127,15 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
             ))}
           </div>
         )}
+        </div>
       </div>
 
       {/* ── Resumen Trimestral ── */}
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 overflow-x-auto">
         <h2 className="font-bold text-gray-800 text-sm mb-1">Resumen Trimestral — Real filtrado vs. Presupuesto</h2>
         <p className="text-gray-400 text-[10px] mb-3">Por trimestre y acumulado entre trimestres, año {anioTrabajo} completo. Var % = (Presupuesto − Real) ÷ Presupuesto — negativo es gasto por encima de lo presupuestado.</p>
-        <TablaResumenTrimestral resumenTrimestral={resumenTrimestral}/>
+        <TablaResumenTrimestral resumenTrimestral={resumenTrimestral} tituloAcumulado={`Acumulado ${anioTrabajo}`}
+          exportInfo={{filename:`resumen-trimestral-${activeModule}-${anioTrabajo}`,sheetName:"Resumen Trimestral",pdfTitulo:"Resumen Trimestral",pdfSubtitulo:`Real filtrado vs. Presupuesto — ${anioTrabajo}`}}/>
       </div>
 
       {/* ── Resumen Mensual ── */}
@@ -16921,14 +17145,16 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
           Mismo cálculo que el Resumen Trimestral pero mes a mes, para revisar el estado del gasto sin esperar a que cierre el trimestre — acumulado corrido, año {anioTrabajo} completo.
           {activeModule==="taller"&&" Incluye la Solo Disponibilidad promedio de Taller de ese mes (Esperanza+Dalka combinado), para cruzarla con el presupuesto sin ir a buscarla a Disponibilidad y Utilización."}
         </p>
-        <TablaResumenTrimestral resumenTrimestral={resumenMensual} tituloPeriodo="Mes" mostrarDisponibilidad={activeModule==="taller"}/>
+        <TablaResumenTrimestral resumenTrimestral={resumenMensual} tituloPeriodo="Mes" tituloAcumulado={`Acumulado ${anioTrabajo}`} mostrarDisponibilidad={activeModule==="taller"}
+          exportInfo={{filename:`resumen-mensual-${activeModule}-${anioTrabajo}`,sheetName:"Resumen Mensual",pdfTitulo:"Resumen Mensual",pdfSubtitulo:`Real filtrado vs. Presupuesto — ${anioTrabajo}`}}/>
       </div>
 
       {/* ── Gasto mensual - acumulado anual ── */}
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 overflow-x-auto">
         <h2 className="font-bold text-gray-800 text-sm mb-1">Gasto mensual — acumulado anual {anioTrabajo}</h2>
         <p className="text-gray-400 text-[10px] mb-3">Real, filtrado y presupuesto por mes, con acumulado corrido del año {anioTrabajo} completo.</p>
-        <TablaGastoMensualAcumulado serie={serieAnualCompleta}/>
+        <TablaGastoMensualAcumulado serie={serieAnualCompleta}
+          exportInfo={{filename:`gasto-mensual-acumulado-${activeModule}-${anioTrabajo}`,sheetName:"Gasto Mensual Acumulado",pdfTitulo:"Gasto mensual — acumulado anual",pdfSubtitulo:`${anioTrabajo}`}}/>
       </div>
       </>)}
 
@@ -17938,6 +18164,13 @@ function DisponibilidadUtilizacion({user,data}){
   // presentaciones sin tener que hacer una captura de pantalla manual.
   const informeRef=useRef(null);
   const [exportandoImagen,setExportandoImagen]=useState(false);
+  // Refs para ExportBar (Descargar como imagen) de los gráficos y tablas
+  // de la pestaña Gestión.
+  const refChartEsperanza=useRef(null);
+  const refChartDalka=useRef(null);
+  const refFaenasTabla=useRef(null);
+  const refMesAMesEsperanza=useRef(null);
+  const refMesAMesDalka=useRef(null);
   useEffect(()=>{
     let cancelado=false;
     const meses=mesesPeriodoInforme.map(m=>`${informeAnio}-${m}`);
@@ -18937,29 +19170,39 @@ function DisponibilidadUtilizacion({user,data}){
 
       <div className="grid xl:grid-cols-2 gap-5">
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
-          <h2 className="font-bold text-gray-800 text-base mb-3 flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full inline-block flex-shrink-0" style={{background:BUQUE_COLOR.ESPERANZA}}/>
-            Esperanza — Disponibilidad vs. Utilización
-          </h2>
-          <PromedioPeriodoChart datos={serieEsperanzaPeriodo}
-            series={[{key:"disp",label:"Solo Disponibilidad",color:DISP_UTIL_COLOR.disp},{key:"util",label:"Utilización",color:DISP_UTIL_COLOR.util}]}
-            height={240}/>
-          <div className="flex items-center gap-4 text-xs text-gray-500 mt-2">
-            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:DISP_UTIL_COLOR.disp}}/>Solo Disponibilidad</span>
-            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:DISP_UTIL_COLOR.util}}/>Utilización</span>
+          <div className="flex items-start justify-between gap-2 mb-3">
+            <h2 className="font-bold text-gray-800 text-base flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full inline-block flex-shrink-0" style={{background:BUQUE_COLOR.ESPERANZA}}/>
+              Esperanza — Disponibilidad vs. Utilización
+            </h2>
+            <ExportBar targetRef={refChartEsperanza} filename="esperanza-disp-vs-util"/>
+          </div>
+          <div ref={refChartEsperanza}>
+            <PromedioPeriodoChart datos={serieEsperanzaPeriodo}
+              series={[{key:"disp",label:"Solo Disponibilidad",color:DISP_UTIL_COLOR.disp},{key:"util",label:"Utilización",color:DISP_UTIL_COLOR.util}]}
+              height={240}/>
+            <div className="flex items-center gap-4 text-xs text-gray-500 mt-2">
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:DISP_UTIL_COLOR.disp}}/>Solo Disponibilidad</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:DISP_UTIL_COLOR.util}}/>Utilización</span>
+            </div>
           </div>
         </div>
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
-          <h2 className="font-bold text-gray-800 text-base mb-3 flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full inline-block flex-shrink-0" style={{background:BUQUE_COLOR.DALKA}}/>
-            Dalka — Disponibilidad vs. Utilización
-          </h2>
-          <PromedioPeriodoChart datos={serieDalkaPeriodo}
-            series={[{key:"disp",label:"Solo Disponibilidad",color:DISP_UTIL_COLOR.disp},{key:"util",label:"Utilización",color:DISP_UTIL_COLOR.util}]}
-            height={240}/>
-          <div className="flex items-center gap-4 text-xs text-gray-500 mt-2">
-            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:DISP_UTIL_COLOR.disp}}/>Solo Disponibilidad</span>
-            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:DISP_UTIL_COLOR.util}}/>Utilización</span>
+          <div className="flex items-start justify-between gap-2 mb-3">
+            <h2 className="font-bold text-gray-800 text-base flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full inline-block flex-shrink-0" style={{background:BUQUE_COLOR.DALKA}}/>
+              Dalka — Disponibilidad vs. Utilización
+            </h2>
+            <ExportBar targetRef={refChartDalka} filename="dalka-disp-vs-util"/>
+          </div>
+          <div ref={refChartDalka}>
+            <PromedioPeriodoChart datos={serieDalkaPeriodo}
+              series={[{key:"disp",label:"Solo Disponibilidad",color:DISP_UTIL_COLOR.disp},{key:"util",label:"Utilización",color:DISP_UTIL_COLOR.util}]}
+              height={240}/>
+            <div className="flex items-center gap-4 text-xs text-gray-500 mt-2">
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:DISP_UTIL_COLOR.disp}}/>Solo Disponibilidad</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:DISP_UTIL_COLOR.util}}/>Utilización</span>
+            </div>
           </div>
         </div>
       </div>
@@ -18979,6 +19222,12 @@ function DisponibilidadUtilizacion({user,data}){
               <button onClick={()=>{setFiltrosBuqueTabla([]);setFiltrosTerminalTabla([]);setFechaDesdeTabla("");setFechaHastaTabla("");setBusquedaNumeroFaena("");}}
                 className="text-xs text-gray-400 hover:text-red-500">Limpiar filtros</button>
             )}
+            <ExportBar targetRef={refFaenasTabla} filename="faenas-registradas"
+              excelData={{sheetName:"Faenas",headers:["Término op.","Buque","Terminal","N° Faena","Tractos OP","Tractos Util.","Solo Disp.","Utilización","Cumplimiento"],
+                rows:faenasFiltradas.map(f=>[f.terminoOp?new Date(f.terminoOp).toLocaleString("es-CL"):"—",f.buque,f.terminal,f.numeroFaena,f.tractosOp,f.tractosUtilizados,fmtPct(f.disponibilidadTecnica),fmtPct(f.utilizacion),fmtPct(f.cumplimiento)])}}
+              pdfData={{titulo:"Faenas registradas",subtitulo:`${faenasFiltradas.length} de ${faenas.length}`,
+                headers:["Término op.","Buque","Terminal","N° Faena","Tractos OP/Util","Solo Disp.","Utilización","Cumplimiento"],
+                rows:faenasFiltradas.map(f=>[f.terminoOp?new Date(f.terminoOp).toLocaleString("es-CL"):"—",f.buque,f.terminal,f.numeroFaena,`${f.tractosOp}/${f.tractosUtilizados}`,fmtPct(f.disponibilidadTecnica),fmtPct(f.utilizacion),fmtPct(f.cumplimiento)])}}/>
           </div>
         </div>
         {loadingFaenas?(
@@ -18986,7 +19235,7 @@ function DisponibilidadUtilizacion({user,data}){
         ):faenasFiltradas.length===0?(
           <p className="text-gray-400 text-xs italic">{faenas.length===0?"Todavía no hay faenas registradas.":"Ninguna faena coincide con los filtros."}</p>
         ):(
-          <table className="w-full text-sm">
+          <table ref={refFaenasTabla} className="w-full text-sm">
             <thead>
               <tr className="text-gray-400 text-left border-b border-gray-100">
                 <th className="pb-2 pr-3">Término op.</th>
@@ -19249,8 +19498,15 @@ function DisponibilidadUtilizacion({user,data}){
                 </div>
 
                 {informeModo==="trimestral"&&(<>
-                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Mes a mes</p>
-                <div className="overflow-x-auto mb-5">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Mes a mes</p>
+                  <ExportBar targetRef={buque==="ESPERANZA"?refMesAMesEsperanza:refMesAMesDalka} filename={`mes-a-mes-${nombre.toLowerCase()}-${periodoLabelInforme}`}
+                    excelData={{sheetName:"Mes a mes",headers:["Mes","Faenas","Solo Disp.","Utilización","Hs. indisponibilidad"],
+                      rows:informeMesAMes.map(m=>{const km=m[buque];return[m.label,km.n,km.n>0?fmtPct(km.dispProm):"—",km.n>0?fmtPct(km.utilProm):"—",fmtH(km.hhIndisp)];})}}
+                    pdfData={{titulo:`${nombre} — Mes a mes`,subtitulo:periodoLabelInforme,headers:["Mes","Faenas","Solo Disp.","Utilización","Hs. indisponibilidad"],
+                      rows:informeMesAMes.map(m=>{const km=m[buque];return[m.label,km.n,km.n>0?fmtPct(km.dispProm):"—",km.n>0?fmtPct(km.utilProm):"—",fmtH(km.hhIndisp)];})}}/>
+                </div>
+                <div ref={buque==="ESPERANZA"?refMesAMesEsperanza:refMesAMesDalka} className="overflow-x-auto mb-5">
                   <table className="w-full text-sm border-separate" style={{borderSpacing:0}}>
                     <thead>
                       <tr>
