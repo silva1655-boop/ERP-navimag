@@ -13319,6 +13319,9 @@ const [rejectTarget,setRejectTarget]=useState(null);
 const [rejectComment,setRejectComment]=useState("");
 const [activeTab,setActiveTab]=useState("todas");
 const canCreate=user.role==="operaciones"||user.role==="supervisor";
+// "Solo Ver" (permiso "requests"==="readonly") oculta crear/aprobar/
+// rechazar — solo aplica en Marítimo, Taller no cambia.
+const puedeEditarReq=activeModule!=="maritimo"||canEditPerm(user,"requests");
 // Grúas arrendadas (todo menos GRU-39/40/41) se trasladaron a su propia
 // página "Grúas Arrendadas" (solo jsoto/pgallardo/fstein) — ya no aparecen
 // acá para nadie, ni siquiera para ellos.
@@ -13500,7 +13503,7 @@ return(
   </div>
   <div className="flex gap-2">
     {tabFiltered.length>0&&<button onClick={exportReqs} className={btnSecondary} style={{borderColor:NV.blue,color:NV.blue,background:"white"}}><FileDown size={14}/>Exportar</button>}
-    {canCreate&&<button onClick={()=>setShowForm(true)} style={{background:NV.blue}} className={btnPrimary}><Plus size={15}/>Nueva Solicitud</button>}
+    {canCreate&&puedeEditarReq&&<button onClick={()=>setShowForm(true)} style={{background:NV.blue}} className={btnPrimary}><Plus size={15}/>Nueva Solicitud</button>}
   </div>
 </div>
 
@@ -13599,7 +13602,7 @@ return(
 </div>
 <div className="flex items-center gap-1.5 flex-shrink-0">
 <button onClick={()=>setSelReqId(r.id)} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-gray-600 transition"><Eye size={11}/>Ver Detalle</button>
-{user.role==="operaciones"&&r.status==="ops_pendiente"&&(r.source==="checklist"||r.source==="solicitud")&&(
+{puedeEditarReq&&user.role==="operaciones"&&r.status==="ops_pendiente"&&(r.source==="checklist"||r.source==="solicitud")&&(
   r.esGruaArrendada?(
     <button onClick={()=>marcarCoordinado(r)}
       className="flex items-center gap-1.5 text-white text-xs px-3 py-1.5 rounded-lg hover:opacity-90 transition font-medium"
@@ -13614,7 +13617,7 @@ return(
     </button>
   )
 )}
-{user.role==="supervisor"&&(r.status==="pendiente"||r.status==="ops_aprobada")&&(
+{puedeEditarReq&&user.role==="supervisor"&&(r.status==="pendiente"||r.status==="ops_aprobada")&&(
   <>
     <button onClick={()=>{
       if(r.source==="inspeccion"){
@@ -13758,7 +13761,7 @@ return(
 )}
 </div>
 {/* Action buttons inside detail modal */}
-{user.role==="operaciones"&&r.status==="ops_pendiente"&&(
+{puedeEditarReq&&user.role==="operaciones"&&r.status==="ops_pendiente"&&(
   <div className="border-t border-gray-100 pt-4 space-y-2">
     <p className="text-gray-500 text-xs font-semibold uppercase tracking-wide mb-2">Acciones</p>
     <div className="grid grid-cols-2 gap-2">
@@ -13796,7 +13799,7 @@ return(
     </div>
   </div>
 )}
-{user.role==="supervisor"&&(r.status==="ops_aprobada"||r.status==="pendiente")&&!linkedOT&&(
+{puedeEditarReq&&user.role==="supervisor"&&(r.status==="ops_aprobada"||r.status==="pendiente")&&!linkedOT&&(
   <div className="border-t border-gray-100 pt-4 space-y-2">
     <p className="text-gray-500 text-xs font-semibold uppercase tracking-wide mb-2">Acciones</p>
     <div className="grid grid-cols-2 gap-2">
@@ -20694,6 +20697,9 @@ function UsersPage({data,setData,currentUser,saveData,appendToArray,updateInArra
 const {users}=data;
 // Supervisor ve todos los usuarios sin importar el módulo; el resto solo los de su módulo activo
 const visibleUsers=currentUser?.role==="supervisor"?users:getUsersByModule(users,activeModule);
+// "Solo Ver" (permiso "users"==="readonly") oculta crear/editar/eliminar
+// — solo aplica en Marítimo, Taller no cambia.
+const puedeEditarUsers=activeModule!=="maritimo"||canEditPerm(currentUser,"users");
 const [showForm,setShowForm]=useState(false);
 const [editTarget,setEditTarget]=useState(null);
 const [confirmDel,setConfirmDel]=useState(null);
@@ -20772,9 +20778,11 @@ return(
       <h1 className="text-gray-900 font-bold text-xl">Gestión de Usuarios</h1>
       <p className="text-gray-500 text-sm">{users.length} usuarios registrados</p>
     </div>
+    {puedeEditarUsers&&(
     <button onClick={openNew} style={{background:NV.blue}} className={btnPrimary}>
       <Plus size={15}/>Nuevo Usuario
     </button>
+    )}
   </div>
 
   {/* Role summary */}
@@ -20835,6 +20843,7 @@ return(
                 </div>
               </div>
               {/* Actions */}
+              {puedeEditarUsers&&(
               <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition flex-shrink-0">
                 {u.deleted?(
                   <button onClick={()=>{
@@ -20877,6 +20886,7 @@ return(
                   </>
                 )}
               </div>
+              )}
             </div>
           ))}
         </div>
