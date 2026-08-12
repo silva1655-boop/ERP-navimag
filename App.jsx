@@ -71,20 +71,21 @@ const SEED_USERS_TALLER = [
 { id:"t8", name:"Mecánico 2",        role:"mecanico",    email:"mec2@navimag.cl",    password:"Navimag2026", avatar:"M2" },
 ];
 
+// Motorista 1/2 (antes m4/m5) sacados del seed — posición que ya no existe
+// en la dotación actual. mergeUsers solo agrega seeds que faltan (no
+// resucita eliminados), pero si nunca se habían borrado explícitamente en
+// Firestore, sacarlos de acá es lo que corta que se sigan re-creando.
 const SEED_USERS_MARITIMO = [
 { id:"m1", name:"Primer Ingeniero",  role:"supervisor",  email:"ping@navimag.cl",   password:"Navimag2026", avatar:"PI" },
 { id:"m2", name:"Segundo Ingeniero", role:"jefe_maquinas", email:"sing@navimag.cl",   password:"Navimag2026", avatar:"SI" },
 { id:"m3", name:"Oficial Máquinas",  role:"mecanico",    email:"ofic1@navimag.cl",  password:"Navimag2026", avatar:"OM" },
-{ id:"m4", name:"Motorista 1",       role:"operador",    email:"mot1@navimag.cl",   password:"Navimag2026", avatar:"MT" },
-{ id:"m5", name:"Motorista 2",       role:"operador",    email:"mot2@navimag.cl",   password:"Navimag2026", avatar:"M2" },
 ];
 
+// Motorista 1/2 (antes d4/d5) — mismo motivo que en SEED_USERS_MARITIMO.
 const SEED_USERS_DALKA = [
 { id:"d1", name:"Primer Ingeniero",  role:"supervisor",  email:"ping@navimag.cl",  password:"Navimag2026", avatar:"PI" },
 { id:"d2", name:"Segundo Ingeniero", role:"jefe_maquinas", email:"sing@navimag.cl",  password:"Navimag2026", avatar:"SI" },
 { id:"d3", name:"Oficial Máquinas",  role:"mecanico",    email:"ofic1@navimag.cl", password:"Navimag2026", avatar:"OM" },
-{ id:"d4", name:"Motorista 1",       role:"operador",    email:"mot1@navimag.cl",  password:"Navimag2026", avatar:"MT" },
-{ id:"d5", name:"Motorista 2",       role:"operador",    email:"mot2@navimag.cl",  password:"Navimag2026", avatar:"M2" },
 ];
 
 const SEED_USERS_SGN = [
