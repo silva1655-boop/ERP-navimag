@@ -528,7 +528,9 @@ function estadoDocumento(fechaVencimiento){
 }
 const peorEstadoDoc=(a,b)=>DOC_SEVERIDAD.indexOf(a)<=DOC_SEVERIDAD.indexOf(b)?a:b;
 const EMPTY_DOC_ITEM={numero:"",fechaEmision:"",fechaVencimiento:"",observaciones:""};
-const documentoDe=(docs,equipId)=>(docs||[]).find(d=>d.equipId===equipId)||{equipId,permisoCirculacion:{...EMPTY_DOC_ITEM},revisionTecnica:{...EMPTY_DOC_ITEM}};
+// patente: dato del vehículo, no de ningún documento en particular — vive
+// a nivel del registro del tracto, se muestra junto al nombre.
+const documentoDe=(docs,equipId)=>(docs||[]).find(d=>d.equipId===equipId)||{equipId,patente:"",permisoCirculacion:{...EMPTY_DOC_ITEM},revisionTecnica:{...EMPTY_DOC_ITEM}};
 // Mismo allowlist fijo que Gastos y Presupuesto (no existe un rol "admin"
 // alcanzable hoy vía mantek-auth); decisión explícita: reusar el mismo set.
 const canAccessDisponibilidad=canAccessGastos;
@@ -17874,6 +17876,7 @@ function GestionDocumentalPage({user,data}){
     const d=documentoDe(documentos,t.id);
     setForm({
       equipId:t.id,
+      patente:d.patente||"",
       permisoCirculacion:{...EMPTY_DOC_ITEM,...d.permisoCirculacion},
       revisionTecnica:{...EMPTY_DOC_ITEM,...d.revisionTecnica},
     });
@@ -17959,7 +17962,7 @@ function GestionDocumentalPage({user,data}){
               <div className="flex items-center justify-between mb-2">
                 <div>
                   <p className="font-bold text-gray-900 text-sm">{f.equip.code}</p>
-                  <p className="text-gray-500 text-xs">{f.equip.name}</p>
+                  <p className="text-gray-500 text-xs">{f.equip.name}{f.doc.patente&&<span className="text-gray-400"> · {f.doc.patente}</span>}</p>
                 </div>
                 <span className="text-lg">{cfgPeor.emoji}</span>
               </div>
@@ -17987,11 +17990,16 @@ function GestionDocumentalPage({user,data}){
           <div className="p-5 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
             <div>
               <p className="font-bold text-gray-900">{tractoSel.code}</p>
-              <p className="text-gray-400 text-xs">{tractoSel.name}</p>
+              <p className="text-gray-400 text-xs">{tractoSel.name}{form.patente&&<span> · {form.patente}</span>}</p>
             </div>
             <button onClick={cerrarDetalle}><X size={18} className="text-gray-400 hover:text-gray-700"/></button>
           </div>
           <div className="flex-1 overflow-y-auto p-5 space-y-5">
+            <div>
+              <label className="text-gray-500 text-xs font-medium mb-1 block">Patente</label>
+              <input value={form.patente} onChange={e=>setForm(f=>({...f,patente:e.target.value.toUpperCase()}))}
+                className={iCls} placeholder="ej: ABCD12"/>
+            </div>
             {[
               {key:"permisoCirculacion",label:"🪪 Permiso de Circulación"},
               {key:"revisionTecnica",label:"🔧 Revisión Técnica"},
