@@ -34060,9 +34060,6 @@ const [user,setUser]=useState(null);
           firestoreUsers.map(u=>
             [(u.username||u.name||'').toLowerCase(),u])
         );
-        const deletedIds=new Set(
-          firestoreUsers.filter(u=>u.deleted===true).map(u=>u.id)
-        );
         const merged=d.data
           .map(au=>{
             const fs2=
@@ -34073,7 +34070,13 @@ const [user,setUser]=useState(null);
               avgOperatingHoursLearned:fs2.avgOperatingHoursLearned||null,
               avgPreference:fs2.avgPreference||'learned',
               ...au,
-              deleted:false,
+              // Antes esto forzaba deleted:false SIEMPRE, sin importar lo
+              // que hubiera en Firestore — cada sync (al cargar y cada 5
+              // min) resucitaba a cualquier usuario eliminado desde la
+              // app en cuanto volvía a aparecer en mantek-auth. Ahora se
+              // respeta el estado real de Firestore: si ya se eliminó acá,
+              // sigue eliminado aunque mantek-auth lo siga trayendo.
+              deleted:fs2.deleted===true,
               // Preservar permisos y rol modificados localmente en Firestore
               permisos:fs2.permisos||au.permisos||{},
               role:fs2.role||au.role||'operador',
