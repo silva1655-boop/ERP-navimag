@@ -34370,6 +34370,24 @@ const unsubs=useRef([]);
 const [onlineUsers,setOnlineUsers]=useState([]);
 const presenceUnsub=useRef(null);
 
+// ── MANTENER user EN VIVO CON data.users ─────────────────────────────
+// user queda "congelado" en lo que devolvía data.users al momento del
+// login (setUser(u) en onLogin, más abajo) — un cambio de permisos que
+// haga un admin DESPUÉS no se aplicaba hasta cerrar sesión y volver a
+// entrar, porque getUserPerms/canEditPerm/canDoAction en todos los
+// componentes leen siempre el mismo objeto `user`, nunca data.users.
+// Este efecto mantiene `user` al día con lo que hay en Firestore (rol,
+// permisos, permisosAcciones, etc.) apenas cambia, preservando los
+// campos que solo existen en la sesión (ej. _sessionToken, que no vive
+// en Firestore) para no romper syncUsersFromAuth.
+useEffect(()=>{
+  if(!user) return;
+  const fresh=(data.users||[]).find(u=>u.id===user.id);
+  if(!fresh) return;
+  const merged={...user,...fresh,_sessionToken:user._sessionToken};
+  if(JSON.stringify(merged)!==JSON.stringify(user)) setUser(merged);
+},[data.users]);
+
 useEffect(()=>{
 if(!activeModule){setLoading(false);return;}
 // Esperando selección de barco — BarcoSelector se muestra, no cargar datos aún
