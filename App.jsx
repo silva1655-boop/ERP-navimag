@@ -500,6 +500,37 @@ const COLL_TRACTO_ESTADO="mantek_tracto_estado";
 // permanente del widget). No confundir con mantek_tracto_estado, que solo
 // guarda el estado ACTUAL de cada tracto, sin historial.
 const COLL_TRACTO_ESTADO_LOG="mantek_tracto_estado_log";
+// Gestión Documental de tractos — Permiso de Circulación y Revisión
+// Técnica por equipo, con fecha de emisión/vencimiento cada uno. Un
+// tracto sin fila acá simplemente no tiene datos cargados todavía (se
+// muestra "Sin registrar", no es un error).
+const COLL_GESTION_DOC="mantek_gestion_documental";
+// Umbrales del semáforo de vencimiento — mismo criterio para Permiso de
+// Circulación y Revisión Técnica. Se separan en 4 niveles (no solo
+// vencido/vigente) para que se note la urgencia a medida que se acerca,
+// no solo cuando ya es tarde.
+const DOC_ESTADO_CFG={
+  vencido:   {label:"Vencido",     emoji:"🔴", text:"text-red-700",    bg:"bg-red-50",    border:"border-red-300",    dot:"#DC2626"},
+  critico:   {label:"Crítico",     emoji:"🟠", text:"text-orange-700", bg:"bg-orange-50", border:"border-orange-300", dot:"#EA580C"},
+  por_vencer:{label:"Por vencer",  emoji:"🟡", text:"text-amber-700",  bg:"bg-amber-50",  border:"border-amber-300",  dot:"#D97706"},
+  vigente:   {label:"Vigente",     emoji:"🟢", text:"text-emerald-700",bg:"bg-emerald-50",border:"border-emerald-300",dot:"#16A34A"},
+  sin_dato:  {label:"Sin registrar",emoji:"⚪", text:"text-gray-500",  bg:"bg-gray-50",   border:"border-gray-200",   dot:"#9CA3AF"},
+};
+// Orden de severidad (peor primero) — usado para combinar el estado de
+// Permiso + Revisión en un solo semáforo por tracto en el resumen.
+const DOC_SEVERIDAD=["vencido","critico","por_vencer","sin_dato","vigente"];
+function estadoDocumento(fechaVencimiento){
+  if(!fechaVencimiento) return{key:"sin_dato",...DOC_ESTADO_CFG.sin_dato,dias:null};
+  const hoy=new Date();hoy.setHours(0,0,0,0);
+  const venc=new Date(fechaVencimiento+"T00:00:00");
+  if(isNaN(venc.getTime())) return{key:"sin_dato",...DOC_ESTADO_CFG.sin_dato,dias:null};
+  const dias=Math.round((venc-hoy)/86400000);
+  const key=dias<0?"vencido":dias<=15?"critico":dias<=30?"por_vencer":"vigente";
+  return{key,...DOC_ESTADO_CFG[key],dias};
+}
+const peorEstadoDoc=(a,b)=>DOC_SEVERIDAD.indexOf(a)<=DOC_SEVERIDAD.indexOf(b)?a:b;
+const EMPTY_DOC_ITEM={numero:"",fechaEmision:"",fechaVencimiento:"",observaciones:""};
+const documentoDe=(docs,equipId)=>(docs||[]).find(d=>d.equipId===equipId)||{equipId,permisoCirculacion:{...EMPTY_DOC_ITEM},revisionTecnica:{...EMPTY_DOC_ITEM}};
 // Mismo allowlist fijo que Gastos y Presupuesto (no existe un rol "admin"
 // alcanzable hoy vía mantek-auth); decisión explícita: reusar el mismo set.
 const canAccessDisponibilidad=canAccessGastos;
@@ -1691,7 +1722,7 @@ const ROLE_DEFAULT_PERMS={
     checklist:true, historial_postop:true, deviaciones:true, reports:true,
     users:true, accesos:true, notifications:true,
     vessels:true, voyages:true, repuestos:true,
-    dashboard_checklist:true, operadores:true, config_reportes:true, faena_activa:true, estado_tractos:true, manuales:true, torque:true
+    dashboard_checklist:true, operadores:true, config_reportes:true, faena_activa:true, estado_tractos:true, gestion_documental:true, manuales:true, torque:true
   },
   supervisor:{
     dashboard:true, workorders:true, equipment:true,
@@ -1699,7 +1730,7 @@ const ROLE_DEFAULT_PERMS={
     checklist:true, historial_postop:true, deviaciones:true, reports:true,
     users:true, accesos:true, notifications:false,
     vessels:true, voyages:true, repuestos:true, dashboard_checklist:true, operadores:true,
-    config_reportes:true, faena_activa:true, estado_tractos:true
+    config_reportes:true, faena_activa:true, estado_tractos:true, gestion_documental:true
   },
   operaciones:{
     dashboard:true, workorders:false, equipment:false,
@@ -1707,7 +1738,7 @@ const ROLE_DEFAULT_PERMS={
     checklist:true, historial_postop:true, deviaciones:false, reports:false,
     users:false, accesos:false, notifications:true,
     vessels:true, voyages:true, repuestos:false, dashboard_checklist:true, operadores:true,
-    faena_activa:true, estado_tractos:true
+    faena_activa:true, estado_tractos:true, gestion_documental:true
   },
   // Herramientas Técnicas (Manuales + Calculadora de Torque) es exclusivo
   // de mecánicos (Taller) y csilva/jimunoz (override en getUserPerms) —
@@ -1716,7 +1747,7 @@ const ROLE_DEFAULT_PERMS={
     dashboard:true, workorders:true, equipment:false,
     plans:false, indicadores:false, requests:false,
     checklist:true, historial_postop:true, deviaciones:true, reports:true,
-    users:false, accesos:false, notifications:false, repuestos:false, estado_tractos:true, manuales:true, torque:true
+    users:false, accesos:false, notifications:false, repuestos:false, estado_tractos:true, gestion_documental:true, manuales:true, torque:true
   },
   operador:{
     dashboard:true, workorders:false, equipment:false,
@@ -1801,6 +1832,7 @@ const NAV_CATEGORIAS={
       {key:"checklist",        label:"Checklist Pre-op"},
       {key:"historial_postop", label:"Historial Post-Op"},
       {key:"estado_tractos",   label:"Estado de Tractos"},
+      {key:"gestion_documental",label:"Gestión Documental"},
       {key:"faena_activa",     label:"Faena en Curso"},
       {key:"gruas_arrendadas", label:"Grúas Arrendadas"},
     ],
@@ -17756,6 +17788,263 @@ function EstadoTractosPage({user,data}){
           );
         })}
       </div>
+    </div>
+  );
+}
+
+// ─── GESTIÓN DOCUMENTAL (tractos) ────────────────────────────────────────────
+// Permiso de Circulación + Revisión Técnica por tracto, con semáforo de
+// vencimiento (vencido/crítico/por vencer/vigente/sin registrar — ver
+// estadoDocumento arriba). Mismo patrón de datos que EstadoTractosPage:
+// colección chica propia (mantek_gestion_documental), onSnapshot directo,
+// un solo doc "documentos" con {data:[...]} por tracto.
+function DocBadge({estado,mostrarDias=true}){
+  return(
+    <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full border ${estado.text} ${estado.bg} ${estado.border}`}>
+      {estado.emoji} {estado.label}
+      {mostrarDias&&estado.dias!=null&&(
+        <span className="font-normal opacity-80">
+          {estado.key==="vencido"?`hace ${Math.abs(estado.dias)}d`:`${estado.dias}d`}
+        </span>
+      )}
+    </span>
+  );
+}
+function GestionDocumentalPage({user,data}){
+  const equip=data?.equip||[];
+  const quien=user.name||user.username||"";
+  const [documentos,setDocumentos]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [selId,setSelId]=useState(null);
+  const [form,setForm]=useState(null);
+  const [orden,setOrden]=useState("urgencia"); // urgencia|codigo
+  const [filtroEstado,setFiltroEstado]=useState("");
+
+  useEffect(()=>{
+    const unsub=onSnapshot(doc(db,COLL_GESTION_DOC,"documentos"),snap=>{
+      setDocumentos(snap.exists()?(snap.data().data||[]):[]);
+      setLoading(false);
+    });
+    return()=>unsub();
+  },[]);
+
+  // Liftec (grúas horquilla) no llevan permiso de circulación/revisión
+  // técnica de vehículo — mismo criterio de exclusión que EstadoTractosPage.
+  const tractos=equip.filter(e=>!e.deleted&&TRACTO_GRUPOS_VALIDOS.includes(getGroup(e))&&getGroup(e)!=="Liftec");
+
+  const filas=useMemo(()=>tractos.map(t=>{
+    const d=documentoDe(documentos,t.id);
+    const ep=estadoDocumento(d.permisoCirculacion?.fechaVencimiento);
+    const er=estadoDocumento(d.revisionTecnica?.fechaVencimiento);
+    const peor=peorEstadoDoc(ep.key,er.key);
+    return{equip:t,doc:d,estadoPermiso:ep,estadoRevision:er,estadoPeor:peor};
+  }),[tractos,documentos]);
+
+  const filasOrdenadas=useMemo(()=>{
+    let out=[...filas];
+    if(filtroEstado) out=out.filter(f=>f.estadoPeor===filtroEstado);
+    if(orden==="urgencia"){
+      out.sort((a,b)=>{
+        const sev=DOC_SEVERIDAD.indexOf(a.estadoPeor)-DOC_SEVERIDAD.indexOf(b.estadoPeor);
+        if(sev!==0) return sev;
+        const da=Math.min(a.estadoPermiso.dias??999,a.estadoRevision.dias??999);
+        const db=Math.min(b.estadoPermiso.dias??999,b.estadoRevision.dias??999);
+        return da-db;
+      });
+    }else{
+      out.sort((a,b)=>(a.equip.code||"").localeCompare(b.equip.code||""));
+    }
+    return out;
+  },[filas,orden,filtroEstado]);
+
+  const resumen={vencido:0,critico:0,por_vencer:0,vigente:0,sin_dato:0};
+  filas.forEach(f=>resumen[f.estadoPeor]++);
+
+  // Lista corta de "requiere atención" (vencidos o críticos, en cualquiera
+  // de los 2 documentos) — para que salte a la vista sin tener que leer
+  // tarjeta por tarjeta.
+  const requierenAtencion=useMemo(()=>{
+    const out=[];
+    filas.forEach(f=>{
+      if(["vencido","critico"].includes(f.estadoPermiso.key)) out.push({equip:f.equip,tipo:"Permiso de Circulación",estado:f.estadoPermiso});
+      if(["vencido","critico"].includes(f.estadoRevision.key)) out.push({equip:f.equip,tipo:"Revisión Técnica",estado:f.estadoRevision});
+    });
+    return out.sort((a,b)=>(a.estado.dias??-999)-(b.estado.dias??-999));
+  },[filas]);
+
+  const abrirDetalle=(t)=>{
+    const d=documentoDe(documentos,t.id);
+    setForm({
+      equipId:t.id,
+      permisoCirculacion:{...EMPTY_DOC_ITEM,...d.permisoCirculacion},
+      revisionTecnica:{...EMPTY_DOC_ITEM,...d.revisionTecnica},
+    });
+    setSelId(t.id);
+  };
+  const cerrarDetalle=()=>{setSelId(null);setForm(null);};
+
+  const guardar=async()=>{
+    if(!form) return;
+    const nueva={...form,actualizadoPor:quien,actualizadoEn:new Date().toISOString()};
+    const actualizados=[...documentos.filter(d=>d.equipId!==form.equipId),nueva];
+    setDocumentos(actualizados);
+    await setDoc(doc(db,COLL_GESTION_DOC,"documentos"),{data:actualizados});
+    cerrarDetalle();
+  };
+
+  if(!getUserPerms(user).gestion_documental) return null;
+  if(loading) return <div className="flex-1 flex items-center justify-center p-10 text-gray-400 text-sm">Cargando…</div>;
+
+  const tractoSel=selId?tractos.find(t=>t.id===selId):null;
+
+  return(
+    <div className="p-4 lg:p-6">
+      <div className="mb-5">
+        <h1 className="text-gray-900 font-bold text-xl flex items-center gap-2">📋 Gestión Documental</h1>
+        <p className="text-gray-500 text-sm mt-0.5">Permiso de Circulación y Revisión Técnica por tracto — click en un tracto para ver o cargar el detalle.</p>
+      </div>
+
+      {/* Resumen semáforo */}
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-4">
+        {["vencido","critico","por_vencer","vigente","sin_dato"].map(k=>{
+          const cfg=DOC_ESTADO_CFG[k];
+          return(
+            <button key={k} onClick={()=>setFiltroEstado(f=>f===k?"":k)}
+              className={`rounded-2xl border-2 p-3 text-center transition ${filtroEstado===k?cfg.border+" "+cfg.bg:"border-gray-100 bg-white hover:border-gray-200"}`}>
+              <p className={`text-2xl font-bold ${cfg.text}`}>{resumen[k]}</p>
+              <p className="text-gray-400 text-[11px] mt-0.5">{cfg.emoji} {cfg.label}</p>
+            </button>
+          );
+        })}
+      </div>
+      {filtroEstado&&(
+        <button onClick={()=>setFiltroEstado("")} className="text-xs text-blue-600 hover:underline mb-4">← Quitar filtro ({DOC_ESTADO_CFG[filtroEstado].label})</button>
+      )}
+
+      {/* Requiere atención */}
+      {requierenAtencion.length>0&&!filtroEstado&&(
+        <div className="bg-red-50 border border-red-200 rounded-2xl p-4 mb-5">
+          <p className="text-red-800 font-bold text-sm mb-2 flex items-center gap-1.5">⚠️ Requieren atención ({requierenAtencion.length})</p>
+          <div className="flex flex-wrap gap-2">
+            {requierenAtencion.map((r,i)=>(
+              <button key={i} onClick={()=>abrirDetalle(r.equip)}
+                className="flex items-center gap-1.5 bg-white border border-red-200 rounded-lg px-2.5 py-1.5 text-xs hover:bg-red-100 transition">
+                <span className="font-bold text-gray-800">{r.equip.code}</span>
+                <span className="text-gray-500">{r.tipo}</span>
+                <DocBadge estado={r.estado}/>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Orden */}
+      <div className="flex items-center justify-between mb-3">
+        <p className="text-gray-500 text-xs">{filasOrdenadas.length} tracto{filasOrdenadas.length!==1?"s":""}</p>
+        <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
+          {[{k:"urgencia",l:"Más urgente primero"},{k:"codigo",l:"Por código"}].map(o=>(
+            <button key={o.k} onClick={()=>setOrden(o.k)}
+              className={`px-3 py-1.5 rounded-md text-xs font-semibold transition ${orden===o.k?"bg-white shadow-sm text-blue-700":"text-gray-500 hover:text-gray-700"}`}>
+              {o.l}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Lista de tractos */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+        {filasOrdenadas.map(f=>{
+          const cfgPeor=DOC_ESTADO_CFG[f.estadoPeor];
+          return(
+            <button key={f.equip.id} onClick={()=>abrirDetalle(f.equip)}
+              className={`text-left rounded-2xl border-2 p-3.5 transition hover:shadow-md ${cfgPeor.border} ${cfgPeor.bg}`}>
+              <div className="flex items-center justify-between mb-2">
+                <div>
+                  <p className="font-bold text-gray-900 text-sm">{f.equip.code}</p>
+                  <p className="text-gray-500 text-xs">{f.equip.name}</p>
+                </div>
+                <span className="text-lg">{cfgPeor.emoji}</span>
+              </div>
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-gray-500 text-[11px]">🪪 Permiso Circ.</span>
+                  <DocBadge estado={f.estadoPermiso}/>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-gray-500 text-[11px]">🔧 Rev. Técnica</span>
+                  <DocBadge estado={f.estadoRevision}/>
+                </div>
+              </div>
+            </button>
+          );
+        })}
+        {filasOrdenadas.length===0&&(
+          <p className="text-gray-400 text-sm italic col-span-full text-center py-10">Ningún tracto coincide con el filtro.</p>
+        )}
+      </div>
+
+      {/* Detalle */}
+      {tractoSel&&form&&(
+        <DetailPanel onClose={cerrarDetalle}>
+          <div className="p-5 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
+            <div>
+              <p className="font-bold text-gray-900">{tractoSel.code}</p>
+              <p className="text-gray-400 text-xs">{tractoSel.name}</p>
+            </div>
+            <button onClick={cerrarDetalle}><X size={18} className="text-gray-400 hover:text-gray-700"/></button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-5 space-y-5">
+            {[
+              {key:"permisoCirculacion",label:"🪪 Permiso de Circulación"},
+              {key:"revisionTecnica",label:"🔧 Revisión Técnica"},
+            ].map(({key,label})=>{
+              const item=form[key];
+              const est=estadoDocumento(item.fechaVencimiento);
+              return(
+                <div key={key} className={`rounded-2xl border-2 p-4 ${est.border} ${est.bg}`}>
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="font-semibold text-gray-800 text-sm">{label}</p>
+                    <DocBadge estado={est}/>
+                  </div>
+                  <div className="space-y-2.5">
+                    <div>
+                      <label className="text-gray-500 text-xs font-medium mb-1 block">N° de documento</label>
+                      <input value={item.numero} onChange={e=>setForm(f=>({...f,[key]:{...f[key],numero:e.target.value}}))}
+                        className={iCls} placeholder="Opcional"/>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-gray-500 text-xs font-medium mb-1 block">Fecha emisión</label>
+                        <input type="date" value={item.fechaEmision} onChange={e=>setForm(f=>({...f,[key]:{...f[key],fechaEmision:e.target.value}}))} className={iCls}/>
+                      </div>
+                      <div>
+                        <label className="text-gray-500 text-xs font-medium mb-1 block">Fecha vencimiento *</label>
+                        <input type="date" value={item.fechaVencimiento} onChange={e=>setForm(f=>({...f,[key]:{...f[key],fechaVencimiento:e.target.value}}))} className={iCls}/>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-gray-500 text-xs font-medium mb-1 block">Observaciones</label>
+                      <input value={item.observaciones} onChange={e=>setForm(f=>({...f,[key]:{...f[key],observaciones:e.target.value}}))}
+                        className={iCls} placeholder="Opcional"/>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+            {(()=>{
+              const d=documentoDe(documentos,tractoSel.id);
+              return d.actualizadoPor?(
+                <p className="text-gray-400 text-[11px]">Última actualización: {d.actualizadoPor} — {fmtDT(d.actualizadoEn)}</p>
+              ):null;
+            })()}
+          </div>
+          <div className="p-4 border-t border-gray-100 flex-shrink-0">
+            <button onClick={guardar} className="w-full py-3 rounded-xl text-white font-semibold text-sm transition hover:opacity-90" style={{background:NV.blue}}>
+              💾 Guardar
+            </button>
+          </div>
+        </DetailPanel>
+      )}
     </div>
   );
 }
@@ -34978,6 +35267,7 @@ gastos:        <GastosPresupuesto user={user} data={data} activeModule={activeMo
 disponibilidad:<DisponibilidadUtilizacion user={user} data={data}/>,
 faena_activa:  <FaenaActivaPage user={user} data={data}/>,
 estado_tractos:<EstadoTractosPage user={user} data={data}/>,
+gestion_documental:<GestionDocumentalPage user={user} data={data}/>,
 };
 
 return(
