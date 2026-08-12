@@ -21070,6 +21070,32 @@ const [editPerms,setEditPerms]=useState({});
 // — {modulo:{accion:true|false}}, aparte de editPerms (que es el estado
 // grueso Activo/Solo Ver/Sin acceso por módulo).
 const [editAcciones,setEditAcciones]=useState({});
+// Zona de peligro: reinicio de historial de Marítimo (OTs, lecturas de
+// horómetro y planes) en Esperanza + Dalka, manteniendo equipos/usuarios/
+// solicitudes/checklists intactos. Ver ejecutarResetMaritimo más abajo.
+const [showResetMaritimo,setShowResetMaritimo]=useState(false);
+const [resetConfirmText,setResetConfirmText]=useState("");
+const [resetting,setResetting]=useState(false);
+const ejecutarResetMaritimo=async()=>{
+  if(resetConfirmText.trim().toUpperCase()!=="BORRAR") return;
+  setResetting(true);
+  try{
+    const vacio={data:[]};
+    for(const coll of [COLL_MARITIMO,COLL_DALKA]){
+      await setDoc(doc(db,coll,"workOrders"),vacio);
+      await setDoc(doc(db,coll,"hourmeterReadings"),vacio);
+      await setDoc(doc(db,coll,"plans"),vacio);
+      await setDoc(doc(db,coll,"planAssignments"),vacio);
+    }
+    alert("✅ Historial de OTs, lecturas de horómetro y planes reiniciado en Esperanza y Dalka. Los equipos, usuarios, solicitudes y checklists no se tocaron.");
+    setShowResetMaritimo(false);
+    setResetConfirmText("");
+  }catch(e){
+    console.error("ejecutarResetMaritimo:",e);
+    alert("⚠️ Error al reiniciar — algunos datos pueden haber quedado a medio borrar. Revisa manualmente antes de reintentar.");
+  }
+  setResetting(false);
+};
 
 const openNew=()=>{
   setEditTarget(null);
@@ -21257,6 +21283,59 @@ return(
       </div>
     );
   })}
+
+  {/* Zona de peligro — reinicio de historial de Marítimo */}
+  {activeModule==="maritimo"&&currentUser?.role==="supervisor"&&(
+    <div className="mt-8 border-2 border-dashed border-red-200 rounded-2xl p-4">
+      <p className="text-red-700 font-bold text-sm flex items-center gap-1.5 mb-1">⚠️ Zona de peligro</p>
+      <p className="text-gray-500 text-xs mb-3">Reinicia el historial operativo de Marítimo (Esperanza + Dalka) para empezar de cero. No se puede deshacer.</p>
+      <button onClick={()=>setShowResetMaritimo(true)}
+        className="flex items-center gap-1.5 text-xs font-semibold text-red-600 px-3 py-2 rounded-lg border border-red-300 bg-white hover:bg-red-50 transition">
+        <Trash2 size={13}/>Reiniciar historial de Marítimo
+      </button>
+    </div>
+  )}
+
+  {showResetMaritimo&&(
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-white border border-gray-200 rounded-2xl shadow-xl p-6 w-full max-w-md">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 bg-red-50 border border-red-200 rounded-xl flex items-center justify-center flex-shrink-0">
+            <Trash2 size={18} className="text-red-600"/>
+          </div>
+          <div>
+            <p className="text-gray-900 font-bold text-sm">Reiniciar historial de Marítimo</p>
+            <p className="text-gray-500 text-xs">Esperanza + Dalka</p>
+          </div>
+        </div>
+        <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-3 text-xs text-red-700 space-y-1.5">
+          <p className="font-semibold">Esto borra permanentemente, en las dos naves:</p>
+          <ul className="list-disc list-inside space-y-0.5">
+            <li>Todas las Órdenes de Trabajo (OTs) y su historial</li>
+            <li>Todo el historial de lecturas de horómetro</li>
+            <li>Todos los planes de mantenimiento creados (planes y asignaciones)</li>
+          </ul>
+        </div>
+        <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 mb-4 text-xs text-emerald-700">
+          <p className="font-semibold mb-0.5">No se toca:</p>
+          <p>Equipos (con su horómetro actual tal cual está), usuarios, solicitudes, checklists, buques/certificados, travesías.</p>
+        </div>
+        <label className="text-xs text-gray-500 font-medium mb-1 block">Escribí <strong>BORRAR</strong> para confirmar</label>
+        <input value={resetConfirmText} onChange={e=>setResetConfirmText(e.target.value)}
+          className={iCls+" mb-4"} placeholder="BORRAR" autoFocus/>
+        <div className="flex gap-2">
+          <button onClick={ejecutarResetMaritimo} disabled={resetConfirmText.trim().toUpperCase()!=="BORRAR"||resetting}
+            className="flex-1 bg-red-600 hover:bg-red-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold py-2.5 rounded-lg text-sm transition">
+            {resetting?"Borrando…":"Confirmar borrado"}
+          </button>
+          <button onClick={()=>{setShowResetMaritimo(false);setResetConfirmText("");}}
+            className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2.5 rounded-lg text-sm transition">
+            Cancelar
+          </button>
+        </div>
+      </div>
+    </div>
+  )}
 
   {/* Create / Edit Modal */}
   {showForm&&(
