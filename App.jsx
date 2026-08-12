@@ -26640,7 +26640,10 @@ function VesselsPage({user,data,setData}){
   const [confirmDel,setConfirmDel]=useState(null);
   const [filterStatus,setFilterStatus]=useState("");
   const [filterVessel,setFilterVessel]=useState("");
-  const isSup=user.role==="supervisor";
+  // "Solo Ver" (permiso "vessels"==="readonly") oculta crear/editar/
+  // eliminar — todos los botones de mutación de esta página ya estaban
+  // gateados por isSup, así que alcanza con sumarle canEditPerm acá.
+  const isSup=user.role==="supervisor"&&canEditPerm(user,"vessels");
 
   const EMPTY_VESSEL={name:"",imo:"",mmsi:"",callSign:"",flag:"Chile",type:"Ferry Mixto (Pasajeros+Carga)",grossTonnage:"",yearBuilt:"",classificationSociety:"",owner:"",operator:""};
   const EMPTY_CERT={vesselId:"",typeId:"",customLabel:"",number:"",issuingAuthority:"",issueDate:"",expiryDate:"",notes:"",hasAnnualEndorsement:false,endorsementDate:""};
@@ -27255,7 +27258,13 @@ function VoyagesPage({user,data,setData}){
   const [editVoyage,setEditVoyage]=useState(null);
   const [sel,setSel]=useState(null);
   const [filterVessel,setFilterVessel]=useState("");
-  const isSup=user.role==="supervisor";
+  // "Solo Ver" (permiso "voyages"==="readonly") oculta crear/editar/
+  // eliminar. A diferencia de VesselsPage, acá "Nueva Travesía" no estaba
+  // gateado por rol (cualquiera con acceso a la página podía crear), así
+  // que además de sumarlo a isSup (editar/eliminar) hay que gatear el
+  // botón de creación y el <select> de estado inline por separado.
+  const puedeEditarVoy=canEditPerm(user,"voyages");
+  const isSup=user.role==="supervisor"&&puedeEditarVoy;
 
   const EMPTY_VOYAGE={
     vesselId:"",code:"",
@@ -27359,10 +27368,12 @@ function VoyagesPage({user,data,setData}){
               <FileDown size={14}/>Exportar CSV
             </button>
           )}
+          {puedeEditarVoy&&(
           <button onClick={()=>{setForm(EMPTY_VOYAGE);setEditVoyage(null);setShowForm(true);}}
             className={btnPrimary} style={{background:NV.blue}}>
             <Plus size={15}/>Nueva Travesía
           </button>
+          )}
         </div>
       </div>
 
@@ -27438,13 +27449,14 @@ function VoyagesPage({user,data,setData}){
                   <div className="flex gap-1 flex-shrink-0">
                     <select
                       value={v.status}
+                      disabled={!puedeEditarVoy}
                       onClick={e=>e.stopPropagation()}
                       onChange={e=>{
                         const updated=voyages.map(x=>x.id===v.id?{...x,status:e.target.value}:x);
                         setData(d=>({...d,voyages:updated}));
                         saveData("voyages",updated);
                       }}
-                      className="text-xs border border-gray-200 rounded-lg px-2 py-1 focus:outline-none bg-white">
+                      className="text-xs border border-gray-200 rounded-lg px-2 py-1 focus:outline-none bg-white disabled:opacity-60 disabled:cursor-not-allowed">
                       <option value="planificado">Planificado</option>
                       <option value="en_curso">En Curso</option>
                       <option value="completado">Completado</option>
