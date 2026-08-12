@@ -18548,6 +18548,13 @@ function DisponibilidadUtilizacion({user,data}){
       // entra en calcularFaenaDerivados. Queda en blanco/null para faenas
       // cargadas a mano (histórico) que no pasaron por ese flujo.
       tractosDisponiblesSnapshot:f.tractosDisponiblesSnapshot!==""&&f.tractosDisponiblesSnapshot!=null?parseFloat(f.tractosDisponiblesSnapshot):null,
+      // Este formulario exige inicioOp y terminoOp (ver validación arriba) —
+      // toda faena guardada acá está terminada, así que siempre debe quedar
+      // "cerrada". Antes no se seteaba estado, así que una faena que venía
+      // "activa" (abierta desde Faena en Curso) le podías completar el
+      // término acá y quedaba con la fecha puesta pero seguía "activa" para
+      // siempre — ese era el bug.
+      estado:"cerrada",
       ...derivados,recalculadoEn:ahora,
     };
     if(editFaenaId){
