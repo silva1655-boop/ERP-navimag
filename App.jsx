@@ -4636,6 +4636,9 @@ function MaterialesEquipoQuickPick({equipId,materialesEquipo,onAgregarAPlan,onAb
 
 function WorkOrders({user,data,setData,saveData,appendToArray,updateInArray,activeCOLL,setPmNotifications,activeModule}){
 const {wos,equip,users,requests,plans}=data;
+  // "Solo Ver" (permiso "workorders"==="readonly") oculta crear/editar/
+  // eliminar — solo aplica en Marítimo, Taller no cambia.
+  const puedeEditarWO=activeModule!=="maritimo"||canEditPerm(user,"workorders");
   const [filter,setFilter]=useState("all"); const [search,setSearch]=useState("");
   const [flt,setFlt]=useState({status:"",type:"",equipId:"",assignedTo:"",dateFrom:"",dateTo:""});
   const [equipVista,setEquipVista]=useState("todas");
@@ -6071,9 +6074,11 @@ return(
   </div>
   {role==="supervisor"&&(
     <div className="flex items-center gap-2">
+      {puedeEditarWO&&(
       <button onClick={()=>{setNewOTForm(EMPTY_NEW_OT);setShowNewOT(true);}} className="flex items-center gap-1.5 text-white font-semibold px-4 py-2.5 rounded-lg text-sm transition" style={{background:NV.navy}}>
         <Plus size={15}/>Nueva OT
       </button>
+      )}
       <button className="flex items-center gap-1.5 text-gray-600 font-semibold px-4 py-2.5 rounded-lg text-sm border border-gray-200 bg-white hover:bg-gray-50 transition">
         <Download size={15}/>Exportar<ChevronDown size={13}/>
       </button>
@@ -6163,6 +6168,7 @@ return(
                     <span className="text-gray-700 text-xs flex-1 truncate">{w.title}</span>
                     <span className="text-gray-400 text-xs">{eq?.code}</span>
                     <span className="text-gray-400 text-xs">{mec?.name}</span>
+                    {puedeEditarWO&&(
                     <div className="flex gap-1.5 flex-shrink-0">
                       <button onClick={()=>{
                         updWO(w.id,{status:"asignada"},`Aprobada por ${user.name}`);
@@ -6180,6 +6186,7 @@ return(
                         <X size={11}/>Rechazar
                       </button>
                     </div>
+                    )}
                   </div>
                 );
               })}
@@ -6554,7 +6561,7 @@ const canStart=(isAssignedToMe||role==="supervisor")&&["asignada","planificada",
 // Las OT de origen preventivo (plan PM) no se pueden rechazar: rechazarlas
 // no regenera un reemplazo (a diferencia del cierre normal), así que dejaría
 // el ciclo de mantención programada sin OT activa hasta el próximo reload.
-const canReject=role==="supervisor"&&w.type!=="preventiva"&&!["completada","cancelada"].includes(w.status);
+const canReject=role==="supervisor"&&w.type!=="preventiva"&&!["completada","cancelada"].includes(w.status)&&puedeEditarWO;
 const sem=getSemaforo(w);
 // Fecha real de término de la intervención (NUNCA new Date()): prioridad
 // horaTerminoReal > fechaTermino > closedAt (solo si ya está completada).
@@ -6726,10 +6733,12 @@ style={sel?.id===w.id?{borderColor:NV.blue,background:"#EBF4FF"}:sem?{borderColo
           <>
             <span className="text-xs text-gray-400">|</span>
             <span className="text-xs font-semibold text-blue-700">{selBLIds.size} seleccionada{selBLIds.size!==1?"s":""}</span>
+            {puedeEditarWO&&(
             <button onClick={deleteBulkBL}
               className="flex items-center gap-1.5 text-xs font-semibold text-white bg-red-500 hover:bg-red-600 px-3 py-1.5 rounded-lg transition">
               <Trash2 size={12}/>Eliminar selección
             </button>
+            )}
             <button onClick={()=>setSelBLIds(new Set())}
               className="text-xs text-gray-400 hover:text-gray-600">
               Deseleccionar todo
@@ -7103,7 +7112,7 @@ style={sel?.id===w.id?{borderColor:NV.blue,background:"#EBF4FF"}:sem?{borderColo
             {cur.plannedReason&&(
               <p className="text-gray-600 text-xs">{cur.plannedReason}</p>
             )}
-            {cur.status==="planificada"&&(role==="supervisor"||cur.assignedTo===user.id||cur.assignedTo===user.name||(cur.assignedToName&&cur.assignedToName===user.name))&&(
+            {cur.status==="planificada"&&(role==="supervisor"||cur.assignedTo===user.id||cur.assignedTo===user.name||(cur.assignedToName&&cur.assignedToName===user.name))&&puedeEditarWO&&(
               <div className="flex flex-wrap gap-2 mt-3">
                 <button
                   onClick={()=>{
@@ -7775,6 +7784,9 @@ function Equipment({user,data,setData,saveData,appendToArray,updateInArray,activ
 const {equip,plans,requests=[],wos=[],hourmeterReadings=[]}=data;
 const isSup=user.role==="supervisor"||user.role==="admin"||user.authRole==="ADMIN";
 const isMar=activeModule==="maritimo";
+// "Solo Ver" (permiso "equipment"==="readonly") oculta crear/editar/
+// eliminar — solo aplica en Marítimo, Taller no cambia.
+const puedeEditarEq=!isMar||canEditPerm(user,"equipment");
 
 // States
 const [search,setSearch]=useState("");
@@ -8034,7 +8046,7 @@ return(
     <Calendar size={13}/>
     {new Date().toLocaleDateString("es-CL",{day:"2-digit",month:"long",year:"numeric"})}
   </div>
-  {isSup&&<div className="flex gap-2 flex-wrap">
+  {isSup&&puedeEditarEq&&<div className="flex gap-2 flex-wrap">
     {isMar&&<button onClick={()=>xlsxEquipRef.current?.click()} className={btnSecondary} style={{borderColor:"#7C3AED",color:"#7C3AED",background:"white"}}><Upload size={15}/>Carga masiva</button>}
     <button onClick={()=>setShowBulkHours(true)} className={btnSecondary} style={{borderColor:NV.blue,color:NV.blue,background:"white"}}><Gauge size={15}/>Actualizar Horómetros</button>
     <button onClick={openNew} style={{background:NV.blue}} className={btnPrimary}><Plus size={15}/>Nuevo Equipo</button>
@@ -8167,7 +8179,7 @@ return(
 {isMar?(
 <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-5">
 <div>
-  {isSup&&selEquipIds.size>0&&(
+  {isSup&&puedeEditarEq&&selEquipIds.size>0&&(
     <div className="flex items-center gap-3 px-4 py-2.5 mb-2 rounded-xl bg-red-50 border border-red-200">
       <span className="text-xs font-semibold text-red-700">{selEquipIds.size} equipo(s) seleccionado(s)</span>
       <button onClick={deleteBulkEquip} className="flex items-center gap-1.5 text-xs font-semibold text-white bg-red-500 hover:bg-red-600 px-3 py-1.5 rounded-lg transition"><Trash2 size={12}/>Eliminar selección</button>
@@ -8231,10 +8243,10 @@ return(
       {isSup&&(
       <td className="px-4 py-2.5" onClick={ev=>ev.stopPropagation()}>
       <div className="flex items-center justify-center gap-1">
-        <button onClick={()=>openEdit(e)} className="p-1.5 rounded-lg hover:bg-blue-50 transition" style={{color:NV.blue}} title="Editar"><Edit2 size={13}/></button>
-        <button onClick={()=>openHourmeterModal(e)} className="p-1.5 rounded-lg hover:bg-green-50 transition text-green-600" title="Actualizar horómetro"><Gauge size={13}/></button>
+        {puedeEditarEq&&<button onClick={()=>openEdit(e)} className="p-1.5 rounded-lg hover:bg-blue-50 transition" style={{color:NV.blue}} title="Editar"><Edit2 size={13}/></button>}
+        {puedeEditarEq&&<button onClick={()=>openHourmeterModal(e)} className="p-1.5 rounded-lg hover:bg-green-50 transition text-green-600" title="Actualizar horómetro"><Gauge size={13}/></button>}
         <button onClick={()=>{setHistoryTarget(e);setShowHourmeterHistory(true);}} className="p-1.5 rounded-lg hover:bg-purple-50 transition text-purple-500" title="Ver historial"><Clock size={13}/></button>
-        <button onClick={()=>{setConfirmDel(e);setSelMarEquip(null);}} className="p-1.5 rounded-lg text-red-500 hover:bg-red-50 transition" title="Eliminar"><Trash2 size={13}/></button>
+        {puedeEditarEq&&<button onClick={()=>{setConfirmDel(e);setSelMarEquip(null);}} className="p-1.5 rounded-lg text-red-500 hover:bg-red-50 transition" title="Eliminar"><Trash2 size={13}/></button>}
       </div>
       </td>
       )}
@@ -8659,7 +8671,7 @@ className="w-24 border border-blue-400 rounded-lg px-2 py-1 text-gray-900 text-x
           <Calendar size={40} className="text-gray-200 mb-4"/>
           <p className="text-gray-600 font-semibold text-sm">Sin promedio de operación definido</p>
           <p className="text-gray-400 text-xs mt-2 max-w-xs">Define el promedio de horas de operación diarias para calcular las fechas estimadas de mantenimiento</p>
-          {isSup&&<button onClick={()=>{openEdit(selMarEquip);setSelMarEquip(null);}} className="mt-4 px-4 py-2 rounded-lg text-white text-sm font-semibold" style={{background:NV.blue}}>Configurar en Editar</button>}
+          {isSup&&puedeEditarEq&&<button onClick={()=>{openEdit(selMarEquip);setSelMarEquip(null);}} className="mt-4 px-4 py-2 rounded-lg text-white text-sm font-semibold" style={{background:NV.blue}}>Configurar en Editar</button>}
         </div>
       </div>
       );
@@ -8817,13 +8829,15 @@ className="w-24 border border-blue-400 rounded-lg px-2 py-1 text-gray-900 text-x
   })()}
   {/* Footer buttons */}
   <div className="p-4 border-t border-gray-100 space-y-2 flex-shrink-0">
+    {puedeEditarEq&&(
     <button onClick={()=>openHourmeterModal(selMarEquip)} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-white font-semibold text-sm transition hover:opacity-90 bg-emerald-600">
       <Gauge size={16}/>Actualizar Horómetro
     </button>
+    )}
     <button onClick={()=>{setHistoryTarget(selMarEquip);setShowHourmeterHistory(true);}} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-purple-600 text-white font-semibold text-sm transition hover:opacity-90">
       <Clock size={16}/>Ver Historial de Lecturas
     </button>
-    {isSup&&(<>
+    {isSup&&puedeEditarEq&&(<>
       <button onClick={()=>{openEdit(selMarEquip);setSelMarEquip(null);}} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-white font-semibold text-sm transition hover:opacity-90" style={{background:NV.blue}}>
         <Edit2 size={16}/>Editar Equipo
       </button>
@@ -9223,6 +9237,9 @@ const TASK_CATEGORIES={
 function Plans({user,data,setData,saveData,appendToArray,updateInArray,activeModule,activeBarco}){
 const isMaritimo=activeModule==="maritimo";
 const isSup=user.role==="supervisor";
+// "Solo Ver" (permiso "plans"==="readonly") oculta crear/editar/eliminar
+// — solo aplica en Marítimo, Taller no cambia (rama de abajo separada).
+const puedeEditarPlanes=!isMaritimo||canEditPerm(user,"plans");
 const {plans,equip,users,wos,taskTemplates,checklists}=data;
 const materialesEquipo=data.materialesEquipo||[];
 const taxonomiaObj=useMemo(()=>getTaxonomiaComoObjeto(data.taxonomiaRepuestos||[]),[data.taxonomiaRepuestos]);
@@ -9840,7 +9857,7 @@ if(isMaritimo){
       <h1 className="text-gray-900 font-bold text-xl">Planes de Mantenimiento</h1>
       <p className="text-gray-500 text-sm">Planes de mantenimiento asignados a equipos</p>
     </div>
-    {user.role==="supervisor"&&(
+    {user.role==="supervisor"&&puedeEditarPlanes&&(
       <div className="flex gap-2">
         <button onClick={()=>xlsxPlaneMarRef.current?.click()} className={btnPrimary} style={{background:"#059669"}}>
           <Upload size={15}/>Importar Planes (.xlsx)
@@ -9893,7 +9910,7 @@ if(isMaritimo){
           </button>
         )}
       </div>
-      {selAssignIds.size>0&&isSup&&(
+      {selAssignIds.size>0&&isSup&&puedeEditarPlanes&&(
         <div className="mb-3 flex items-center gap-3 px-4 py-2.5 rounded-xl bg-red-50 border border-red-200">
           <span className="text-xs font-semibold text-red-700">{selAssignIds.size} asignación(es) seleccionada(s)</span>
           <button onClick={deleteBulkAssigns} className="flex items-center gap-1.5 text-xs font-semibold text-white bg-red-500 hover:bg-red-600 px-3 py-1.5 rounded-lg transition"><Trash2 size={12}/>Eliminar selección</button>
@@ -10009,10 +10026,10 @@ if(isMaritimo){
                   {respUser&&<span>👤 {respUser.name}</span>}
                   {assign.procedimientoId&&<span className="text-emerald-600 font-semibold">📋 Con procedimiento</span>}
                   <div className="flex gap-1 ml-auto" onClick={e=>e.stopPropagation()}>
-                    <button onClick={()=>openEditPlanAssign(assign)} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500" title="Editar plan"><Edit2 size={13}/></button>
-                    <button onClick={()=>generateOTFromAssignment(assign)} disabled={!!openOT} className={`p-1.5 rounded-lg hover:bg-blue-50 text-blue-600 ${openOT?"opacity-30 cursor-not-allowed":""}`} title="Generar OT"><Play size={13}/></button>
-                    <button onClick={()=>toggleAssignmentActive(assign)} className={`p-1.5 rounded-lg ${assign.activo?"hover:bg-amber-50 text-amber-500":"hover:bg-emerald-50 text-emerald-500"}`} title={assign.activo?"Desactivar":"Activar"}>{assign.activo?<EyeOff size={13}/>:<Eye size={13}/>}</button>
-                    {user.role==="supervisor"&&<button onClick={()=>deleteAssignment(assign.id,assign._isLegacy)} className="p-1.5 rounded-lg hover:bg-red-50 text-red-400" title="Eliminar"><Trash2 size={13}/></button>}
+                    {puedeEditarPlanes&&<button onClick={()=>openEditPlanAssign(assign)} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500" title="Editar plan"><Edit2 size={13}/></button>}
+                    {puedeEditarPlanes&&<button onClick={()=>generateOTFromAssignment(assign)} disabled={!!openOT} className={`p-1.5 rounded-lg hover:bg-blue-50 text-blue-600 ${openOT?"opacity-30 cursor-not-allowed":""}`} title="Generar OT"><Play size={13}/></button>}
+                    {puedeEditarPlanes&&<button onClick={()=>toggleAssignmentActive(assign)} className={`p-1.5 rounded-lg ${assign.activo?"hover:bg-amber-50 text-amber-500":"hover:bg-emerald-50 text-emerald-500"}`} title={assign.activo?"Desactivar":"Activar"}>{assign.activo?<EyeOff size={13}/>:<Eye size={13}/>}</button>}
+                    {user.role==="supervisor"&&puedeEditarPlanes&&<button onClick={()=>deleteAssignment(assign.id,assign._isLegacy)} className="p-1.5 rounded-lg hover:bg-red-50 text-red-400" title="Eliminar"><Trash2 size={13}/></button>}
                   </div>
                 </div>
               </div>
@@ -10341,7 +10358,7 @@ if(isMaritimo){
                 return resp?.name||selectedAssignDetail.responsable||"Sin asignar";
               })()}
             </p>
-            {isSup&&(
+            {isSup&&puedeEditarPlanes&&(
               <button onClick={()=>openEditPlanAssign(selectedAssignDetail)} className="text-xs text-blue-500 hover:underline mt-1">
                 Cambiar (editar plan)
               </button>
@@ -10512,23 +10529,29 @@ if(isMaritimo){
         })()}
       </div>
       <div className="p-4 border-t border-gray-100 space-y-2 flex-shrink-0">
+        {puedeEditarPlanes&&(
         <button onClick={()=>openEditPlanAssign(selectedAssignDetail)}
           className="w-full flex items-center gap-3 px-4 py-3 rounded-xl font-semibold text-sm transition hover:opacity-90 border-2"
           style={{borderColor:NV.blue,color:NV.blue,background:"white"}}>
           <Edit2 size={16}/>Editar plan
         </button>
+        )}
+        {puedeEditarPlanes&&(
         <button onClick={()=>{generateOTFromAssignment(selectedAssignDetail);setSelectedAssignDetail(null);}}
           disabled={!!openOT}
           className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-white font-semibold text-sm transition ${openOT?"opacity-40 cursor-not-allowed":"hover:opacity-90"}`}
           style={{background:NV.blue}}>
           <Play size={16}/>{openOT?"OT ya generada — pendiente cierre":"Generar Orden de Trabajo"}
         </button>
+        )}
+        {puedeEditarPlanes&&(
         <button onClick={()=>{toggleAssignmentActive(selectedAssignDetail);setSelectedAssignDetail(a=>a?{...a,activo:!a.activo}:null);}}
           className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-semibold text-sm transition hover:opacity-90 ${selectedAssignDetail.activo?"bg-amber-500 text-white":"bg-emerald-600 text-white"}`}>
           {selectedAssignDetail.activo?<EyeOff size={16}/>:<Eye size={16}/>}
           {selectedAssignDetail.activo?"Desactivar plan":"Activar plan"}
         </button>
-        {user.role==="supervisor"&&(
+        )}
+        {user.role==="supervisor"&&puedeEditarPlanes&&(
         <button onClick={()=>{deleteAssignment(selectedAssignDetail.id,selectedAssignDetail._isLegacy);setSelectedAssignDetail(null);}}
           className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-red-500 text-white font-semibold text-sm transition hover:opacity-90">
           <Trash2 size={16}/>Eliminar plan
