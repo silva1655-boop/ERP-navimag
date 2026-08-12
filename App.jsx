@@ -5328,7 +5328,7 @@ const finalizeWizard=async(closeOT)=>{
   if(closeOT&&(wizardOT.assignmentId||wizardOT.planId)){
     setTimeout(()=>{
       setData(current=>{
-        const{planAssignments,planTemplates,wos,equip,users,plans,checklists}=current;
+        const{planAssignments=[],planTemplates=[],wos=[],equip=[],users=[],plans=[],checklists=[]}=current;
         const newOTs1=checkAndAutoGenerateOTs(plans,wos,equip,checklists,users);
         // closingDate: la OT se cerró usando la fecha real de intervención, no "hoy"
         const newOTs2=checkAndAutoGenerateOTsFromAssignments(planAssignments,planTemplates,[...wos,...newOTs1],equip,users,closingDate);
@@ -35143,7 +35143,7 @@ setTimeout(async()=>{
     // Pequeña espera para que los listeners onSnapshot poblen data antes de proceder
     await new Promise(r=>setTimeout(r,2000));
     setData(current=>{
-      const{plans,planAssignments,planTemplates,wos,equip,checklists,users}=current;
+      const{plans=[],planAssignments=[],planTemplates=[],wos=[],equip=[],checklists=[],users=[]}=current;
       const newOTs1=checkAndAutoGenerateOTs(plans,wos,equip,checklists,users);
       const newOTs2=checkAndAutoGenerateOTsFromAssignments(planAssignments,planTemplates,[...wos,...newOTs1],equip,users);
       const newOTs=[...newOTs1,...newOTs2];
