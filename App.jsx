@@ -506,26 +506,24 @@ const COLL_TRACTO_ESTADO_LOG="mantek_tracto_estado_log";
 // muestra "Sin registrar", no es un error).
 const COLL_GESTION_DOC="mantek_gestion_documental";
 // Umbrales del semáforo de vencimiento — mismo criterio para Permiso de
-// Circulación y Revisión Técnica. Se separan en 4 niveles (no solo
-// vencido/vigente) para que se note la urgencia a medida que se acerca,
-// no solo cuando ya es tarde.
+// Circulación y Revisión Técnica. 4 estados según la fecha de vencimiento:
+// Sin registrar, Vigente, Por vencer (≤30 días) y Vencido.
 const DOC_ESTADO_CFG={
   vencido:   {label:"Vencido",     emoji:"🔴", text:"text-red-700",    bg:"bg-red-50",    border:"border-red-300",    dot:"#DC2626"},
-  critico:   {label:"Crítico",     emoji:"🟠", text:"text-orange-700", bg:"bg-orange-50", border:"border-orange-300", dot:"#EA580C"},
   por_vencer:{label:"Por vencer",  emoji:"🟡", text:"text-amber-700",  bg:"bg-amber-50",  border:"border-amber-300",  dot:"#D97706"},
   vigente:   {label:"Vigente",     emoji:"🟢", text:"text-emerald-700",bg:"bg-emerald-50",border:"border-emerald-300",dot:"#16A34A"},
   sin_dato:  {label:"Sin registrar",emoji:"⚪", text:"text-gray-500",  bg:"bg-gray-50",   border:"border-gray-200",   dot:"#9CA3AF"},
 };
 // Orden de severidad (peor primero) — usado para combinar el estado de
 // Permiso + Revisión en un solo semáforo por tracto en el resumen.
-const DOC_SEVERIDAD=["vencido","critico","por_vencer","sin_dato","vigente"];
+const DOC_SEVERIDAD=["vencido","por_vencer","sin_dato","vigente"];
 function estadoDocumento(fechaVencimiento){
   if(!fechaVencimiento) return{key:"sin_dato",...DOC_ESTADO_CFG.sin_dato,dias:null};
   const hoy=new Date();hoy.setHours(0,0,0,0);
   const venc=new Date(fechaVencimiento+"T00:00:00");
   if(isNaN(venc.getTime())) return{key:"sin_dato",...DOC_ESTADO_CFG.sin_dato,dias:null};
   const dias=Math.round((venc-hoy)/86400000);
-  const key=dias<0?"vencido":dias<=15?"critico":dias<=30?"por_vencer":"vigente";
+  const key=dias<0?"vencido":dias<=30?"por_vencer":"vigente";
   return{key,...DOC_ESTADO_CFG[key],dias};
 }
 const peorEstadoDoc=(a,b)=>DOC_SEVERIDAD.indexOf(a)<=DOC_SEVERIDAD.indexOf(b)?a:b;
@@ -17857,17 +17855,17 @@ function GestionDocumentalPage({user,data}){
     return out;
   },[filas,orden,filtroEstado]);
 
-  const resumen={vencido:0,critico:0,por_vencer:0,vigente:0,sin_dato:0};
+  const resumen={vencido:0,por_vencer:0,vigente:0,sin_dato:0};
   filas.forEach(f=>resumen[f.estadoPeor]++);
 
-  // Lista corta de "requiere atención" (vencidos o críticos, en cualquiera
-  // de los 2 documentos) — para que salte a la vista sin tener que leer
-  // tarjeta por tarjeta.
+  // Lista corta de "requiere atención" (vencidos, en cualquiera de los 2
+  // documentos) — para que salte a la vista sin tener que leer tarjeta
+  // por tarjeta. "Por vencer" ya se ve directo en cada tarjeta (amarillo).
   const requierenAtencion=useMemo(()=>{
     const out=[];
     filas.forEach(f=>{
-      if(["vencido","critico"].includes(f.estadoPermiso.key)) out.push({equip:f.equip,tipo:"Permiso de Circulación",estado:f.estadoPermiso});
-      if(["vencido","critico"].includes(f.estadoRevision.key)) out.push({equip:f.equip,tipo:"Revisión Técnica",estado:f.estadoRevision});
+      if(f.estadoPermiso.key==="vencido") out.push({equip:f.equip,tipo:"Permiso de Circulación",estado:f.estadoPermiso});
+      if(f.estadoRevision.key==="vencido") out.push({equip:f.equip,tipo:"Revisión Técnica",estado:f.estadoRevision});
     });
     return out.sort((a,b)=>(a.estado.dias??-999)-(b.estado.dias??-999));
   },[filas]);
@@ -17905,8 +17903,8 @@ function GestionDocumentalPage({user,data}){
       </div>
 
       {/* Resumen semáforo */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-4">
-        {["vencido","critico","por_vencer","vigente","sin_dato"].map(k=>{
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+        {["vencido","por_vencer","vigente","sin_dato"].map(k=>{
           const cfg=DOC_ESTADO_CFG[k];
           return(
             <button key={k} onClick={()=>setFiltroEstado(f=>f===k?"":k)}
