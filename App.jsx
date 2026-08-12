@@ -2055,7 +2055,21 @@ return(
 );
 }
 
-function DetailPanel({onClose,children}){
+// center=true: panel centrado tipo modal (ancho, esquinas redondeadas, alto
+// acotado a la ventana) en vez del cajón que se desliza desde el costado —
+// para detalles con mucho contenido donde el panel angosto de costado queda
+// apretado. El contenido (header/body/footer con flex-col) es el mismo en
+// los dos modos, así que ningún consumidor existente necesita cambiar su
+// estructura interna, solo pasar center.
+function DetailPanel({onClose,children,center=false}){
+if(center) return(
+<div className="fixed inset-0 z-40 flex items-center justify-center p-4">
+  <div className="absolute inset-0 bg-black/30" onClick={onClose}/>
+  <div className="relative w-full max-w-3xl bg-white shadow-2xl rounded-2xl flex flex-col overflow-hidden" style={{maxHeight:"90vh"}}>
+    {children}
+  </div>
+</div>
+);
 return(
 <div className="fixed inset-0 z-40 flex" style={{alignItems:"stretch"}}>
   <div className="absolute inset-0 bg-black/30" onClick={onClose}/>
@@ -8504,8 +8518,8 @@ className="w-24 border border-blue-400 rounded-lg px-2 py-1 text-gray-900 text-x
 {isSup&&(
 <td className="px-4 py-2.5">
 <div className="flex items-center justify-center gap-1">
-<button onClick={()=>openEdit(e)} className="p-1.5 rounded-lg hover:bg-blue-50 transition" style={{color:NV.blue}}><Edit2 size={13}/></button>
-<button onClick={()=>setConfirmDel(e)} className="p-1.5 rounded-lg text-red-500 hover:bg-red-50 transition"><Trash2 size={13}/></button>
+{canDoAction(user,"equipment","editar")&&<button onClick={()=>openEdit(e)} className="p-1.5 rounded-lg hover:bg-blue-50 transition" style={{color:NV.blue}}><Edit2 size={13}/></button>}
+{canDoAction(user,"equipment","eliminar")&&<button onClick={()=>setConfirmDel(e)} className="p-1.5 rounded-lg text-red-500 hover:bg-red-50 transition"><Trash2 size={13}/></button>}
 </div>
 </td>
 )}
@@ -10301,7 +10315,7 @@ if(isMaritimo){
       return new Date(isoFull).toLocaleDateString("es-CL",{day:"2-digit",month:"2-digit",year:"numeric"});
     };
     return(
-    <DetailPanel onClose={()=>setSelectedAssignDetail(null)}>
+    <DetailPanel onClose={()=>setSelectedAssignDetail(null)} center>
       <div className="flex items-center justify-between p-4 border-b border-gray-100 flex-shrink-0">
         <div className="min-w-0">
           <span className="font-mono font-bold text-xs" style={{color:NV.blue}}>{selectedAssignDetail.code}</span>
@@ -10309,9 +10323,9 @@ if(isMaritimo){
         </div>
         <button onClick={()=>setSelectedAssignDetail(null)} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 flex-shrink-0 ml-2"><X size={16}/></button>
       </div>
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="flex-1 overflow-y-auto p-5 space-y-4">
         <span className={`inline-flex px-3 py-1 rounded-full border text-sm font-semibold ${stCfg.cls}`}>{stCfg.label}</span>
-        <div className="space-y-2">
+        <div className="grid grid-cols-2 gap-3">
           <div className="bg-gray-50 rounded-xl p-3 border border-gray-100">
             <p className="text-gray-400 text-xs mb-0.5">Plan base</p>
             <p className="text-gray-800 font-semibold text-sm">{nombreSel}</p>
@@ -10596,10 +10610,10 @@ if(isMaritimo){
           );
         })()}
       </div>
-      <div className="p-4 border-t border-gray-100 space-y-2 flex-shrink-0">
+      <div className="p-4 border-t border-gray-100 grid grid-cols-1 sm:grid-cols-2 gap-2 flex-shrink-0">
         {canDoAction(user,"plans","editar")&&(
         <button onClick={()=>openEditPlanAssign(selectedAssignDetail)}
-          className="w-full flex items-center gap-3 px-4 py-3 rounded-xl font-semibold text-sm transition hover:opacity-90 border-2"
+          className="w-full flex items-center justify-center gap-3 px-4 py-3 rounded-xl font-semibold text-sm transition hover:opacity-90 border-2"
           style={{borderColor:NV.blue,color:NV.blue,background:"white"}}>
           <Edit2 size={16}/>Editar plan
         </button>
@@ -10607,21 +10621,21 @@ if(isMaritimo){
         {canDoAction(user,"plans","generarOT")&&(
         <button onClick={()=>{generateOTFromAssignment(selectedAssignDetail);setSelectedAssignDetail(null);}}
           disabled={!!openOT}
-          className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-white font-semibold text-sm transition ${openOT?"opacity-40 cursor-not-allowed":"hover:opacity-90"}`}
+          className={`w-full flex items-center justify-center gap-3 px-4 py-3 rounded-xl text-white font-semibold text-sm transition ${openOT?"opacity-40 cursor-not-allowed":"hover:opacity-90"}`}
           style={{background:NV.blue}}>
-          <Play size={16}/>{openOT?"OT ya generada — pendiente cierre":"Generar Orden de Trabajo"}
+          <Play size={16}/>{openOT?"OT ya generada":"Generar Orden de Trabajo"}
         </button>
         )}
         {canDoAction(user,"plans","activar")&&(
         <button onClick={()=>{toggleAssignmentActive(selectedAssignDetail);setSelectedAssignDetail(a=>a?{...a,activo:!a.activo}:null);}}
-          className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-semibold text-sm transition hover:opacity-90 ${selectedAssignDetail.activo?"bg-amber-500 text-white":"bg-emerald-600 text-white"}`}>
+          className={`w-full flex items-center justify-center gap-3 px-4 py-3 rounded-xl font-semibold text-sm transition hover:opacity-90 ${selectedAssignDetail.activo?"bg-amber-500 text-white":"bg-emerald-600 text-white"}`}>
           {selectedAssignDetail.activo?<EyeOff size={16}/>:<Eye size={16}/>}
           {selectedAssignDetail.activo?"Desactivar plan":"Activar plan"}
         </button>
         )}
         {user.role==="supervisor"&&canDoAction(user,"plans","eliminar")&&(
         <button onClick={()=>{deleteAssignment(selectedAssignDetail.id,selectedAssignDetail._isLegacy);setSelectedAssignDetail(null);}}
-          className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-red-500 text-white font-semibold text-sm transition hover:opacity-90">
+          className="w-full flex items-center justify-center gap-3 px-4 py-3 rounded-xl bg-red-500 text-white font-semibold text-sm transition hover:opacity-90">
           <Trash2 size={16}/>Eliminar plan
         </button>
         )}
