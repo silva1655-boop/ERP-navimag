@@ -1808,6 +1808,37 @@ const permVisible=(v)=>v===true||v==="readonly";
 // esto da false. Ej: const puedeEditar=canEditPerm(user,"workorders");
 const canEditPerm=(user,permKey)=>getUserPerms(user)[permKey]===true;
 
+// ── Permisos granulares por acción ───────────────────────────────────────
+// Para algunos módulos, Activo/Solo Ver/Sin acceso es demasiado grueso —
+// alguien puede necesitar actualizar el horómetro de un equipo sin poder
+// eliminarlo, o generar una OT desde un plan sin poder editarlo. Esto se
+// guarda aparte, en u.permisosAcciones = {modulo:{accion:true|false}},
+// como override puntual sobre el estado base del módulo — si una acción
+// no tiene override explícito, se usa el default: Activo = todo
+// permitido, Solo Ver = nada permitido, Sin acceso = nada (ni la página
+// se ve).
+const SUBACCIONES_MODULO={
+  equipment:[
+    {key:"editar",label:"Editar equipo (incl. Nuevo Equipo / Carga masiva)"},
+    {key:"horometro",label:"Actualizar horómetro"},
+    {key:"eliminar",label:"Eliminar equipo"},
+    {key:"historial",label:"Ver historial de lecturas"},
+  ],
+  plans:[
+    {key:"editar",label:"Editar plan (incl. Nuevo Plan / Importar)"},
+    {key:"generarOT",label:"Generar OT desde plan"},
+    {key:"activar",label:"Activar / desactivar plan"},
+    {key:"eliminar",label:"Eliminar plan"},
+  ],
+};
+const canDoAction=(user,modulo,accion)=>{
+  const modVal=getUserPerms(user)[modulo];
+  if(modVal!==true&&modVal!=="readonly") return false; // Sin acceso: ninguna acción
+  const overrides=(user?.permisosAcciones||{})[modulo];
+  if(overrides&&Object.prototype.hasOwnProperty.call(overrides,accion)) return !!overrides[accion];
+  return modVal===true; // sin override: Activo=todo permitido, Solo Ver=nada permitido
+};
+
 const SGN_ROLE_PERMS={
   admin_sgn:  {sgn_dashboard:true, sgn_hallazgos:true, sgn_mis_hallazgos:true, sgn_reportes:true, sgn_usuarios:true, sgn_accidentes:true, sgn_actas:true},
   inspector:  {sgn_dashboard:true, sgn_hallazgos:true, sgn_mis_hallazgos:true, sgn_reportes:false,sgn_usuarios:false,sgn_accidentes:true, sgn_actas:true},
@@ -7817,9 +7848,9 @@ function Equipment({user,data,setData,saveData,appendToArray,updateInArray,activ
 const {equip,plans,requests=[],wos=[],hourmeterReadings=[]}=data;
 const isSup=user.role==="supervisor"||user.role==="admin"||user.authRole==="ADMIN";
 const isMar=activeModule==="maritimo";
-// "Solo Ver" (permiso "equipment"==="readonly") oculta crear/editar/
-// eliminar — solo aplica en Marítimo, Taller no cambia.
-const puedeEditarEq=!isMar||canEditPerm(user,"equipment");
+// Acceso fino por acción (editar/horómetro/eliminar/historial) — ver
+// SUBACCIONES_MODULO/canDoAction. Ya no depende del módulo (antes solo
+// restringía en Marítimo); aplica igual en Taller y Marítimo.
 
 // States
 const [search,setSearch]=useState("");
@@ -8079,10 +8110,10 @@ return(
     <Calendar size={13}/>
     {new Date().toLocaleDateString("es-CL",{day:"2-digit",month:"long",year:"numeric"})}
   </div>
-  {isSup&&puedeEditarEq&&<div className="flex gap-2 flex-wrap">
-    {isMar&&<button onClick={()=>xlsxEquipRef.current?.click()} className={btnSecondary} style={{borderColor:"#7C3AED",color:"#7C3AED",background:"white"}}><Upload size={15}/>Carga masiva</button>}
-    <button onClick={()=>setShowBulkHours(true)} className={btnSecondary} style={{borderColor:NV.blue,color:NV.blue,background:"white"}}><Gauge size={15}/>Actualizar Horómetros</button>
-    <button onClick={openNew} style={{background:NV.blue}} className={btnPrimary}><Plus size={15}/>Nuevo Equipo</button>
+  {isSup&&(canDoAction(user,"equipment","editar")||canDoAction(user,"equipment","horometro"))&&<div className="flex gap-2 flex-wrap">
+    {isMar&&canDoAction(user,"equipment","editar")&&<button onClick={()=>xlsxEquipRef.current?.click()} className={btnSecondary} style={{borderColor:"#7C3AED",color:"#7C3AED",background:"white"}}><Upload size={15}/>Carga masiva</button>}
+    {canDoAction(user,"equipment","horometro")&&<button onClick={()=>setShowBulkHours(true)} className={btnSecondary} style={{borderColor:NV.blue,color:NV.blue,background:"white"}}><Gauge size={15}/>Actualizar Horómetros</button>}
+    {canDoAction(user,"equipment","editar")&&<button onClick={openNew} style={{background:NV.blue}} className={btnPrimary}><Plus size={15}/>Nuevo Equipo</button>}
   </div>}
 </div>
 </div>
@@ -8212,7 +8243,7 @@ return(
 {isMar?(
 <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-5">
 <div>
-  {isSup&&puedeEditarEq&&selEquipIds.size>0&&(
+  {isSup&&canDoAction(user,"equipment","eliminar")&&selEquipIds.size>0&&(
     <div className="flex items-center gap-3 px-4 py-2.5 mb-2 rounded-xl bg-red-50 border border-red-200">
       <span className="text-xs font-semibold text-red-700">{selEquipIds.size} equipo(s) seleccionado(s)</span>
       <button onClick={deleteBulkEquip} className="flex items-center gap-1.5 text-xs font-semibold text-white bg-red-500 hover:bg-red-600 px-3 py-1.5 rounded-lg transition"><Trash2 size={12}/>Eliminar selección</button>
@@ -8276,10 +8307,10 @@ return(
       {isSup&&(
       <td className="px-4 py-2.5" onClick={ev=>ev.stopPropagation()}>
       <div className="flex items-center justify-center gap-1">
-        {puedeEditarEq&&<button onClick={()=>openEdit(e)} className="p-1.5 rounded-lg hover:bg-blue-50 transition" style={{color:NV.blue}} title="Editar"><Edit2 size={13}/></button>}
-        {puedeEditarEq&&<button onClick={()=>openHourmeterModal(e)} className="p-1.5 rounded-lg hover:bg-green-50 transition text-green-600" title="Actualizar horómetro"><Gauge size={13}/></button>}
-        <button onClick={()=>{setHistoryTarget(e);setShowHourmeterHistory(true);}} className="p-1.5 rounded-lg hover:bg-purple-50 transition text-purple-500" title="Ver historial"><Clock size={13}/></button>
-        {puedeEditarEq&&<button onClick={()=>{setConfirmDel(e);setSelMarEquip(null);}} className="p-1.5 rounded-lg text-red-500 hover:bg-red-50 transition" title="Eliminar"><Trash2 size={13}/></button>}
+        {canDoAction(user,"equipment","editar")&&<button onClick={()=>openEdit(e)} className="p-1.5 rounded-lg hover:bg-blue-50 transition" style={{color:NV.blue}} title="Editar"><Edit2 size={13}/></button>}
+        {canDoAction(user,"equipment","horometro")&&<button onClick={()=>openHourmeterModal(e)} className="p-1.5 rounded-lg hover:bg-green-50 transition text-green-600" title="Actualizar horómetro"><Gauge size={13}/></button>}
+        {canDoAction(user,"equipment","historial")&&<button onClick={()=>{setHistoryTarget(e);setShowHourmeterHistory(true);}} className="p-1.5 rounded-lg hover:bg-purple-50 transition text-purple-500" title="Ver historial"><Clock size={13}/></button>}
+        {canDoAction(user,"equipment","eliminar")&&<button onClick={()=>{setConfirmDel(e);setSelMarEquip(null);}} className="p-1.5 rounded-lg text-red-500 hover:bg-red-50 transition" title="Eliminar"><Trash2 size={13}/></button>}
       </div>
       </td>
       )}
@@ -8704,7 +8735,7 @@ className="w-24 border border-blue-400 rounded-lg px-2 py-1 text-gray-900 text-x
           <Calendar size={40} className="text-gray-200 mb-4"/>
           <p className="text-gray-600 font-semibold text-sm">Sin promedio de operación definido</p>
           <p className="text-gray-400 text-xs mt-2 max-w-xs">Define el promedio de horas de operación diarias para calcular las fechas estimadas de mantenimiento</p>
-          {isSup&&puedeEditarEq&&<button onClick={()=>{openEdit(selMarEquip);setSelMarEquip(null);}} className="mt-4 px-4 py-2 rounded-lg text-white text-sm font-semibold" style={{background:NV.blue}}>Configurar en Editar</button>}
+          {isSup&&canDoAction(user,"equipment","editar")&&<button onClick={()=>{openEdit(selMarEquip);setSelMarEquip(null);}} className="mt-4 px-4 py-2 rounded-lg text-white text-sm font-semibold" style={{background:NV.blue}}>Configurar en Editar</button>}
         </div>
       </div>
       );
@@ -8862,22 +8893,26 @@ className="w-24 border border-blue-400 rounded-lg px-2 py-1 text-gray-900 text-x
   })()}
   {/* Footer buttons */}
   <div className="p-4 border-t border-gray-100 space-y-2 flex-shrink-0">
-    {puedeEditarEq&&(
+    {canDoAction(user,"equipment","horometro")&&(
     <button onClick={()=>openHourmeterModal(selMarEquip)} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-white font-semibold text-sm transition hover:opacity-90 bg-emerald-600">
       <Gauge size={16}/>Actualizar Horómetro
     </button>
     )}
+    {canDoAction(user,"equipment","historial")&&(
     <button onClick={()=>{setHistoryTarget(selMarEquip);setShowHourmeterHistory(true);}} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-purple-600 text-white font-semibold text-sm transition hover:opacity-90">
       <Clock size={16}/>Ver Historial de Lecturas
     </button>
-    {isSup&&puedeEditarEq&&(<>
+    )}
+    {isSup&&canDoAction(user,"equipment","editar")&&(
       <button onClick={()=>{openEdit(selMarEquip);setSelMarEquip(null);}} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-white font-semibold text-sm transition hover:opacity-90" style={{background:NV.blue}}>
         <Edit2 size={16}/>Editar Equipo
       </button>
+    )}
+    {isSup&&canDoAction(user,"equipment","eliminar")&&(
       <button onClick={()=>{setConfirmDel(selMarEquip);setSelMarEquip(null);}} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-red-500 text-white font-semibold text-sm transition hover:opacity-90">
         <Trash2 size={16}/>Eliminar equipo
       </button>
-    </>)}
+    )}
   </div>
 </DetailPanel>
 )}
@@ -9270,9 +9305,9 @@ const TASK_CATEGORIES={
 function Plans({user,data,setData,saveData,appendToArray,updateInArray,activeModule,activeBarco}){
 const isMaritimo=activeModule==="maritimo";
 const isSup=user.role==="supervisor";
-// "Solo Ver" (permiso "plans"==="readonly") oculta crear/editar/eliminar
-// — solo aplica en Marítimo, Taller no cambia (rama de abajo separada).
-const puedeEditarPlanes=!isMaritimo||canEditPerm(user,"plans");
+// Acceso fino por acción (editar/generarOT/activar/eliminar) — ver
+// SUBACCIONES_MODULO/canDoAction. Solo se usa en la rama Marítimo (abajo,
+// la rama Taller es un árbol de UI completamente separado que no se tocó).
 const {plans,equip,users,wos,taskTemplates,checklists}=data;
 const materialesEquipo=data.materialesEquipo||[];
 const taxonomiaObj=useMemo(()=>getTaxonomiaComoObjeto(data.taxonomiaRepuestos||[]),[data.taxonomiaRepuestos]);
@@ -9890,7 +9925,7 @@ if(isMaritimo){
       <h1 className="text-gray-900 font-bold text-xl">Planes de Mantenimiento</h1>
       <p className="text-gray-500 text-sm">Planes de mantenimiento asignados a equipos</p>
     </div>
-    {user.role==="supervisor"&&puedeEditarPlanes&&(
+    {user.role==="supervisor"&&canDoAction(user,"plans","editar")&&(
       <div className="flex gap-2">
         <button onClick={()=>xlsxPlaneMarRef.current?.click()} className={btnPrimary} style={{background:"#059669"}}>
           <Upload size={15}/>Importar Planes (.xlsx)
@@ -9943,7 +9978,7 @@ if(isMaritimo){
           </button>
         )}
       </div>
-      {selAssignIds.size>0&&isSup&&puedeEditarPlanes&&(
+      {selAssignIds.size>0&&isSup&&canDoAction(user,"plans","eliminar")&&(
         <div className="mb-3 flex items-center gap-3 px-4 py-2.5 rounded-xl bg-red-50 border border-red-200">
           <span className="text-xs font-semibold text-red-700">{selAssignIds.size} asignación(es) seleccionada(s)</span>
           <button onClick={deleteBulkAssigns} className="flex items-center gap-1.5 text-xs font-semibold text-white bg-red-500 hover:bg-red-600 px-3 py-1.5 rounded-lg transition"><Trash2 size={12}/>Eliminar selección</button>
@@ -10059,10 +10094,10 @@ if(isMaritimo){
                   {respUser&&<span>👤 {respUser.name}</span>}
                   {assign.procedimientoId&&<span className="text-emerald-600 font-semibold">📋 Con procedimiento</span>}
                   <div className="flex gap-1 ml-auto" onClick={e=>e.stopPropagation()}>
-                    {puedeEditarPlanes&&<button onClick={()=>openEditPlanAssign(assign)} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500" title="Editar plan"><Edit2 size={13}/></button>}
-                    {puedeEditarPlanes&&<button onClick={()=>generateOTFromAssignment(assign)} disabled={!!openOT} className={`p-1.5 rounded-lg hover:bg-blue-50 text-blue-600 ${openOT?"opacity-30 cursor-not-allowed":""}`} title="Generar OT"><Play size={13}/></button>}
-                    {puedeEditarPlanes&&<button onClick={()=>toggleAssignmentActive(assign)} className={`p-1.5 rounded-lg ${assign.activo?"hover:bg-amber-50 text-amber-500":"hover:bg-emerald-50 text-emerald-500"}`} title={assign.activo?"Desactivar":"Activar"}>{assign.activo?<EyeOff size={13}/>:<Eye size={13}/>}</button>}
-                    {user.role==="supervisor"&&puedeEditarPlanes&&<button onClick={()=>deleteAssignment(assign.id,assign._isLegacy)} className="p-1.5 rounded-lg hover:bg-red-50 text-red-400" title="Eliminar"><Trash2 size={13}/></button>}
+                    {canDoAction(user,"plans","editar")&&<button onClick={()=>openEditPlanAssign(assign)} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500" title="Editar plan"><Edit2 size={13}/></button>}
+                    {canDoAction(user,"plans","generarOT")&&<button onClick={()=>generateOTFromAssignment(assign)} disabled={!!openOT} className={`p-1.5 rounded-lg hover:bg-blue-50 text-blue-600 ${openOT?"opacity-30 cursor-not-allowed":""}`} title="Generar OT"><Play size={13}/></button>}
+                    {canDoAction(user,"plans","activar")&&<button onClick={()=>toggleAssignmentActive(assign)} className={`p-1.5 rounded-lg ${assign.activo?"hover:bg-amber-50 text-amber-500":"hover:bg-emerald-50 text-emerald-500"}`} title={assign.activo?"Desactivar":"Activar"}>{assign.activo?<EyeOff size={13}/>:<Eye size={13}/>}</button>}
+                    {user.role==="supervisor"&&canDoAction(user,"plans","eliminar")&&<button onClick={()=>deleteAssignment(assign.id,assign._isLegacy)} className="p-1.5 rounded-lg hover:bg-red-50 text-red-400" title="Eliminar"><Trash2 size={13}/></button>}
                   </div>
                 </div>
               </div>
@@ -10391,7 +10426,7 @@ if(isMaritimo){
                 return resp?.name||selectedAssignDetail.responsable||"Sin asignar";
               })()}
             </p>
-            {isSup&&puedeEditarPlanes&&(
+            {isSup&&canDoAction(user,"plans","editar")&&(
               <button onClick={()=>openEditPlanAssign(selectedAssignDetail)} className="text-xs text-blue-500 hover:underline mt-1">
                 Cambiar (editar plan)
               </button>
@@ -10562,14 +10597,14 @@ if(isMaritimo){
         })()}
       </div>
       <div className="p-4 border-t border-gray-100 space-y-2 flex-shrink-0">
-        {puedeEditarPlanes&&(
+        {canDoAction(user,"plans","editar")&&(
         <button onClick={()=>openEditPlanAssign(selectedAssignDetail)}
           className="w-full flex items-center gap-3 px-4 py-3 rounded-xl font-semibold text-sm transition hover:opacity-90 border-2"
           style={{borderColor:NV.blue,color:NV.blue,background:"white"}}>
           <Edit2 size={16}/>Editar plan
         </button>
         )}
-        {puedeEditarPlanes&&(
+        {canDoAction(user,"plans","generarOT")&&(
         <button onClick={()=>{generateOTFromAssignment(selectedAssignDetail);setSelectedAssignDetail(null);}}
           disabled={!!openOT}
           className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-white font-semibold text-sm transition ${openOT?"opacity-40 cursor-not-allowed":"hover:opacity-90"}`}
@@ -10577,14 +10612,14 @@ if(isMaritimo){
           <Play size={16}/>{openOT?"OT ya generada — pendiente cierre":"Generar Orden de Trabajo"}
         </button>
         )}
-        {puedeEditarPlanes&&(
+        {canDoAction(user,"plans","activar")&&(
         <button onClick={()=>{toggleAssignmentActive(selectedAssignDetail);setSelectedAssignDetail(a=>a?{...a,activo:!a.activo}:null);}}
           className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-semibold text-sm transition hover:opacity-90 ${selectedAssignDetail.activo?"bg-amber-500 text-white":"bg-emerald-600 text-white"}`}>
           {selectedAssignDetail.activo?<EyeOff size={16}/>:<Eye size={16}/>}
           {selectedAssignDetail.activo?"Desactivar plan":"Activar plan"}
         </button>
         )}
-        {user.role==="supervisor"&&puedeEditarPlanes&&(
+        {user.role==="supervisor"&&canDoAction(user,"plans","eliminar")&&(
         <button onClick={()=>{deleteAssignment(selectedAssignDetail.id,selectedAssignDetail._isLegacy);setSelectedAssignDetail(null);}}
           className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-red-500 text-white font-semibold text-sm transition hover:opacity-90">
           <Trash2 size={16}/>Eliminar plan
@@ -21017,6 +21052,10 @@ const [form,setForm]=useState({name:"",email:"",password:"",role:"mecanico"});
 const [showPwd,setShowPwd]=useState(false);
 const [showPerms,setShowPerms]=useState(null);
 const [editPerms,setEditPerms]=useState({});
+// Overrides de acciones específicas (ver SUBACCIONES_MODULO/canDoAction)
+// — {modulo:{accion:true|false}}, aparte de editPerms (que es el estado
+// grueso Activo/Solo Ver/Sin acceso por módulo).
+const [editAcciones,setEditAcciones]=useState({});
 
 const openNew=()=>{
   setEditTarget(null);
@@ -21176,6 +21215,7 @@ return(
                     <button onClick={()=>{
                       setShowPerms(u);
                       setEditPerms(u.permisos||{});
+                      setEditAcciones(u.permisosAcciones||{});
                     }}
                       className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border font-medium transition"
                       style={{
@@ -21298,7 +21338,7 @@ return(
   )}
 
   {showPerms&&(
-    <Modal title={`Permisos — ${showPerms.name}`} onClose={()=>{setShowPerms(null);setEditPerms({});}} wide>
+    <Modal title={`Permisos — ${showPerms.name}`} onClose={()=>{setShowPerms(null);setEditPerms({});setEditAcciones({});}} wide>
       <div className="space-y-3">
         <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 text-xs text-purple-700 flex items-start gap-2">
           <Key size={13} className="flex-shrink-0 mt-0.5"/>
@@ -21316,13 +21356,17 @@ return(
             const effectivePerm=hasOverride?editPerms[key]:defaultPerm;
             const isOverrideEnabled=hasOverride&&editPerms[key]!==defaultPerm;
 
+            const subacciones=SUBACCIONES_MODULO[key];
+            const accionesModulo=editAcciones[key]||{};
+
             return(
               <div key={key}
-                className={`flex items-center gap-3 p-3 rounded-xl border transition
+                className={`p-3 rounded-xl border transition
                   ${effectivePerm==="readonly"?"border-blue-200 bg-blue-50":
                     isOverrideEnabled?"border-purple-200 bg-purple-50":
                     hasOverride&&!effectivePerm&&defaultPerm?"border-red-100 bg-red-50":
                     "border-gray-100 bg-gray-50"}`}>
+                <div className="flex items-center gap-3">
                 <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0
                   ${effectivePerm===false?"text-gray-300 bg-gray-200":"text-white"}`}
                   style={effectivePerm===true?{background:isOverrideEnabled?"#7C3AED":NV.navy}:effectivePerm==="readonly"?{background:"#3B82F6"}:{}}>
@@ -21391,6 +21435,46 @@ return(
                     </button>
                   )}
                 </div>
+                </div>
+
+                {/* Acciones específicas — más fino que Activo/Solo Ver, ver
+                    SUBACCIONES_MODULO. Solo tiene sentido si el módulo se ve
+                    en absoluto (Activo o Solo Ver); si es Sin acceso, ni
+                    siquiera se llega a esta pantalla. */}
+                {subacciones&&(effectivePerm===true||effectivePerm==="readonly")&&(
+                  <div className="mt-2.5 pt-2.5 border-t border-gray-200/70">
+                    <p className="text-[10px] text-gray-400 uppercase tracking-wide font-semibold mb-1.5">
+                      Acciones específicas {effectivePerm==="readonly"?"(excepciones a Solo Ver)":"(excepciones a Activo)"}
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {subacciones.map(sa=>{
+                        const hasOverrideAccion=Object.prototype.hasOwnProperty.call(accionesModulo,sa.key);
+                        const permitidoDefault=effectivePerm===true;
+                        const permitido=hasOverrideAccion?!!accionesModulo[sa.key]:permitidoDefault;
+                        return(
+                          <button key={sa.key} type="button"
+                            onClick={()=>{
+                              const nuevoValor=!permitido;
+                              setEditAcciones(p=>{
+                                const modAcc={...(p[key]||{})};
+                                if(nuevoValor===permitidoDefault) delete modAcc[sa.key];
+                                else modAcc[sa.key]=nuevoValor;
+                                const next={...p};
+                                if(Object.keys(modAcc).length>0) next[key]=modAcc; else delete next[key];
+                                return next;
+                              });
+                            }}
+                            title={hasOverrideAccion?"Override manual — click para volver al default":"Click para cambiar"}
+                            className={`px-2 py-1 rounded-lg text-[10px] font-semibold border transition whitespace-nowrap
+                              ${permitido?"bg-emerald-50 text-emerald-700 border-emerald-300":"bg-gray-100 text-gray-400 border-gray-200"}
+                              ${hasOverrideAccion?"ring-1 ring-offset-1 ring-purple-300":""}`}>
+                            {permitido?"✅":"⛔"} {sa.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -21417,11 +21501,13 @@ return(
         <button
           onClick={()=>{
             const updated=users.map(u=>u.id===showPerms.id
-              ?{...u,permisos:Object.keys(editPerms).length>0?editPerms:undefined}
+              ?{...u,
+                permisos:Object.keys(editPerms).length>0?editPerms:undefined,
+                permisosAcciones:Object.keys(editAcciones).length>0?editAcciones:undefined}
               :u);
             setData(d=>({...d,users:updated}));
             saveData("users",updated);
-            setShowPerms(null);setEditPerms({});
+            setShowPerms(null);setEditPerms({});setEditAcciones({});
             alert(`✅ Permisos de ${showPerms.name} actualizados`);
           }}
           style={{background:NV.blue}}
@@ -21431,11 +21517,12 @@ return(
         <button
           onClick={()=>{
             setEditPerms({});
+            setEditAcciones({});
           }}
           className="px-4 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2.5 rounded-lg text-sm transition">
           Resetear todo
         </button>
-        <button onClick={()=>{setShowPerms(null);setEditPerms({});}}
+        <button onClick={()=>{setShowPerms(null);setEditPerms({});setEditAcciones({});}}
           className="px-4 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2.5 rounded-lg text-sm transition">
           Cancelar
         </button>
