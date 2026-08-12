@@ -6028,7 +6028,7 @@ if(wizardOT){
                 className="px-3 py-2 rounded-lg text-white text-xs font-bold flex-shrink-0" style={{background:NV.blue}}>+ Agregar</button>
             </div>
             <div className="flex flex-wrap gap-1.5 mt-2">
-              {users.filter(u=>!u.deleted&&!["supervisor","operaciones"].includes(u.role)&&!(wz.ejecutadoPor||[]).includes(u.name)).map(u=>(
+              {getUsersByModule(users,activeModule).filter(u=>!u.deleted&&!["supervisor","operaciones"].includes(u.role)&&!(wz.ejecutadoPor||[]).includes(u.name)).map(u=>(
                 <button key={u.id} onClick={()=>setWz(w=>({...w,ejecutadoPor:[...(w.ejecutadoPor||[]),u.name]}))}
                   className="text-xs px-2 py-1 rounded-full bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 transition">+ {u.name}</button>
               ))}
@@ -6054,7 +6054,7 @@ if(wizardOT){
                 className="px-3 py-2 rounded-lg text-white text-xs font-bold flex-shrink-0" style={{background:NV.blue}}>+ Agregar</button>
             </div>
             <div className="flex flex-wrap gap-1.5 mt-2">
-              {users.filter(u=>!u.deleted&&!(wz.pruebaRealizadaPor||[]).includes(u.name)).map(u=>(
+              {getUsersByModule(users,activeModule).filter(u=>!u.deleted&&!(wz.pruebaRealizadaPor||[]).includes(u.name)).map(u=>(
                 <button key={u.id} onClick={()=>setWz(w=>({...w,pruebaRealizadaPor:[...(w.pruebaRealizadaPor||[]),u.name]}))}
                   className="text-xs px-2 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 hover:bg-emerald-100 transition">+ {u.name}</button>
               ))}
@@ -6104,9 +6104,9 @@ return(
     <h1 className="text-gray-900 font-bold text-xl">Órdenes de Trabajo</h1>
     <p className="text-gray-500 text-sm">Gestión y seguimiento de órdenes de trabajo del taller</p>
   </div>
-  {role==="supervisor"&&(
+  {(role==="supervisor"||canEditPerm(user,"workorders"))&&(
     <div className="flex items-center gap-2">
-      {puedeEditarWO&&(
+      {canEditPerm(user,"workorders")&&(
       <button onClick={()=>{setNewOTForm(EMPTY_NEW_OT);setShowNewOT(true);}} className="flex items-center gap-1.5 text-white font-semibold px-4 py-2.5 rounded-lg text-sm transition" style={{background:NV.navy}}>
         <Plus size={15}/>Nueva OT
       </button>
@@ -13350,7 +13350,14 @@ const [showRejectModal,setShowRejectModal]=useState(false);
 const [rejectTarget,setRejectTarget]=useState(null);
 const [rejectComment,setRejectComment]=useState("");
 const [activeTab,setActiveTab]=useState("todas");
-const canCreate=user.role==="operaciones"||user.role==="supervisor";
+// Antes esto era un check de rol fijo (operaciones/supervisor) — eso
+// hacía que activar el permiso "requests" en Solo Ver/Activo para
+// cualquier otro rol (ej. mecánico) no tuviera ningún efecto en "Crear
+// Solicitud", porque el botón nunca miraba el permiso. operaciones y
+// supervisor ya tienen requests:true por defecto en ROLE_DEFAULT_PERMS,
+// así que canEditPerm ya los cubre — y además respeta si alguna vez se
+// les bloquea el permiso a mano, cosa que el check de rol fijo ignoraba.
+const canCreate=canEditPerm(user,"requests");
 // "Solo Ver" (permiso "requests"==="readonly") oculta crear/aprobar/
 // rechazar — solo aplica en Marítimo, Taller no cambia.
 const puedeEditarReq=activeModule!=="maritimo"||canEditPerm(user,"requests");
