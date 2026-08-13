@@ -1991,8 +1991,8 @@ const getPaginaLabel=(pageKey)=>{
   }
   return "";
 };
-const getOTAbiertas=(wos)=>wos.filter(w=>w.status!=="completada"&&w.status!=="cancelada");
-const getSolicitudesPendientes=(requests)=>requests.filter(r=>r.status==="ops_pendiente");
+const getOTAbiertas=(wos)=>(wos||[]).filter(w=>w.status!=="completada"&&w.status!=="cancelada");
+const getSolicitudesPendientes=(requests)=>(requests||[]).filter(r=>r.status==="ops_pendiente");
 const getRepuestosBajoStock=(repuestos)=>(repuestos||[]).filter(r=>r.activo&&(r.stockActual||0)<=(r.stockMinimo??0)&&(r.stockMinimo??0)>0);
 const getActividadReciente=(data)=>{
   const {wos=[],requests=[]}=data||{};
@@ -34557,7 +34557,18 @@ await mergeTemplates(currentCOLL,SEED_TASK_TEMPLATES);
 const otherKeys=keys.filter(k=>k!=="users"&&k!=="taskTemplates");
 for(const k of otherKeys) await initIfEmpty(currentCOLL,k,seeds[k]);
 const regularUnsubs=snapshotKeys.map(k=>onSnapshot(doc(db,currentCOLL,k),
-  snap=>{setOnline(true);if(snap.exists())setData(d=>({...d,[dk[k]]:snap.data().data}));},
+  snap=>{
+    setOnline(true);
+    if(!snap.exists()) return;
+    // El campo "data" siempre debería ser array (así lo escriben seeds/
+    // initIfEmpty/setDoc en toda la app) — pero un doc legacy tocado a mano,
+    // o una carrera con un setDoc a medio terminar, puede dejarlo en null/
+    // undefined/objeto. Sin este guard, cualquier .filter()/.map()/spread
+    // aguas abajo (Sidebar, Dashboard, etc.) revienta con "X is not a
+    // function" o "X is not iterable" apenas se monta la pantalla.
+    const raw=snap.data().data;
+    setData(d=>({...d,[dk[k]]:Array.isArray(raw)?raw:[]}));
+  },
   ()=>setOnline(false)
 ));
 
