@@ -741,7 +741,16 @@ function calcularFaenaDerivados({buque,terminal,inicioOp,terminoOp,tractosOp,tra
 }
 
 async function initIfEmpty(coll, key, seed) {
-try { const s=await getDoc(doc(db,coll,key)); if(!s.exists()) await setDoc(doc(db,coll,key),{data:seed}); } catch(e) { console.error("Init:",e); }
+try {
+  const s=await getDoc(doc(db,coll,key));
+  // Repone el seed si el doc no existe, O si existe pero le falta/perdió el
+  // campo "data" (p.ej. alguien lo borró a mano desde la consola de
+  // Firestore) — un doc vacío {} pasa s.exists()===true, así que sin este
+  // segundo chequeo se quedaba "vacío" para siempre en vez de auto-sanarse.
+  // Un reset intencional (Zona de peligro) escribe data:[] explícito, así
+  // que NO dispara esto — solo lo dispara data===undefined.
+  if(!s.exists()||s.data()?.data===undefined) await setDoc(doc(db,coll,key),{data:seed});
+} catch(e) { console.error("Init:",e); }
 }
 async function mergeUsers(coll, seed) {
 try {
