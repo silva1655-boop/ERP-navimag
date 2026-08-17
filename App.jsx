@@ -69,6 +69,13 @@ const SEED_USERS_TALLER = [
 { id:"t6", name:"Operador 2",        role:"operador",    email:"op2@navimag.cl",     password:"Navimag2026", avatar:"O2" },
 { id:"t7", name:"Mecánico 1",        role:"mecanico",    email:"mec1@navimag.cl",    password:"Navimag2026", avatar:"M1" },
 { id:"t8", name:"Mecánico 2",        role:"mecanico",    email:"mec2@navimag.cl",    password:"Navimag2026", avatar:"M2" },
+{ id:"t9",  name:"Yoshio Jujihara Vidal",           role:"operador", email:"yjujihara@navimag.cl", password:"Navimag2026", avatar:"YJ", rut:"18676337-8" },
+{ id:"t10", name:"Jose Enrique Mayorga Delgado",    role:"operador", email:"jmayorga@navimag.cl",  password:"Navimag2026", avatar:"JM", rut:"15268209-3" },
+{ id:"t11", name:"Patricio Henry Pardo Ojeda",      role:"operador", email:"ppardo@navimag.cl",    password:"Navimag2026", avatar:"PP", rut:"16721349-9" },
+{ id:"t12", name:"Alejandro Lorenzo Paredes Diaz",  role:"operador", email:"aparedes@navimag.cl",  password:"Navimag2026", avatar:"AP", rut:"16721317-0" },
+{ id:"t13", name:"Luis Ruiz Mayorga",               role:"operador", email:"lruiz@navimag.cl",     password:"Navimag2026", avatar:"LR", rut:"18240529-9" },
+{ id:"t14", name:"Victor Ruiz Mayorga",             role:"operador", email:"vruiz@navimag.cl",     password:"Navimag2026", avatar:"VR", rut:"15306598-5" },
+{ id:"t15", name:"Leonardo Suarez Olavarria",       role:"operador", email:"lsuarez@navimag.cl",   password:"Navimag2026", avatar:"LS", rut:"14228517-7" },
 ];
 
 // Motorista 1/2 (antes m4/m5) sacados del seed — posición que ya no existe
