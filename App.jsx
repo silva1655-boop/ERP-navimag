@@ -759,18 +759,32 @@ try {
   if(!s.exists()||s.data()?.data===undefined) await setDoc(doc(db,coll,key),{data:seed});
 } catch(e) { console.error("Init:",e); }
 }
+// Clave estable para hacer match entre un usuario local y uno externo
+// (mantek-auth) o de seed — email primero, username/name como respaldo.
+const userTombstoneKey=(u)=>((u?.email||u?.username||u?.name||"")+"").toLowerCase().trim();
+// Set de claves eliminadas para siempre — ver deleteUser en UsersPage.
+// Vive en su propio doc ("deletedUserKeys") en vez de inferirse de
+// deleted===true en el array de users, porque ahora eliminar borra al
+// usuario del array por completo (no lo deja como registro apagado) —
+// sin esta lista, mergeUsers/syncUsersFromAuth lo volverían a crear en el
+// próximo ingreso o en el sync automático cada 5 min.
+async function getDeletedUserKeys(coll){
+  try{
+    const s=await getDoc(doc(db,coll,"deletedUserKeys"));
+    return new Set(s.exists()?s.data().data||[]:[]);
+  }catch(e){console.error("getDeletedUserKeys:",e);return new Set();}
+}
 async function mergeUsers(coll, seed) {
 try {
+const deletedKeys=await getDeletedUserKeys(coll);
 const s=await getDoc(doc(db,coll,"users"));
 if(!s.exists()){
-  await setDoc(doc(db,coll,"users"),{data:seed});
+  await setDoc(doc(db,coll,"users"),{data:seed.filter(su=>!deletedKeys.has(userTombstoneKey(su)))});
 } else {
   const existing=s.data().data||[];
-  // IDs de seeds que fueron eliminados explícitamente (marcados con deleted:true por deleteUser)
-  const deletedIds=new Set(existing.filter(u=>u.deleted===true).map(u=>u.id));
   // Solo agregar seeds que no existen Y no fueron eliminados antes
   const missing=seed.filter(su=>
-    !existing.find(eu=>eu.id===su.id) && !deletedIds.has(su.id)
+    !existing.find(eu=>eu.id===su.id) && !deletedKeys.has(userTombstoneKey(su))
   );
   // Propagar cambios de rol del seed a usuarios existentes (migración operaciones→jefe_maquinas)
   const conRolActualizado=existing.map(eu=>{
@@ -21068,7 +21082,7 @@ function OperadoresPage({user,data,setData,saveData}){
 }
 
 // ─── USERS ───────────────────────────────────────────────────────────────────
-function UsersPage({data,setData,currentUser,saveData,appendToArray,updateInArray,activeModule}){
+function UsersPage({data,setData,currentUser,saveData,appendToArray,updateInArray,activeModule,activeCOLL}){
 const {users}=data;
 // Supervisor ve todos los usuarios sin importar el módulo; el resto solo los de su módulo activo
 const visibleUsers=currentUser?.role==="supervisor"?users:getUsersByModule(users,activeModule);
@@ -21112,6 +21126,28 @@ const ejecutarResetMaritimo=async()=>{
   }
   setResetting(false);
 };
+
+// Auto-migración: usuarios que quedaron con deleted:true del sistema
+// anterior (borrado suave, grises con botón "Restaurar") se purgan del
+// todo apenas se abre esta pantalla — se sacan del array y se tombstonan,
+// igual que un borrado nuevo. Así no hace falta ir haciendo clic uno por
+// uno en los que ya estaban eliminados antes de este cambio.
+useEffect(()=>{
+  const softDeleted=users.filter(u=>u.deleted===true);
+  if(softDeleted.length===0||!activeCOLL) return;
+  (async()=>{
+    try{
+      const updated=users.filter(u=>u.deleted!==true);
+      setData(d=>({...d,users:updated}));
+      saveData("users",updated);
+      const ref=doc(db,activeCOLL,"deletedUserKeys");
+      const snap=await getDoc(ref);
+      const current=snap.exists()?snap.data().data||[]:[];
+      const nuevas=softDeleted.map(userTombstoneKey).filter(k=>k&&!current.includes(k));
+      if(nuevas.length>0) await setDoc(ref,{data:[...current,...nuevas]});
+    }catch(e){console.error("Migración borrado suave→completo:",e);}
+  })();
+},[users,activeCOLL]);
 
 const openNew=()=>{
   setEditTarget(null);
@@ -21159,12 +21195,28 @@ const saveUser=()=>{
   setForm({name:"",email:"",password:"",role:"mecanico"});
 };
 
-const deleteUser=id=>{
+const deleteUser=async id=>{
   if(id===currentUser?.id){alert("No puedes eliminar tu propia cuenta");return;}
-  // Marcar como deleted:true — mergeUsers no lo reagregará al reabrir la app
-  const updated=users.map(u=>u.id===id?{...u,deleted:true,deletedAt:new Date().toISOString()}:u);
+  const target=users.find(u=>u.id===id);
+  // Borrado completo — se saca del array entero, no queda como registro
+  // apagado. Las OTs/checklists/registros históricos que lo referencian
+  // por id se conservan igual (solo dejan de poder "resolverse" a un
+  // nombre visible, como ya pasaba antes con el borrado suave).
+  const updated=users.filter(u=>u.id!==id);
   setData(d=>({...d,users:updated}));
   saveData("users",updated);
+  // Tombstone — sin esto, mergeUsers (seed) o syncUsersFromAuth (sync con
+  // mantek-auth cada 5 min) lo vuelven a crear apenas vuelve a aparecer
+  // en el seed o en mantek-auth.
+  try{
+    const key=userTombstoneKey(target);
+    if(key&&activeCOLL){
+      const ref=doc(db,activeCOLL,"deletedUserKeys");
+      const snap=await getDoc(ref);
+      const current=snap.exists()?snap.data().data||[]:[];
+      if(!current.includes(key)) await setDoc(ref,{data:[...current,key]});
+    }
+  }catch(e){console.error("Tombstone usuario eliminado:",e);}
   setConfirmDel(null);
 };
 
@@ -34248,6 +34300,10 @@ const [user,setUser]=useState(null);
       if(!res.ok) return;
       const d=await res.json();
       if(!d.ok||!Array.isArray(d.data)) return;
+      // Usuarios eliminados por completo desde la app (ver deleteUser en
+      // UsersPage) — sin este chequeo, cada sync (al cargar y cada 5 min)
+      // los volvía a traer desde mantek-auth apenas volvía a aparecer ahí.
+      const deletedKeys=await getDeletedUserKeys(getActiveCOLL(activeModule,activeBarco));
       setData(prev=>{
         const firestoreUsers=prev.users||[];
         const byEmail=new Map(
@@ -34258,6 +34314,7 @@ const [user,setUser]=useState(null);
             [(u.username||u.name||'').toLowerCase(),u])
         );
         const merged=d.data
+          .filter(au=>!deletedKeys.has(userTombstoneKey(au)))
           .map(au=>{
             const fs2=
               byEmail.get((au.email||'').toLowerCase())||
@@ -34267,12 +34324,9 @@ const [user,setUser]=useState(null);
               avgOperatingHoursLearned:fs2.avgOperatingHoursLearned||null,
               avgPreference:fs2.avgPreference||'learned',
               ...au,
-              // Antes esto forzaba deleted:false SIEMPRE, sin importar lo
-              // que hubiera en Firestore — cada sync (al cargar y cada 5
-              // min) resucitaba a cualquier usuario eliminado desde la
-              // app en cuanto volvía a aparecer en mantek-auth. Ahora se
-              // respeta el estado real de Firestore: si ya se eliminó acá,
-              // sigue eliminado aunque mantek-auth lo siga trayendo.
+              // Registros viejos, eliminados con el sistema anterior
+              // (deleted:true sin tombstone) — se preservan así hasta que
+              // alguien los borre de nuevo con el flujo nuevo.
               deleted:fs2.deleted===true,
               // Preservar permisos y rol modificados localmente en Firestore
               permisos:fs2.permisos||au.permisos||{},
@@ -35496,7 +35550,7 @@ historial_postop: <HistorialPostOperacional data={data}/>,
 dashboard_checklist: <DashboardChecklist data={data} activeModule={activeModule}/>,
 reports:       <Reports       user={user} data={data}/>,
 deviaciones:   <DeviationReports user={user} data={data} setData={setData} saveData={saveData} appendToArray={appendToArray} updateInArray={updateInArray} activeCOLL={activeCOLL}/>,
-users:         <UsersPage     data={data} setData={setData} currentUser={user} saveData={saveData} appendToArray={appendToArray} updateInArray={updateInArray} activeModule={activeModule}/>,
+users:         <UsersPage     data={data} setData={setData} currentUser={user} saveData={saveData} appendToArray={appendToArray} updateInArray={updateInArray} activeModule={activeModule} activeCOLL={activeCOLL}/>,
 operadores:    <OperadoresPage user={user} data={data} setData={setData} saveData={saveData}/>,
 vessels:       <VesselsPage   user={user} data={data} setData={setData}/>,
 voyages:       <VoyagesPage   user={user} data={data} setData={setData}/>,
