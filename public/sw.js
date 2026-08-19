@@ -1,8 +1,12 @@
-const CACHE = "mantek-v2";
+const CACHE = "mantek-v3";
 const ASSETS = ["/", "/index.html", "/manifest.json"];
 
 self.addEventListener("install", e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));
+  e.waitUntil(
+    caches.open(CACHE).then(c => {
+      return Promise.allSettled(ASSETS.map(a => c.add(a)));
+    })
+  );
   self.skipWaiting();
 });
 
