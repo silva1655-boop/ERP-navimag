@@ -34327,18 +34327,9 @@ const [user,setUser]=useState(null);
         const perm=await Notification.requestPermission();
         if(perm!=='granted') return;
         // Usar registration directa en vez de .ready que puede no resolver
-        let reg=await navigator.serviceWorker.getRegistration();
-        // Esperar a que el SW esté activo
-        const worker=reg.active||reg.installing||reg.waiting;
-        // Si no está activo esperar
-        if(reg.installing){
-          await new Promise(resolve=>{
-            reg.installing.addEventListener('statechange',function(){
-              if(this.state==='activated') resolve();
-            });
-          });
-          reg=await navigator.serviceWorker.getRegistration();
-        }
+        // Registrar SW y esperar que esté listo
+        await navigator.serviceWorker.register('/sw.js');
+        const reg=await navigator.serviceWorker.ready;
         const sub=await reg.pushManager.subscribe({
           userVisibleOnly:true,
           applicationServerKey:urlB64ToUint8(VAPID_PUBLIC_KEY)
