@@ -57,6 +57,59 @@ const buildErpPerms = (authPerms) => {
 };
 // ─────────────────────────────────────────────────────
 
+// ── PUSH NOTIFICATIONS (Web Push) ────────────────────────────────────────
+// Llave pública VAPID + URL de la Cloud Function que registra la
+// suscripción — ambas se completan recién cuando se hace el deploy real de
+// functions/ (ver functions/README.md). Hasta entonces quedan con estos
+// placeholders y registerPushSubscription simplemente no hace nada útil
+// (el fetch fallará silenciosamente, atrapado en su propio try/catch).
+const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY || "REEMPLAZAR_CON_LLAVE_PUBLICA_VAPID";
+// project id inferido de erp-mecmar-firebase-adminsdk-*.json en .gitignore
+// — CONFIRMAR contra la consola de Firebase antes de asumirlo como real.
+const PUSH_REGISTER_URL = import.meta.env.VITE_PUSH_REGISTER_URL || "https://us-central1-erp-mecmar.cloudfunctions.net/registerPushToken";
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = window.atob(base64);
+  return Uint8Array.from([...rawData].map(c => c.charCodeAt(0)));
+}
+
+async function registerPushSubscription(currentUser) {
+  try {
+    if(VAPID_PUBLIC_KEY==="REEMPLAZAR_CON_LLAVE_PUBLICA_VAPID") return; // functions/ sin deployar todavía
+    if(!("serviceWorker" in navigator) || !("PushManager" in window)){
+      console.log("Push no soportado en este navegador");
+      return;
+    }
+    const permission = await Notification.requestPermission();
+    if(permission!=="granted"){
+      console.log("Permiso de notificaciones denegado");
+      return;
+    }
+    const registration = await navigator.serviceWorker.ready;
+    const subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+    });
+    await fetch(PUSH_REGISTER_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        subscription,
+        userId: currentUser.id || currentUser.username,
+        username: currentUser.username,
+        role: currentUser.role,
+        device: navigator.userAgent.includes("Mobile") ? "mobile" : "desktop",
+      }),
+    });
+    console.log("✅ Push subscription registrada para:", currentUser.username);
+  } catch(e) {
+    console.warn("Error registrando push:", e);
+  }
+}
+// ─────────────────────────────────────────────────────
+
 const IMGBB_API_KEY = import.meta.env.VITE_IMGBB_API_KEY || "";
 
 // ─── USUARIOS ─────────────────────────────────────────────────────────────────
@@ -34403,6 +34456,27 @@ useEffect(()=>{
 const [activeModule,setActiveModule]=useState(null);
 const [activeBarco,setActiveBarco]=useState(null);
 const [page,setPage]=useState("dashboard");
+// ── Push: pedir permiso y registrar suscripción tras el login ───────────
+// 3s de espera para no competir con el resto de lo que dispara el login
+// (carga de datos, sync de usuarios, etc.) ni bloquear esa pantalla con el
+// diálogo nativo de permiso del navegador.
+useEffect(()=>{
+  if(!user?.id) return;
+  const t=setTimeout(()=>{registerPushSubscription(user);},3000);
+  return()=>clearTimeout(t);
+},[user?.id]);
+// ── Push: click en una notificación → navegar a la página correcta ──────
+// sw.js hace postMessage({type:"NAVIGATE",page,data}) cuando la app ya
+// está abierta y el usuario clickea la notificación (ver notificationclick
+// en sw.js). Se usa setPage directo en vez de handleNav (definido más
+// abajo en este componente) para no depender de un orden de declaración.
+useEffect(()=>{
+  const handleSWMessage=e=>{
+    if(e.data?.type==="NAVIGATE"&&e.data.page) setPage(e.data.page);
+  };
+  navigator.serviceWorker?.addEventListener("message",handleSWMessage);
+  return()=>navigator.serviceWorker?.removeEventListener("message",handleSWMessage);
+},[]);
 const [online,setOnline]=useState(true);
 const [loading,setLoading]=useState(false);
 const [showChangePwd,setShowChangePwd]=useState(false);
