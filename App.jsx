@@ -23248,6 +23248,7 @@ const tplEquip=type=>{const validTypes=CHECKLIST_TEMPLATES[type]?.equipTypes||[]
 const startForm=()=>{
 if(!setup.operatorName.trim()){alert("Ingresa el nombre del operador");return;}
 if(setup.inspectionType==="post"){
+  if(!setup.horometro){alert("Ingresa el horómetro actual del equipo");return;}
   setStep("post");
   setStartTime(new Date().toISOString());
   return;
@@ -24594,6 +24595,7 @@ if(step==="post"){
         createdAt:new Date().toISOString(),
         startTime:startTime||null,
         endTime:new Date().toISOString(),
+        horometro:parseFloat(setup.horometro)||0,
         hasIssues:postDamagePhotos.length>0||!!postDamageNote.trim(),
         issueCount:postDamagePhotos.length>0||postDamageNote.trim()?1:0,
         module:activeModule||"taller",
