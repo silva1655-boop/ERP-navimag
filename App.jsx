@@ -13379,6 +13379,37 @@ async function saveRequestIndividual(req,patch,coll){
     return updated;
   }
 }
+
+// Eliminar trabajo fuera de programa (solo admin/supervisor)
+const deleteDeviacion=async(req)=>{
+  if(!window.confirm('¿Eliminar este trabajo fuera de programa? Esta acción no se puede deshacer.')) return;
+  try{
+    // 1. Eliminar documento individual de Firestore
+    const {deleteDoc,doc:docFn}=await import('firebase/firestore');
+    await deleteDoc(docFn(db,activeCOLL,'req_'+req.id));
+    // 2. Quitar del índice
+    const idxRef=doc(db,activeCOLL,'requests_index');
+    const idxSnap=await getDoc(idxRef);
+    if(idxSnap.exists()){
+      const ids=(idxSnap.data().ids||[]).filter(id=>id!==req.id);
+      await setDoc(idxRef,{ids});
+    }
+    // 3. Actualizar estado local
+    const updReqs=(data.requests||[]).filter(r=>r.id!==req.id);
+    setData(d=>({...d,requests:updReqs}));
+    // 4. Si tiene OT asociada, eliminarla también
+    if(req.otId){
+      const updWOs=(data.wos||[]).filter(w=>w.id!==req.otId);
+      setData(d=>({...d,wos:updWOs}));
+      saveData('workOrders',updWOs);
+    }
+    console.log('✅ FDP eliminada:', req.id);
+  }catch(e){
+    console.error('Error eliminando FDP:',e);
+    alert('Error al eliminar. Intenta nuevamente.');
+  }
+};
+
 function Requests({user,data,setData,saveData,appendToArray,updateInArray,activeCOLL,activeModule}){
 const {requests=[],equip=[],users=[],wos=[]}=data;
 const [showForm,setShowForm]=useState(false);
@@ -18137,7 +18168,8 @@ function FaenaActivaPage({user,data}){
   // La faena activa del usuario NO se acota a "hoy" — si quedó abierta de un
   // turno anterior (ej. faena nocturna sin cerrar), tiene que seguir
   // apareciendo acá para poder cerrarla, no esconderse al pasar la medianoche.
-  const faenaActiva=faenas.find(f=>f.estado==="activa"&&f.creadoPor===quien);
+  const esSup=user.role==="supervisor"||user.role==="admin"||user.role==="jefe_operaciones"||user.role==="sup_operaciones"||user.authRole==="ADMIN";
+const faenaActiva=faenas.find(f=>f.estado==="activa"&&(esSup||f.creadoPor===quien));
 
   const [vista,setVista]=useState("inicio");
   const [form,setForm]=useState({
@@ -18450,7 +18482,7 @@ function FaenaActivaPage({user,data}){
                     <p className="text-sm font-semibold text-gray-800">Faena {f.numeroFaena}</p>
                     <p className="text-xs text-gray-400">{f.buque} · {f.terminal} · {f.estado==="activa"?"En curso":"Cerrada"}{f.creadoPor?` · ${f.creadoPor}`:""}</p>
                   </div>
-                  {f.estado==="activa"&&f.creadoPor===quien&&(
+                  {f.estado==="activa"&&(esSup||f.creadoPor===quien)&&(
                     <button onClick={()=>setVista("faena_abierta")} className="text-xs px-3 py-1.5 rounded-xl bg-blue-600 text-white font-semibold hover:bg-blue-700 transition">Continuar →</button>
                   )}
                   {f.estado==="cerrada"&&(
