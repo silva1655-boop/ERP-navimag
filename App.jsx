@@ -24535,6 +24535,14 @@ if(step==="post"){
       return;
     }
     setSaving(true);
+      const horoPost=parseFloat(setup.horometro)||0;
+      const equipPost=(data.equip||[]).find(e=>e.id===setup.equipId);
+      if(equipPost&&horoPost>0&&horoPost>(equipPost.hours||0)){
+        const eq2={...equipPost,hours:horoPost,lastHourmeterUpdate:new Date().toISOString().slice(0,10),lastHourmeterSource:"post_operacional"};
+        const eq2upd=(data.equip||[]).map(e=>e.id===setup.equipId?eq2:e);
+        setData(d=>({...d,equip:eq2upd}));
+        saveData("equipment",eq2upd);
+      }
 
     try{
       // ── UPLOAD CON LÍMITE DE CONCURRENCIA ──────────────────
