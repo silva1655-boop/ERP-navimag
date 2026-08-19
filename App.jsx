@@ -23289,6 +23289,19 @@ const [clFilterUbicacion,setClFilterUbicacion]=useState("");
 const [clSortOrder,setClSortOrder]=useState("desc"); // desc = más nuevo primero
 const [showCriticalWarning,setShowCriticalWarning]=useState(false);
 const [criticalFaultsList,setCriticalFaultsList]=useState([]);
+// Alerta a pantalla completa DESPUÉS de guardar (distinta de
+// showCriticalWarning, que es el paso previo a firmar) — ver doSubmit.
+// null = sin alerta. {equipo,fallas,warnings,soloWarning,timestamp}
+const [alertaCritica,setAlertaCritica]=useState(null);
+// Bloquea el botón físico/gesto de "atrás" del navegador mientras la
+// alerta está activa — el único cierre posible es el botón de confirmar.
+useEffect(()=>{
+  if(!alertaCritica) return;
+  const block=e=>{e.preventDefault();history.pushState(null,"",window.location.href);};
+  history.pushState(null,"",window.location.href);
+  window.addEventListener("popstate",block);
+  return()=>window.removeEventListener("popstate",block);
+},[alertaCritica]);
 const [saving,setSaving]=useState(false);
 const savingRef=useRef(false);
 const [saveMsg,setSaveMsg]=useState("");
@@ -23531,16 +23544,21 @@ const naCount=items.filter(it=>it.status==="na").length;
       savedAt:Date.now(),
     };
 
-    // Critical items generate ALTA priority requests — equipment status is NOT changed automatically
-    // Equipment status is managed manually by mecanico (when starting OT) or operaciones (when processing request)
-    const criticalFails=uploadedItems.filter(it=>{
-      const tplItem=CHECKLIST_TEMPLATES[setup.equipType]?.sections
-        .flatMap(s=>s.items)
-        .find(ti=>ti.id===it.id);
-      return tplItem?.critical===true && it.status==="malo";
-    });
+    // Ítem crítico + "malo"    → equipo se marca "falla" automáticamente
+    //                             (ver bloque de actualización de equipo
+    //                             más abajo) + alerta roja a pantalla completa.
+    // Ítem crítico + "regular" → no cambia el status del equipo, solo
+    //                             alerta amarilla (advertencia).
+    // Ambos generan solicitud igual que antes (issueItemsFinal, más abajo)
+    // — esto solo agrega la alerta visual + el auto-cambio de status.
+    const buscarTplItem=it=>CHECKLIST_TEMPLATES[setup.equipType]?.sections
+      .flatMap(s=>s.items).find(ti=>ti.id===it.id);
+    const criticalFails=uploadedItems.filter(it=>buscarTplItem(it)?.critical===true && it.status==="malo");
+    const criticalWarnings=uploadedItems.filter(it=>buscarTplItem(it)?.critical===true && it.status==="regular");
     if(criticalFails.length>0){
-      console.log(`⚠️ Ítems críticos detectados en ${eq?.code}: ${criticalFails.map(i=>i.name).join(", ")} — equipo NO puesto en falla automáticamente`);
+      console.log(`🚨 Fallas críticas en ${eq?.code}: ${criticalFails.map(i=>i.name).join(", ")} — equipo marcado FALLA automáticamente`);
+    }else if(criticalWarnings.length>0){
+      console.log(`⚠️ Ítems críticos en "regular" en ${eq?.code}: ${criticalWarnings.map(i=>i.name).join(", ")} — equipo sigue operativo`);
     }
 
     // Verify checklist size before saving
@@ -23670,8 +23688,11 @@ const naCount=items.filter(it=>it.status==="na").length;
     const allUpdated=[...allCL,newCLSafe];
     setData(d=>({...d,checklists:allUpdated}));
 
-    // ── Actualizar ubicación y horómetro del equipo ──────────
-    // setup.puerto siempre tiene valor (campo obligatorio)
+    // ── Actualizar ubicación, horómetro y (si corresponde) status del equipo ──
+    // setup.puerto siempre tiene valor (campo obligatorio). Se hace en UN
+    // solo update — si el status:"falla" fuera un setData/saveData aparte,
+    // este bloque lo pisaría porque los dos parten del mismo (data.equip||[])
+    // desactualizado.
     {
       const equipActual=(data.equip||[]).find(e=>e.id===setup.equipId);
       if(equipActual){
@@ -23680,8 +23701,9 @@ const naCount=items.filter(it=>it.status==="na").length;
 
         const cambioUbicacion=equipActual.location!==labelPuerto;
         const cambioHorometro=horoNuevo>0&&horoNuevo>(equipActual.hours||0);
+        const cambioFalla=criticalFails.length>0;
 
-        if(cambioUbicacion||cambioHorometro){
+        if(cambioUbicacion||cambioHorometro||cambioFalla){
           const equipActualizado={
             ...equipActual,
             ...(cambioUbicacion?{
@@ -23695,6 +23717,11 @@ const naCount=items.filter(it=>it.status==="na").length;
               lastHourmeterUpdate:new Date().toISOString().slice(0,10),
               lastHourmeterSource:"checklist",
             }:{}),
+            ...(cambioFalla?{
+              status:"falla",
+              lastFailReason:criticalFails.map(f=>f.name).join(", "),
+              lastFailAt:new Date().toISOString(),
+            }:{}),
           };
           const equipUpdated=(data.equip||[]).map(e=>
             e.id===setup.equipId?equipActualizado:e
@@ -23704,7 +23731,8 @@ const naCount=items.filter(it=>it.status==="na").length;
           console.log(
             `📍 ${equipActual.code}:`,
             cambioUbicacion?`ubicación → ${labelPuerto}`:"",
-            cambioHorometro?`horómetro ${equipActual.hours||0}→${horoNuevo}h`:""
+            cambioHorometro?`horómetro ${equipActual.hours||0}→${horoNuevo}h`:"",
+            cambioFalla?"status → falla":""
           );
         }
       }
@@ -23739,7 +23767,40 @@ const naCount=items.filter(it=>it.status==="na").length;
       nave:"",
       inspectionType:"pre",
     });
-    alert(`✅ Checklist guardado${issueItemsFinal.length>0?` · ${issueItemsFinal.length} solicitud(es) enviadas a Operaciones`:""}`);
+    // Alerta a pantalla completa — solo si hay ítems críticos en "malo" o
+    // "regular". Reemplaza el alert() nativo en esos casos (si no, el
+    // alert() nativo bloquea el hilo y la pantalla completa recién se ve
+    // después de cerrarlo, duplicando el aviso).
+    if(criticalFails.length>0){
+      const fallasConRazon=criticalFails.map(it=>{
+        const tplItem=buscarTplItem(it);
+        return{nombre:it.name,seccion:it.sectionLabel||"",razon:tplItem?.stopReason||"Falla crítica detectada",nota:it.note||""};
+      });
+      const warningsConRazon=criticalWarnings.map(it=>{
+        const tplItem=buscarTplItem(it);
+        return{nombre:it.name,seccion:it.sectionLabel||"",razon:tplItem?.stopReason||"Requiere atención",nota:it.note||""};
+      });
+      setAlertaCritica({
+        equipo:eq,
+        fallas:fallasConRazon,
+        warnings:warningsConRazon,
+        timestamp:new Date().toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit"}),
+      });
+    }else if(criticalWarnings.length>0){
+      const warningsConRazon=criticalWarnings.map(it=>{
+        const tplItem=buscarTplItem(it);
+        return{nombre:it.name,seccion:it.sectionLabel||"",razon:tplItem?.stopReason||"Requiere atención",nota:it.note||""};
+      });
+      setAlertaCritica({
+        equipo:eq,
+        fallas:[],
+        warnings:warningsConRazon,
+        timestamp:new Date().toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit"}),
+        soloWarning:true,
+      });
+    }else{
+      alert(`✅ Checklist guardado${issueItemsFinal.length>0?` · ${issueItemsFinal.length} solicitud(es) enviadas a Operaciones`:""}`);
+    }
 
   }catch(e){
     clearTimeout(safetyTimeout);
@@ -23960,6 +24021,112 @@ const mine=((user.role==="supervisor"||user.role==="operaciones"||user.role==="m
 ).slice().sort((a,b)=>clSortOrder==="desc"
   ?new Date(b.createdAt)-new Date(a.createdAt)
   :new Date(a.createdAt)-new Date(b.createdAt));
+
+  if(alertaCritica){
+    return(
+      <div className="fixed inset-0 z-[9999] flex flex-col overflow-hidden"
+        style={{
+          background: alertaCritica.soloWarning
+            ?"linear-gradient(135deg,#78350f,#92400e)"
+            :"linear-gradient(135deg,#7f1d1d,#991b1b)",
+          animation:"pulse-bg 2s ease-in-out infinite",
+        }}>
+        <style>{`
+          @keyframes pulse-bg{0%,100%{opacity:1}50%{opacity:0.92}}
+          @keyframes bounce-icon{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(-10px) scale(1.05)}}
+        `}</style>
+
+        <div className="flex-shrink-0 flex items-center justify-center pt-8 pb-4">
+          <div style={{animation:"bounce-icon 1.5s ease-in-out infinite"}}>
+            <div className="text-7xl text-center select-none">{alertaCritica.soloWarning?"⚠️":"🚨"}</div>
+          </div>
+        </div>
+
+        <div className="flex-shrink-0 text-center px-6 pb-4">
+          <p className="text-white font-black text-2xl tracking-wide uppercase">
+            {alertaCritica.soloWarning?"ATENCIÓN — Falla Detectada":"EQUIPO FUERA DE SERVICIO"}
+          </p>
+          <p className="text-red-200 text-sm mt-1 font-semibold">
+            {alertaCritica.equipo?.code} · {alertaCritica.equipo?.name} · {alertaCritica.timestamp}
+          </p>
+          {!alertaCritica.soloWarning&&(
+            <div className="inline-flex items-center gap-2 bg-white/20 border border-white/30 rounded-xl px-4 py-1.5 mt-2">
+              <span className="text-white text-xs font-bold">Este equipo ha sido marcado como FUERA DE SERVICIO</span>
+            </div>
+          )}
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 pb-4">
+          {alertaCritica.fallas.length>0&&(
+            <div className="space-y-3 mb-4">
+              <p className="text-red-200 text-xs font-bold uppercase tracking-widest text-center mb-2">Fallas que detienen el equipo:</p>
+              {alertaCritica.fallas.map((f,i)=>(
+                <div key={i} className="bg-white/10 border border-white/20 rounded-2xl p-4">
+                  <div className="flex items-start gap-3">
+                    <span className="text-2xl flex-shrink-0">❌</span>
+                    <div>
+                      <p className="text-white font-bold text-sm leading-tight">{f.nombre}</p>
+                      <p className="text-red-200 text-xs mt-0.5">{f.seccion}</p>
+                      <p className="text-red-100 text-xs mt-1.5 bg-white/10 rounded-lg px-2 py-1 font-semibold">⛔ {f.razon}</p>
+                      {f.nota&&<p className="text-red-200 text-xs mt-1 italic">Nota: {f.nota}</p>}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {alertaCritica.warnings?.length>0&&(
+            <div className="space-y-2">
+              <p className="text-amber-200 text-xs font-bold uppercase tracking-widest text-center mb-2">
+                {alertaCritica.soloWarning?"Fallas que requieren atención:":"Fallas adicionales:"}
+              </p>
+              {alertaCritica.warnings.map((w,i)=>(
+                <div key={i} className="bg-amber-500/20 border border-amber-400/30 rounded-xl p-3">
+                  <div className="flex items-start gap-2">
+                    <span className="text-lg flex-shrink-0">⚠️</span>
+                    <div>
+                      <p className="text-white font-semibold text-xs">{w.nombre}</p>
+                      <p className="text-amber-200 text-xs mt-0.5">{w.razon}</p>
+                      {w.nota&&<p className="text-amber-200 text-xs italic">Nota: {w.nota}</p>}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="mt-4 bg-white/10 border border-white/20 rounded-2xl p-4">
+            <p className="text-white font-bold text-sm mb-2 flex items-center gap-2"><span>📋</span> ¿Qué debes hacer ahora?</p>
+            <div className="space-y-2">
+              {!alertaCritica.soloWarning?(
+                <>
+                  <p className="text-red-100 text-xs flex items-start gap-2"><span className="flex-shrink-0 font-bold">1.</span>Deja el equipo detenido en un lugar seguro</p>
+                  <p className="text-red-100 text-xs flex items-start gap-2"><span className="flex-shrink-0 font-bold">2.</span>Informa inmediatamente a tu supervisor</p>
+                  <p className="text-red-100 text-xs flex items-start gap-2"><span className="flex-shrink-0 font-bold">3.</span>NO operes el equipo hasta que sea revisado por taller</p>
+                  <p className="text-red-100 text-xs flex items-start gap-2"><span className="flex-shrink-0 font-bold">4.</span>La solicitud de reparación ya fue enviada automáticamente</p>
+                </>
+              ):(
+                <>
+                  <p className="text-amber-100 text-xs flex items-start gap-2"><span className="flex-shrink-0 font-bold">1.</span>Informa a tu supervisor sobre las fallas detectadas</p>
+                  <p className="text-amber-100 text-xs flex items-start gap-2"><span className="flex-shrink-0 font-bold">2.</span>El equipo puede seguir operando bajo supervisión</p>
+                  <p className="text-amber-100 text-xs flex items-start gap-2"><span className="flex-shrink-0 font-bold">3.</span>La solicitud de revisión ya fue enviada a taller</p>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex-shrink-0 px-5 pb-8 pt-4">
+          <button onClick={()=>setAlertaCritica(null)}
+            className="w-full py-5 rounded-2xl font-black text-base uppercase tracking-wide transition active:scale-95 shadow-2xl"
+            style={{background:"white",color:alertaCritica.soloWarning?"#92400e":"#991b1b"}}>
+            {alertaCritica.soloWarning?"✅ Entendido — Informaré al supervisor":"✅ Entendido — El equipo queda fuera de servicio"}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if(showCriticalWarning){
     const ceq=equip.find(e=>e.id===setup.equipId);
