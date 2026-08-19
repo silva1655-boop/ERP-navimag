@@ -34308,6 +34308,52 @@ const [user,setUser]=useState(null);
     const iv=setInterval(syncUsersFromAuth,5*60*1000);
     return()=>clearInterval(iv);
   },[user,syncUsersFromAuth]);
+
+  // ── PUSH NOTIFICATIONS ──────────────────────────────
+  const VAPID_PUBLIC_KEY='BGGhuQ3V8F2cPaRMkxgyohLn9A3CTKL0PjCvwdFRxJPjHDnN5xLpkmUtqpBKqmR4NwpWKnLb9_hFxWMh9U7LtDE';
+  const PUSH_REGISTER_URL='https://southamerica-west1-erp-mecmar.cloudfunctions.net/registerPushToken';
+
+  function urlB64ToUint8(b){
+    const p='='.repeat((4-b.length%4)%4);
+    const b64=(b+p).replace(/-/g,'+').replace(/_/g,'/');
+    const raw=window.atob(b64);
+    return Uint8Array.from([...raw].map(c=>c.charCodeAt(0)));
+  }
+
+  useEffect(()=>{
+    setTimeout(async()=>{
+      try{
+        if(!('serviceWorker' in navigator)||!('PushManager' in window)) return;
+        const perm=await Notification.requestPermission();
+        if(perm!=='granted') return;
+        const reg=await navigator.serviceWorker.ready;
+        const sub=await reg.pushManager.subscribe({
+          userVisibleOnly:true,
+          applicationServerKey:urlB64ToUint8(VAPID_PUBLIC_KEY)
+        });
+        await fetch(PUSH_REGISTER_URL,{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({
+            subscription:sub,
+            userId:user.id||user.username,
+            username:user.username,
+            role:user.role,
+            device:navigator.userAgent.includes('Mobile')?'mobile':'desktop'
+          })
+        });
+        console.log('✅ Push registrado:',user.username);
+      }catch(e){console.warn('Push error:',e);}
+    },3000);
+  },[user?.id]);
+
+  useEffect(()=>{
+    const handler=(e)=>{
+      if(e.data?.type==='NAVIGATE'&&e.data.page) handleNav(e.data.page);
+    };
+    navigator.serviceWorker?.addEventListener('message',handler);
+    return()=>navigator.serviceWorker?.removeEventListener('message',handler);
+  },[]);
   // ─────────────────────────────────────────────────────
 
   // ─── AVISO DE NUEVA VERSIÓN ──────────────────────────
@@ -35607,6 +35653,7 @@ return(
     {/* Bottom hint */}
     <div className="absolute bottom-4 left-0 right-0 text-center">
       <p className="text-white/40 text-xs">{imgGallery&&imgGallery.urls.length>1?"← → para cambiar de foto · Esc o toca fuera para cerrar":"Toca fuera para cerrar"}</p>
+
     </div>
   </div>
 )}
