@@ -9279,7 +9279,7 @@ const getAssignmentStatus=(assignment,template,equipment,wos)=>{
     if(!nextDueDate) return "sin_datos_horometro";
     if(openOT&&template?.requiresCompletion) return "bloqueado_ot_abierta";
     const freq=parseFloat(assignment.frequency||template?.frequency)||0;
-    const pct=parseFloat(assignment.pctAnticipacion||template?.pctAnticipacion)||20;
+    const pct=(assignment.pctAnticipacion!=null?parseFloat(assignment.pctAnticipacion):(template?.pctAnticipacion!=null?parseFloat(template.pctAnticipacion):20));
     const advanceDays=freq>0?Math.round(freq*pct/100):7;
     const daysLeft=Math.round((new Date(nextDueDate)-new Date(new Date().toISOString().slice(0,10)))/86400000);
     // "vencido" y "vencido_critico" se consolidan en un solo estado "critico"
@@ -9503,7 +9503,7 @@ const np={
     fechaUltima:planForm.fechaUltima,proximaFecha:nextDueDateCalc||"",
     lastExecutionDate:lastExecDate,nextDueDate:nextDueDateCalc,
     valorRepuesto:parseFloat(planForm.valorRepuesto)||0,valorServicio:parseFloat(planForm.valorServicio)||0,moneda:planForm.moneda,
-    pctAnticipacion:parseFloat(planForm.pctAnticipacion)||20,
+    pctAnticipacion:planForm.pctAnticipacion!=null?parseFloat(planForm.pctAnticipacion):20,
     historialCambios:[{ts:new Date().toISOString(),usuario:user.name,accion:"creado",detalle:`Plan creado · ${tipoPlanNorm==="calendario"?`cada ${freq} día(s)`:`cada ${freq}h`}`}],
   }:{})
 };
@@ -9677,7 +9677,7 @@ const savePlanEdit=()=>{
       lastHorometro:lastHoro,
       nextDueDate:nextDueDateCalc,proximaFecha:nextDueDateCalc||"",
       valorRepuesto:parseFloat(editPlanForm.valorRepuesto)||0,valorServicio:parseFloat(editPlanForm.valorServicio)||0,moneda:editPlanForm.moneda,
-      pctAnticipacion:parseFloat(editPlanForm.pctAnticipacion)||20,
+      pctAnticipacion:editPlanForm.pctAnticipacion!=null?parseFloat(editPlanForm.pctAnticipacion):20,
       tasks:editPlanForm.tasks.split("\n").filter(Boolean),
       historialCambios:[...(pl.historialCambios||[]),{ts:new Date().toISOString(),usuario:user.name,accion:"editado",detalle:"Plan editado"}],
     }:{}),
@@ -9736,7 +9736,7 @@ const planesLegacyAdaptados=(data.plans||[]).map(p=>({
   _nombre:p.name||"Plan sin nombre",
   _estimatedHours:p.estimatedHours||0,
   _tasks:p.tasks||[],
-  _pctAnticipacion:p.pctAnticipacion||20,
+  _pctAnticipacion:p.pctAnticipacion!=null?p.pctAnticipacion:20,
 }));
 const allPlanesUnificados=[...planAssignments,...planesLegacyAdaptados];
 const openAssignTpl=(tpl)=>{setAssigningTpl(tpl);setAssignForm({equipId:"",responsable:"",baseHours:""});setShowAssignModal(true);};
@@ -9827,7 +9827,7 @@ const saveEditPlanAssign=()=>{
       estimatedHours:parseFloat(f.estimatedHours)||0,
       fechaUltima:f.fechaUltima||pl.fechaUltima,
       lastExecutionDate:f.fechaUltima||pl.lastExecutionDate,
-      pctAnticipacion:parseFloat(f.pctAnticipacion)||20,
+      pctAnticipacion:f.pctAnticipacion!=null?parseFloat(f.pctAnticipacion):20,
       valorRepuesto:parseFloat(f.valorRepuesto)||0,
       valorServicio:parseFloat(f.valorServicio)||0,
       moneda:f.moneda||"USD",
@@ -9867,7 +9867,7 @@ const saveEditPlanAssign=()=>{
       responsable:f.responsable,
       estimatedHoursOverride:parseFloat(f.estimatedHours)||0,
       fechaUltima:f.fechaUltima||a0.fechaUltima,
-      pctAnticipacion:parseFloat(f.pctAnticipacion)||20,
+      pctAnticipacion:f.pctAnticipacion!=null?parseFloat(f.pctAnticipacion):20,
       valorRepuesto:parseFloat(f.valorRepuesto)||0,
       valorServicio:parseFloat(f.valorServicio)||0,
       moneda:f.moneda||"USD",
@@ -10876,9 +10876,9 @@ if(isMaritimo){
           </div>
         </div>
         <div>
-          <label className="text-gray-500 text-xs font-medium mb-1.5 block">% ANTICIPACIÓN PARA GENERAR OT <span className="text-blue-500 font-bold">{parseFloat(planForm.pctAnticipacion)||20}%</span></label>
+          <label className="text-gray-500 text-xs font-medium mb-1.5 block">% ANTICIPACIÓN PARA GENERAR OT <span className="text-blue-500 font-bold">{planForm.pctAnticipacion!=null?parseFloat(planForm.pctAnticipacion):20}%</span></label>
           <input type="range" min="0" max="50" step="5" value={planForm.pctAnticipacion!=null?parseFloat(planForm.pctAnticipacion):0} onChange={e=>setPlanForm(f=>({...f,pctAnticipacion:parseFloat(e.target.value)}))} className="w-full accent-blue-600"/>
-          <p className="text-gray-400 text-xs mt-1">La OT se genera cuando se alcanza el {parseFloat(planForm.pctAnticipacion)||20}% previo al vencimiento</p>
+          <p className="text-gray-400 text-xs mt-1">La OT se genera cuando se alcanza el {planForm.pctAnticipacion!=null?parseFloat(planForm.pctAnticipacion):20}% previo al vencimiento</p>
         </div>
       </div>
     </div>
@@ -12562,7 +12562,7 @@ return(
     </div>
   </div>
   <div>
-    <label className="text-gray-500 text-xs font-medium mb-1 block">% ANTICIPACIÓN PARA GENERAR OT <span className="text-blue-500 font-bold">{parseFloat(editPlanForm.pctAnticipacion)||20}%</span></label>
+    <label className="text-gray-500 text-xs font-medium mb-1 block">% ANTICIPACIÓN PARA GENERAR OT <span className="text-blue-500 font-bold">{editPlanForm.pctAnticipacion!=null?parseFloat(editPlanForm.pctAnticipacion):20}%</span></label>
     <input type="range" min="0" max="50" step="5" value={editPlanForm.pctAnticipacion!=null?parseFloat(editPlanForm.pctAnticipacion):0} onChange={e=>setEditPlanForm(f=>({...f,pctAnticipacion:parseFloat(e.target.value)}))} className="w-full accent-blue-600"/>
   </div>
   <div className="grid grid-cols-3 gap-3">
@@ -25577,7 +25577,7 @@ function checkAndAutoGenerateOTs(plans, wos, equip, checklists, users) {
     if(target===0) continue;
     const hActual=liveHours(plan.equipId);
     const freq=parseFloat(plan.frequency)||0;
-    const pct=parseFloat(plan.pctAnticipacion)||20;
+    const pct=plan.pctAnticipacion!=null?parseFloat(plan.pctAnticipacion):20;
     const triggerH=target-(freq*pct/100);
     if(hActual<triggerH) continue;
     if(wos.some(w=>w.planId===plan.id&&!["completada","cancelada"].includes(w.status))) continue;
@@ -25604,7 +25604,7 @@ function checkAndAutoGenerateOTs(plans, wos, equip, checklists, users) {
     const nextDue=plan.nextDueDate||plan.proximaFecha;
     if(!nextDue) continue;
     const freq=parseFloat(plan.frequency)||0;
-    const pct=parseFloat(plan.pctAnticipacion)||20;
+    const pct=plan.pctAnticipacion!=null?parseFloat(plan.pctAnticipacion):20;
     const triggerDate=freq>0?addDays(nextDue,-(freq*pct/100)):nextDue;
     if(today<triggerDate) continue;
     if(wos.some(w=>w.planId===plan.id&&!["completada","cancelada"].includes(w.status))) continue;
@@ -25660,7 +25660,7 @@ function checkAndAutoGenerateOTsFromAssignments(planAssignments,planTemplates,wo
       const nextDueDate=assign.nextDueDate;
       if(!nextDueDate) continue;
       const freq=parseFloat(assign.frequency||tpl?.frequency)||0;
-      const pct=parseFloat(assign.pctAnticipacion||tpl?.pctAnticipacion)||20;
+      const pct=(assign.pctAnticipacion!=null?parseFloat(assign.pctAnticipacion):(tpl?.pctAnticipacion!=null?parseFloat(tpl.pctAnticipacion):20));
       const diasAnticipacion=freq>0?Math.round(freq*pct/100):0;
       const triggerDate=(()=>{const d=new Date(nextDueDate);d.setDate(d.getDate()-diasAnticipacion);return d.toISOString().slice(0,10);})();
       if(todayStr<triggerDate) continue;
@@ -25684,7 +25684,7 @@ function checkAndAutoGenerateOTsFromAssignments(planAssignments,planTemplates,wo
       if(nextDue===0) continue;
       const currentH=parseFloat(eq.hours)||0;
       const freq=parseFloat(assign.frequency||tpl?.frequency)||0;
-      const pct=parseFloat(assign.pctAnticipacion||tpl?.pctAnticipacion)||20;
+      const pct=(assign.pctAnticipacion!=null?parseFloat(assign.pctAnticipacion):(tpl?.pctAnticipacion!=null?parseFloat(tpl.pctAnticipacion):20));
       const triggerH=nextDue-(freq*pct/100);
       if(currentH<triggerH) continue;
       const allWOs=[...wos,...newOTs];
