@@ -57,58 +57,11 @@ const buildErpPerms = (authPerms) => {
 };
 // ─────────────────────────────────────────────────────
 
-// ── PUSH NOTIFICATIONS (Web Push) ────────────────────────────────────────
-// Llave pública VAPID + URL de la Cloud Function que registra la
-// suscripción — ambas se completan recién cuando se hace el deploy real de
-// functions/ (ver functions/README.md). Hasta entonces quedan con estos
-// placeholders y registerPushSubscription simplemente no hace nada útil
-// (el fetch fallará silenciosamente, atrapado en su propio try/catch).
-const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY || "REEMPLAZAR_CON_LLAVE_PUBLICA_VAPID";
-// project id inferido de erp-mecmar-firebase-adminsdk-*.json en .gitignore
-// — CONFIRMAR contra la consola de Firebase antes de asumirlo como real.
-const PUSH_REGISTER_URL = import.meta.env.VITE_PUSH_REGISTER_URL || "https://us-central1-erp-mecmar.cloudfunctions.net/registerPushToken";
-
-function urlBase64ToUint8Array(base64String) {
-  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
-  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
-  const rawData = window.atob(base64);
-  return Uint8Array.from([...rawData].map(c => c.charCodeAt(0)));
-}
-
-async function registerPushSubscription(currentUser) {
-  try {
-    if(VAPID_PUBLIC_KEY==="REEMPLAZAR_CON_LLAVE_PUBLICA_VAPID") return; // functions/ sin deployar todavía
-    if(!("serviceWorker" in navigator) || !("PushManager" in window)){
-      console.log("Push no soportado en este navegador");
-      return;
-    }
-    const permission = await Notification.requestPermission();
-    if(permission!=="granted"){
-      console.log("Permiso de notificaciones denegado");
-      return;
-    }
-    const registration = await navigator.serviceWorker.ready;
-    const subscription = await registration.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
-    });
-    await fetch(PUSH_REGISTER_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        subscription,
-        userId: currentUser.id || currentUser.username,
-        username: currentUser.username,
-        role: currentUser.role,
-        device: navigator.userAgent.includes("Mobile") ? "mobile" : "desktop",
-      }),
-    });
-    console.log("✅ Push subscription registrada para:", currentUser.username);
-  } catch(e) {
-    console.warn("Error registrando push:", e);
-  }
-}
-// ─────────────────────────────────────────────────────
+// Nota: el registro de push subscription y el listener de mensajes del SW
+// viven más abajo, dentro del componente App — es la versión que ya está
+// deployada en functions/ (Firebase Functions v2, southamerica-west1).
+// Acá hubo una segunda implementación equivalente de una sesión anterior;
+// se sacó para no registrar la suscripción/el listener dos veces.
 
 const IMGBB_API_KEY = import.meta.env.VITE_IMGBB_API_KEY || "";
 
@@ -1304,6 +1257,7 @@ function parsePlanMaritimoCSV(text, equip, plans) {
     const valorRepuesto = parseCurrency(cols[15]);
     const valorServicio = parseCurrency(cols[16]);
     const criticidadPlan = normCrit(cols[17]);
+    const pctAnticipacionXls = cols[18]!=null&&cols[18]!==""?Math.round(parseFloat(String(cols[18]).replace(",","."))*100):20;
 
     const nave = (cols[1]||"").trim();
     const area = (cols[2]||"").trim().toLowerCase().replace(/[\s/]+/g,"_");
@@ -1348,6 +1302,7 @@ function parsePlanMaritimoCSV(text, equip, plans) {
       lastExecutionDate,
       nextDueDate,
       valorRepuesto,
+      pctAnticipacion: pctAnticipacionXls,
       valorServicio,
       moneda: "CLP",
     });
@@ -1475,6 +1430,7 @@ function parsePlanMaritimoCSVv2(text, equip, planTemplates, planAssignments) {
     const valorRepuesto = parseCurrency(cols[15]);
     const valorServicio = parseCurrency(cols[16]);
     const criticidadPlan = normCrit(cols[17]);
+    const pctAnticipacionXls = cols[18]!=null&&cols[18]!==""?Math.round(parseFloat(String(cols[18]).replace(",","."))*100):20;
 
     const nave = (cols[1]||"").trim();
     const area = (cols[2]||"").trim().toLowerCase().replace(/[\s/]+/g,"_");
@@ -1530,6 +1486,7 @@ function parsePlanMaritimoCSVv2(text, equip, planTemplates, planAssignments) {
       criticidad: criticidadPlan,
       valorRepuesto,
       valorServicio,
+      pctAnticipacion: pctAnticipacionXls,
       moneda: "CLP",
       tipoPlan,
       lastBaseHours: tipoPlan==="horometro" ? lastHorometro : null,
@@ -1645,6 +1602,7 @@ function parsePlanMaritimoXLSXRows(rows, equip, planTemplates, planAssignments) 
     const valorRepuesto=parseCurrency(row[15]);
     const valorServicio=parseCurrency(row[16]);
     const criticidadPlan=normCrit(row[17]);
+    const pctAnticipacionXls=row[18]!=null&&row[18]!==""?Math.round(parseFloat(String(row[18]).replace(",","."))*100):20;
     const nave=toStr(row[1]);
     const area=toStr(row[2]).toLowerCase().replace(/[\s/]+/g,"_");
     const responsable=capitalizarNombre(toStr(row[4]));
@@ -1684,7 +1642,7 @@ function parsePlanMaritimoXLSXRows(rows, equip, planTemplates, planAssignments) 
       id:uid(),code:assignCode,
       templateId:tpl.id,templateCode:tpl.code,equipId:eq.id,
       activo,nave,area,responsable:responsableFinal,responsablePlan:responsableFinal,technician:responsableFinal,sujetoCondicion,
-      criticidad:criticidadPlan,valorRepuesto,valorServicio,moneda:"CLP",tipoPlan,
+      criticidad:criticidadPlan,valorRepuesto,valorServicio,moneda:"CLP",tipoPlan,pctAnticipacion:pctAnticipacionXls,
       lastBaseHours:tipoPlan==="horometro"?lastHorometro:null,
       nextDueHours:tipoPlan==="horometro"?horometroTarget:null,
       lastExecutionDate:tipoPlan==="calendario"?lastExecutionDate:null,
@@ -10019,7 +9977,7 @@ const openEditPlanAssign=(assign)=>{
     // Estos 5 campos existen en el modal de creación (EMPTY_PLAN_FORM) pero
     // faltaban acá — mismo bug que en el plan legacy, esta era la otra mitad.
     fechaUltima:assign._isLegacy?(refLegacy?.fechaUltima||""):(assign.fechaUltima||assign.lastExecutionDate||""),
-    pctAnticipacion:assign._isLegacy?(refLegacy?.pctAnticipacion??20):(assign.pctAnticipacion??tplA?.pctAnticipacion??20),
+    pctAnticipacion:assign._isLegacy?(refLegacy?.pctAnticipacion??0):(assign.pctAnticipacion??tplA?.pctAnticipacion??0),
     valorRepuesto:String(assign._isLegacy?(refLegacy?.valorRepuesto||""):(assign.valorRepuesto||"")),
     valorServicio:String(assign._isLegacy?(refLegacy?.valorServicio||""):(assign.valorServicio||"")),
     moneda:(assign._isLegacy?refLegacy?.moneda:assign.moneda)||"USD",
@@ -13623,6 +13581,37 @@ async function saveRequestIndividual(req,patch,coll){
     return updated;
   }
 }
+
+// Eliminar trabajo fuera de programa (solo admin/supervisor)
+const deleteDeviacion=async(req)=>{
+  if(!window.confirm('¿Eliminar este trabajo fuera de programa? Esta acción no se puede deshacer.')) return;
+  try{
+    // 1. Eliminar documento individual de Firestore
+    const {deleteDoc,doc:docFn}=await import('firebase/firestore');
+    await deleteDoc(docFn(db,activeCOLL,'req_'+req.id));
+    // 2. Quitar del índice
+    const idxRef=doc(db,activeCOLL,'requests_index');
+    const idxSnap=await getDoc(idxRef);
+    if(idxSnap.exists()){
+      const ids=(idxSnap.data().ids||[]).filter(id=>id!==req.id);
+      await setDoc(idxRef,{ids});
+    }
+    // 3. Actualizar estado local
+    const updReqs=(data.requests||[]).filter(r=>r.id!==req.id);
+    setData(d=>({...d,requests:updReqs}));
+    // 4. Si tiene OT asociada, eliminarla también
+    if(req.otId){
+      const updWOs=(data.wos||[]).filter(w=>w.id!==req.otId);
+      setData(d=>({...d,wos:updWOs}));
+      saveData('workOrders',updWOs);
+    }
+    console.log('✅ FDP eliminada:', req.id);
+  }catch(e){
+    console.error('Error eliminando FDP:',e);
+    alert('Error al eliminar. Intenta nuevamente.');
+  }
+};
+
 function Requests({user,data,setData,saveData,appendToArray,updateInArray,activeCOLL,activeModule}){
 const {requests=[],equip=[],users=[],wos=[]}=data;
 const [showForm,setShowForm]=useState(false);
@@ -18746,7 +18735,8 @@ function FaenaActivaPage({user,data}){
   // La faena activa del usuario NO se acota a "hoy" — si quedó abierta de un
   // turno anterior (ej. faena nocturna sin cerrar), tiene que seguir
   // apareciendo acá para poder cerrarla, no esconderse al pasar la medianoche.
-  const faenaActiva=faenas.find(f=>f.estado==="activa"&&f.creadoPor===quien);
+  const esSup=user.role==="supervisor"||user.role==="admin"||user.role==="jefe_operaciones"||user.role==="sup_operaciones"||user.authRole==="ADMIN";
+const faenaActiva=faenas.find(f=>f.estado==="activa"&&(esSup||f.creadoPor===quien));
 
   const [vista,setVista]=useState("inicio");
   const [form,setForm]=useState({
@@ -19059,7 +19049,7 @@ function FaenaActivaPage({user,data}){
                     <p className="text-sm font-semibold text-gray-800">Faena {f.numeroFaena}</p>
                     <p className="text-xs text-gray-400">{f.buque} · {f.terminal} · {f.estado==="activa"?"En curso":"Cerrada"}{f.creadoPor?` · ${f.creadoPor}`:""}</p>
                   </div>
-                  {f.estado==="activa"&&f.creadoPor===quien&&(
+                  {f.estado==="activa"&&(esSup||f.creadoPor===quien)&&(
                     <button onClick={()=>setVista("faena_abierta")} className="text-xs px-3 py-1.5 rounded-xl bg-blue-600 text-white font-semibold hover:bg-blue-700 transition">Continuar →</button>
                   )}
                   {f.estado==="cerrada"&&(
@@ -23952,6 +23942,7 @@ const tplEquip=type=>{const validTypes=CHECKLIST_TEMPLATES[type]?.equipTypes||[]
 const startForm=()=>{
 if(!setup.operatorName.trim()){alert("Ingresa el nombre del operador");return;}
 if(setup.inspectionType==="post"){
+  if(!setup.horometro){alert("Ingresa el horómetro actual del equipo");return;}
   setStep("post");
   setStartTime(new Date().toISOString());
   return;
@@ -25392,6 +25383,14 @@ if(step==="post"){
       return;
     }
     setSaving(true);
+      const horoPost=parseFloat(setup.horometro)||0;
+      const equipPost=(data.equip||[]).find(e=>e.id===setup.equipId);
+      if(equipPost&&horoPost>0&&horoPost>(equipPost.hours||0)){
+        const eq2={...equipPost,hours:horoPost,lastHourmeterUpdate:new Date().toISOString().slice(0,10),lastHourmeterSource:"post_operacional"};
+        const eq2upd=(data.equip||[]).map(e=>e.id===setup.equipId?eq2:e);
+        setData(d=>({...d,equip:eq2upd}));
+        saveData("equipment",eq2upd);
+      }
 
     try{
       // ── UPLOAD CON LÍMITE DE CONCURRENCIA ──────────────────
@@ -25452,6 +25451,7 @@ if(step==="post"){
         createdAt:new Date().toISOString(),
         startTime:startTime||null,
         endTime:new Date().toISOString(),
+        horometro:parseFloat(setup.horometro)||0,
         hasIssues:postDamagePhotos.length>0||!!postDamageNote.trim(),
         issueCount:postDamagePhotos.length>0||postDamageNote.trim()?1:0,
         module:activeModule||"taller",
@@ -35168,6 +35168,64 @@ const [user,setUser]=useState(null);
     const iv=setInterval(syncUsersFromAuth,5*60*1000);
     return()=>clearInterval(iv);
   },[user,syncUsersFromAuth]);
+
+  // ── PUSH NOTIFICATIONS ──────────────────────────────
+  const VAPID_PUBLIC_KEY='BGGhuQ3V8F2cPaRMkxgyohLn9A3CTKL0PjCvwdFRxJPjHDnN5xLpkmUtqpBKqmR4NwpWKnLb9_hFxWMh9U7LtDE';
+  const PUSH_REGISTER_URL='https://southamerica-west1-erp-mecmar.cloudfunctions.net/registerPushToken';
+
+  function urlB64ToUint8(b){
+    const p='='.repeat((4-b.length%4)%4);
+    const b64=(b+p).replace(/-/g,'+').replace(/_/g,'/');
+    const raw=window.atob(b64);
+    return Uint8Array.from([...raw].map(c=>c.charCodeAt(0)));
+  }
+
+  useEffect(()=>{
+    setTimeout(async()=>{
+      try{
+        if(!('serviceWorker' in navigator)||!('PushManager' in window)) return;
+        const perm=await Notification.requestPermission();
+        if(perm!=='granted') return;
+        // Usar registration directa en vez de .ready que puede no resolver
+        // Registrar SW y esperar que esté listo
+        await navigator.serviceWorker.register('/sw.js');
+        const reg=await navigator.serviceWorker.ready;
+        const sub=await reg.pushManager.subscribe({
+          userVisibleOnly:true,
+          applicationServerKey:urlB64ToUint8(VAPID_PUBLIC_KEY)
+        });
+        await fetch(PUSH_REGISTER_URL,{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({
+            subscription:sub,
+            userId:user.id||user.username,
+            username:user.username,
+            role:user.role,
+            device:navigator.userAgent.includes('Mobile')?'mobile':'desktop'
+          })
+        });
+        console.log('✅ Push registrado:',user.username);
+      }catch(e){console.warn('Push error:',e);}
+    },3000);
+  },[user?.id]);
+
+  useEffect(()=>{
+    const handler=(e)=>{
+      if(e.data?.type!=='NAVIGATE'||!e.data.page) return;
+      const{page:navPage,data:navData}=e.data;
+      // "ot_completada": quien no tiene acceso a workorders (ej. operador)
+      // no puede "navegar" ahí — se muestra un preview de solo lectura con
+      // lo que traía la notificación en vez de mandarlo a una página vacía.
+      if(navPage==='workorders'&&navData?.type==='ot_completada'&&getUserPerms(user)?.workorders!==true){
+        setOtPreview(navData);
+        return;
+      }
+      handleNav(navPage);
+    };
+    navigator.serviceWorker?.addEventListener('message',handler);
+    return()=>navigator.serviceWorker?.removeEventListener('message',handler);
+  },[user]);
   // ─────────────────────────────────────────────────────
 
   // ─── AVISO DE NUEVA VERSIÓN ──────────────────────────
@@ -35225,38 +35283,10 @@ useEffect(()=>{
 const [activeModule,setActiveModule]=useState(null);
 const [activeBarco,setActiveBarco]=useState(null);
 const [page,setPage]=useState("dashboard");
-// ── Push: pedir permiso y registrar suscripción tras el login ───────────
-// 3s de espera para no competir con el resto de lo que dispara el login
-// (carga de datos, sync de usuarios, etc.) ni bloquear esa pantalla con el
-// diálogo nativo de permiso del navegador.
-useEffect(()=>{
-  if(!user?.id) return;
-  const t=setTimeout(()=>{registerPushSubscription(user);},3000);
-  return()=>clearTimeout(t);
-},[user?.id]);
-// ── Push: click en una notificación → navegar a la página correcta ──────
-// sw.js hace postMessage({type:"NAVIGATE",page,data}) cuando la app ya
-// está abierta y el usuario clickea la notificación (ver notificationclick
-// en sw.js). Se usa setPage directo en vez de handleNav (definido más
-// abajo en este componente) para no depender de un orden de declaración.
-// Caso especial "ot_completada": quien no tiene acceso a workorders (ej.
-// operador) no puede "navegar" ahí — en vez de mandarlo a una página en
-// blanco para él, se muestra un preview de solo lectura con lo mismo que
-// traía la notificación.
+// Preview de solo lectura para "OT completada" cuando quien recibe la
+// notificación no tiene acceso a la página de OTs (ver el listener de
+// mensajes del SW, sección PUSH NOTIFICATIONS más abajo).
 const [otPreview,setOtPreview]=useState(null);
-useEffect(()=>{
-  const handleSWMessage=e=>{
-    if(e.data?.type!=="NAVIGATE"||!e.data.page) return;
-    const{page:navPage,data:navData}=e.data;
-    if(navPage==="workorders"&&navData?.type==="ot_completada"&&getUserPerms(user)?.workorders!==true){
-      setOtPreview(navData);
-      return;
-    }
-    setPage(navPage);
-  };
-  navigator.serviceWorker?.addEventListener("message",handleSWMessage);
-  return()=>navigator.serviceWorker?.removeEventListener("message",handleSWMessage);
-},[user]);
 const [online,setOnline]=useState(true);
 const [loading,setLoading]=useState(false);
 const [showChangePwd,setShowChangePwd]=useState(false);
@@ -36510,6 +36540,7 @@ return(
     {/* Bottom hint */}
     <div className="absolute bottom-4 left-0 right-0 text-center">
       <p className="text-white/40 text-xs">{imgGallery&&imgGallery.urls.length>1?"← → para cambiar de foto · Esc o toca fuera para cerrar":"Toca fuera para cerrar"}</p>
+
     </div>
   </div>
 )}
