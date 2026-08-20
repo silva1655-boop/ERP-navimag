@@ -3090,6 +3090,11 @@ return(
 function DashboardMaritimo({user,data,onNav,activeBarco}){
   const{wos,equip,planAssignments,planTemplates,users}=data;
   const today=new Date().toISOString().slice(0,10);
+  // Calendario navegable (mismo patrón que el calendario de proyección PM
+  // del panel de equipo): mes a mes en vez de una ventana fija de 6
+  // semanas, contador por día en vez de puntos, detalle inline al click.
+  const [calMes,setCalMes]=useState(()=>{const d=new Date();return{year:d.getFullYear(),month:d.getMonth()};});
+  const [calDiaDetalle,setCalDiaDetalle]=useState(null);
 
   // OTs abiertas
   const otAbiertas=(wos||[]).filter(w=>
@@ -3115,21 +3120,41 @@ function DashboardMaritimo({user,data,onNav,activeBarco}){
     .filter(({nextDate,tieneOTAbierta})=>nextDate&&nextDate<=limiteStr&&!tieneOTAbierta)
     .sort((x,y)=>x.nextDate.localeCompare(y.nextDate));
 
-  // Semanas del calendario (6 semanas desde hoy)
-  const semanas=Array.from({length:6},(_,si)=>{
-    return Array.from({length:7},(_,di)=>{
-      const d=new Date();
-      d.setDate(d.getDate()-(d.getDay()||7)+1+si*7+di);
-      const iso=d.toISOString().slice(0,10);
-      const otsDelDia=proximasPM.filter(x=>x.nextDate===iso);
-      const otsDiaAbiertas=(wos||[]).filter(w=>
-        !["completada","cancelada"].includes(w.status)&&(w.scheduledDate||"").slice(0,10)===iso
-      );
-      return{iso,d,otsDelDia,otsDiaAbiertas};
-    });
-  });
-
   const diasSemana=["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"];
+  // Ítems del mes visible (calMes), agrupados por día — PM próximo (sin
+  // OT abierta todavía, esos se ven como ítem "ot") + OTs abiertas
+  // programadas ese día. A diferencia de proximasPM (acotado a 60 días,
+  // usado en los KPI de arriba), esto no tiene límite de ventana — se
+  // recalcula para el mes que se esté mirando.
+  const calViewDate=new Date(calMes.year,calMes.month,1);
+  const calDaysInMonth=new Date(calMes.year,calMes.month+1,0).getDate();
+  const calFirstDOW=(calViewDate.getDay()+6)%7; // lunes=0
+  const calMonthLabel=calViewDate.toLocaleDateString("es-CL",{month:"long",year:"numeric"});
+  const evByDayMes={};
+  (planAssignments||[]).filter(a=>a.activo).forEach(a=>{
+    const nextDate=a.nextDueDate||a.proximaFecha;
+    if(!nextDate) return;
+    const d=new Date(nextDate+"T12:00:00");
+    if(d.getFullYear()!==calMes.year||d.getMonth()!==calMes.month) return;
+    const tieneOTAbierta=(wos||[]).some(w=>w.assignmentId===a.id&&!["completada","cancelada"].includes(w.status));
+    if(tieneOTAbierta) return; // ya se cuenta como ítem "ot" más abajo
+    const tpl=(planTemplates||[]).find(t=>t.id===a.templateId);
+    const eq=equip.find(e=>e.id===a.equipId);
+    const day=d.getDate();
+    (evByDayMes[day]=evByDayMes[day]||[]).push({kind:"pm",label:tpl?.name||a.code,sub:eq?.code||"—",overdue:nextDate<today,fecha:nextDate});
+  });
+  (wos||[]).filter(w=>!["completada","cancelada"].includes(w.status)&&w.scheduledDate).forEach(w=>{
+    const iso=(w.scheduledDate||"").slice(0,10);
+    const d=new Date(iso+"T12:00:00");
+    if(d.getFullYear()!==calMes.year||d.getMonth()!==calMes.month) return;
+    const eq=equip.find(e=>e.id===w.equipId);
+    const day=d.getDate();
+    (evByDayMes[day]=evByDayMes[day]||[]).push({kind:"ot",label:w.code,sub:w.title||eq?.code||"—",overdue:iso<today&&w.status!=="en_proceso",status:w.status,otId:w.id});
+  });
+  const calTodosDelMes=Object.values(evByDayMes).flat();
+  const calVencidosMes=calTodosDelMes.filter(x=>x.overdue).length;
+  const calOtsMes=calTodosDelMes.filter(x=>x.kind==="ot").length;
+  const calEnMesActual=calMes.year===new Date().getFullYear()&&calMes.month===new Date().getMonth();
 
   return(
     <div className="flex-1 overflow-y-auto bg-gray-50/50">
@@ -3239,7 +3264,7 @@ function DashboardMaritimo({user,data,onNav,activeBarco}){
             <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
               <p className="font-bold text-gray-800 text-sm flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-purple-400 inline-block"/>
-                Calendario PM — próximos 60 días
+                Calendario PM
               </p>
               <button onClick={()=>onNav("plans")} className="text-xs text-blue-600 font-semibold hover:underline">
                 Ver planes →
@@ -3247,47 +3272,95 @@ function DashboardMaritimo({user,data,onNav,activeBarco}){
             </div>
 
             <div className="p-4">
+              {/* Header con navegación mes a mes */}
+              <div className="flex items-center justify-between mb-2">
+                <button onClick={()=>setCalMes(m=>{const d=new Date(m.year,m.month-1,1);return{year:d.getFullYear(),month:d.getMonth()};})}
+                  className="p-2 rounded-xl hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition">←</button>
+                <div className="text-center">
+                  <p className="font-bold text-gray-800 capitalize text-sm">{calMonthLabel}</p>
+                  <div className="flex items-center justify-center gap-3 mt-0.5">
+                    {calTodosDelMes.length>0&&<span className="text-[10px] text-gray-400">{calTodosDelMes.length} ítem{calTodosDelMes.length!==1?"s":""} este mes</span>}
+                    {calVencidosMes>0&&<span className="text-[10px] text-red-500 font-semibold">{calVencidosMes} vencidos</span>}
+                    {calOtsMes>0&&<span className="text-[10px] text-amber-500 font-semibold">{calOtsMes} con OT</span>}
+                  </div>
+                </div>
+                <button onClick={()=>setCalMes(m=>{const d=new Date(m.year,m.month+1,1);return{year:d.getFullYear(),month:d.getMonth()};})}
+                  className="p-2 rounded-xl hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition">→</button>
+              </div>
+              {!calEnMesActual&&(
+                <button onClick={()=>{const d=new Date();setCalMes({year:d.getFullYear(),month:d.getMonth()});setCalDiaDetalle(null);}}
+                  className="w-full text-xs text-blue-500 hover:underline text-center mb-2">Volver al mes actual</button>
+              )}
+
               {/* Días de la semana */}
               <div className="grid grid-cols-7 mb-1.5">
                 {diasSemana.map(d=>(
                   <div key={d} className="text-center text-[11px] font-semibold text-gray-400 py-1">{d}</div>
                 ))}
               </div>
-              {/* Semanas */}
-              <div className="space-y-1">
-                {semanas.map((semana,si)=>(
-                  <div key={si} className="grid grid-cols-7 gap-1">
-                    {semana.map(({iso,d,otsDelDia,otsDiaAbiertas})=>{
-                      const isToday=iso===today;
-                      const hasPM=otsDelDia.length>0;
-                      const hasOTA=otsDiaAbiertas.length>0;
-                      const isPast=iso<today;
-                      return(
-                        <div key={iso}
-                          className={`relative text-center rounded-lg py-1.5 flex flex-col items-center justify-start min-h-[40px]
-                            ${isToday?"bg-blue-600 text-white shadow-md":isPast?"text-gray-300 bg-gray-50":"text-gray-700 hover:bg-gray-50 transition"}`}>
-                          <span className={`text-xs font-semibold leading-none ${isToday?"text-white":""} ${isPast&&!isToday?"text-gray-300":""}`}>
-                            {d.getDate()}
-                          </span>
-                          {(hasPM||hasOTA)&&(
-                            <div className="flex gap-0.5 mt-1">
-                              {hasPM&&(<span className={`w-1.5 h-1.5 rounded-full ${isToday?"bg-white":"bg-purple-500"}`} title={`${otsDelDia.length} PM`}/>)}
-                              {hasOTA&&(<span className={`w-1.5 h-1.5 rounded-full ${isToday?"bg-yellow-300":"bg-amber-400"}`} title={`${otsDiaAbiertas.length} OT`}/>)}
-                            </div>
-                          )}
+              {/* Días del mes */}
+              <div className="grid grid-cols-7 gap-1">
+                {Array.from({length:calFirstDOW},(_,i)=>(<div key={`e${i}`} className="min-h-[40px]"/>))}
+                {Array.from({length:calDaysInMonth},(_,i)=>{
+                  const day=i+1;
+                  const dayItems=evByDayMes[day]||[];
+                  const dayStr=`${calMes.year}-${String(calMes.month+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+                  const isToday=dayStr===today;
+                  const isPast=dayStr<today;
+                  const tieneVencido=dayItems.some(x=>x.overdue);
+                  const tieneOT=dayItems.some(x=>x.kind==="ot");
+                  const badgeBg=tieneVencido?"bg-red-500":tieneOT?"bg-amber-500":dayItems.length>0?"bg-purple-500":"";
+                  return(
+                    <div key={day}
+                      onClick={dayItems.length>0?()=>setCalDiaDetalle({day,dayItems,dayStr}):undefined}
+                      className={`relative text-center rounded-lg py-1.5 flex flex-col items-center justify-start min-h-[40px] transition
+                        ${dayItems.length>0?"cursor-pointer hover:bg-blue-50":""}
+                        ${isToday?"ring-2 ring-inset ring-blue-500":isPast?"bg-gray-50":""}`}>
+                      <span className={`text-xs font-semibold leading-none ${isToday?"text-blue-600":isPast?"text-gray-300":"text-gray-700"}`}>
+                        {day}
+                      </span>
+                      {dayItems.length>0&&(
+                        <div className={`${badgeBg} text-white rounded-full w-5 h-5 mt-1 flex items-center justify-center text-[10px] font-black`}>
+                          {dayItems.length}
                         </div>
-                      );
-                    })}
-                  </div>
-                ))}
+                      )}
+                    </div>
+                  );
+                })}
               </div>
+
+              {/* Detalle del día seleccionado */}
+              {calDiaDetalle&&calDiaDetalle.day&&(
+                <div className="mt-3 bg-gray-50 rounded-xl border border-gray-200 overflow-hidden">
+                  <div className="px-3 py-2 bg-white border-b border-gray-100 flex items-center justify-between">
+                    <p className="text-xs font-bold text-gray-700">
+                      {new Date(calDiaDetalle.dayStr+"T12:00:00").toLocaleDateString("es-CL",{weekday:"long",day:"numeric",month:"long"})}
+                    </p>
+                    <button onClick={()=>setCalDiaDetalle(null)} className="text-gray-400 hover:text-gray-600 text-sm font-bold">×</button>
+                  </div>
+                  <div className="divide-y divide-gray-100">
+                    {calDiaDetalle.dayItems.map((it,i)=>(
+                      <div key={i} onClick={()=>onNav(it.kind==="ot"?"workorders":"plans")}
+                        className={`px-3 py-2.5 flex items-start gap-2.5 cursor-pointer hover:bg-white transition ${it.overdue?"bg-red-50":it.kind==="ot"?"bg-amber-50":"bg-white"}`}>
+                        <div className={`w-2 h-2 rounded-full flex-shrink-0 mt-1.5 ${it.overdue?"bg-red-400":it.kind==="ot"?"bg-amber-400":"bg-purple-400"}`}/>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-semibold text-gray-800 leading-tight truncate">{it.label}</p>
+                          <p className="text-[10px] text-gray-400 mt-0.5 truncate">{it.sub}</p>
+                        </div>
+                        {it.overdue&&<span className="text-[9px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-semibold flex-shrink-0">Vencido</span>}
+                        {!it.overdue&&it.kind==="ot"&&<span className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-semibold flex-shrink-0">OT abierta</span>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Leyenda */}
               <div className="flex items-center gap-5 mt-3 pt-3 border-t border-gray-100">
                 {[
                   {dot:"bg-purple-500",label:"PM programado"},
-                  {dot:"bg-amber-400",label:"OT abierta"},
-                  {dot:"bg-blue-600",label:"Hoy"},
+                  {dot:"bg-amber-500",label:"OT abierta"},
+                  {dot:"bg-red-500",label:"Vencido"},
                 ].map(({dot,label})=>(
                   <div key={label} className="flex items-center gap-1.5 text-[11px] text-gray-500">
                     <span className={`w-2 h-2 rounded-full ${dot}`}/>
