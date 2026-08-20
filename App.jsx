@@ -7980,6 +7980,15 @@ const [xlsxEquipResult,setXlsxEquipResult]=useState(null);
 const xlsxEquipRef=useRef(null);
 const [selMarEquip,setSelMarEquip]=useState(null);
 const [selMarEquipTab,setSelMarEquipTab]=useState("info");
+// Calendario de proyección PM (tab "proyeccion") — mes visible + detalle
+// del día clickeado. Se resetean cada vez que se abre un equipo distinto,
+// para no arrastrar el mes/día que se estaba mirando en el anterior.
+const [calMes,setCalMes]=useState(()=>{const d=new Date();return{year:d.getFullYear(),month:d.getMonth()};});
+const [calDiaDetalle,setCalDiaDetalle]=useState(null);
+useEffect(()=>{
+  setCalMes({year:new Date().getFullYear(),month:new Date().getMonth()});
+  setCalDiaDetalle(null);
+},[selMarEquip?.id]);
 
 // Maritime: auto-migrate any non-EQM codes on first load
 const eqmMigDone=useRef(false);
@@ -8838,7 +8847,6 @@ className="w-24 border border-blue-400 rounded-lg px-2 py-1 text-gray-900 text-x
       );
     }
 
-    const months12=Array.from({length:12},(_,i)=>new Date(today.getFullYear(),today.getMonth()+i,1));
     const DOW=["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"];
     return(
     <div className="flex-1 overflow-y-auto p-4">
@@ -8868,51 +8876,116 @@ className="w-24 border border-blue-400 rounded-lg px-2 py-1 text-gray-900 text-x
         ))}
       </div>
       ):<p className="text-center text-gray-400 text-xs py-4 mb-4">Sin planes con proyección disponible para este equipo</p>}
+      {/* Calendario navegable — mes a mes, contador por día, detalle al click */}
+      {(()=>{
+        const viewDate=new Date(calMes.year,calMes.month,1);
+        const daysInMonth=new Date(calMes.year,calMes.month+1,0).getDate();
+        const firstDOW=viewDate.getDay();
+        const monthLabel=viewDate.toLocaleDateString("es-CL",{month:"long",year:"numeric"});
+        const todayStr2=today.toISOString().slice(0,10);
+
+        const evByDay={};
+        events.forEach(ev=>{
+          if(ev.fecha.getFullYear()===calMes.year&&ev.fecha.getMonth()===calMes.month){
+            const d=ev.fecha.getDate();
+            if(!evByDay[d]) evByDay[d]=[];
+            evByDay[d].push(ev);
+          }
+        });
+        const todosDelMes=Object.values(evByDay).flat();
+        const totalMes=todosDelMes.length;
+        const vencidosMes=todosDelMes.filter(e=>e.vencido).length;
+        const abiertasMes=todosDelMes.filter(e=>e.hasOpenOT).length;
+        const enMesActual=calMes.year===today.getFullYear()&&calMes.month===today.getMonth();
+
+        return(
+        <div className="space-y-3 mb-4">
+          <div className="flex items-center justify-between">
+            <button onClick={()=>setCalMes(m=>{const d=new Date(m.year,m.month-1,1);return{year:d.getFullYear(),month:d.getMonth()};})}
+              className="p-2 rounded-xl hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition">←</button>
+            <div className="text-center">
+              <p className="font-bold text-gray-800 capitalize text-sm">{monthLabel}</p>
+              <div className="flex items-center justify-center gap-3 mt-0.5">
+                {totalMes>0&&<span className="text-[10px] text-gray-400">{totalMes} PM este mes</span>}
+                {vencidosMes>0&&<span className="text-[10px] text-red-500 font-semibold">{vencidosMes} vencidos</span>}
+                {abiertasMes>0&&<span className="text-[10px] text-amber-500 font-semibold">{abiertasMes} con OT</span>}
+              </div>
+            </div>
+            <button onClick={()=>setCalMes(m=>{const d=new Date(m.year,m.month+1,1);return{year:d.getFullYear(),month:d.getMonth()};})}
+              className="p-2 rounded-xl hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition">→</button>
+          </div>
+
+          {!enMesActual&&(
+            <button onClick={()=>{setCalMes({year:today.getFullYear(),month:today.getMonth()});setCalDiaDetalle(null);}}
+              className="w-full text-xs text-blue-500 hover:underline text-center">Volver al mes actual</button>
+          )}
+
+          <div className="grid grid-cols-7 gap-px bg-gray-200 rounded-xl overflow-hidden border border-gray-200">
+            {DOW.map(d=>(<div key={d} className="bg-gray-50 py-1.5 text-[10px] font-semibold text-gray-400 text-center">{d}</div>))}
+            {Array.from({length:firstDOW},(_,i)=>(<div key={`e${i}`} className="bg-white py-2 min-h-[52px]"/>))}
+            {Array.from({length:daysInMonth},(_,i)=>{
+              const day=i+1;
+              const dayEvs=evByDay[day]||[];
+              const dayStr=`${calMes.year}-${String(calMes.month+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+              const isToday=dayStr===todayStr2;
+              const isPast=dayStr<todayStr2;
+              const tieneVencido=dayEvs.some(e=>e.vencido);
+              const tieneAbierta=dayEvs.some(e=>e.hasOpenOT);
+              const badgeBg=tieneVencido?"bg-red-500":tieneAbierta?"bg-amber-500":dayEvs.length>0?"bg-blue-500":"";
+              return(
+                <div key={day}
+                  onClick={dayEvs.length>0?()=>setCalDiaDetalle({day,dayEvs,dayStr}):undefined}
+                  className={`bg-white p-1 min-h-[52px] flex flex-col items-center transition relative ${dayEvs.length>0?"cursor-pointer hover:bg-blue-50":""} ${isToday?"ring-2 ring-inset ring-blue-400":""}`}>
+                  <span className={`text-[11px] font-bold mb-1 ${isToday?"text-blue-600":isPast?"text-gray-300":"text-gray-600"}`}>{day}</span>
+                  {dayEvs.length>0&&(
+                    <div className={`${badgeBg} text-white rounded-full w-5 h-5 flex items-center justify-center text-[10px] font-black`}>{dayEvs.length}</div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {calDiaDetalle&&calDiaDetalle.day&&(
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              <div className="px-3 py-2 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+                <p className="text-xs font-bold text-gray-700">
+                  {new Date(calDiaDetalle.dayStr+"T12:00:00").toLocaleDateString("es-CL",{weekday:"long",day:"numeric",month:"long"})}
+                </p>
+                <button onClick={()=>setCalDiaDetalle(null)} className="text-gray-400 hover:text-gray-600 text-sm font-bold">×</button>
+              </div>
+              <div className="divide-y divide-gray-50">
+                {calDiaDetalle.dayEvs.map((ev,i)=>(
+                  <div key={i} className={`px-3 py-2.5 flex items-start gap-2.5 ${ev.hasOpenOT?"bg-amber-50":ev.vencido?"bg-red-50":"bg-white"}`}>
+                    <div className={`w-2 h-2 rounded-full flex-shrink-0 mt-1.5 ${ev.hasOpenOT?"bg-amber-400":ev.vencido?"bg-red-400":ev.tipo==="calendario"?"bg-emerald-400":"bg-blue-400"}`}/>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold text-gray-800 leading-tight">{ev.tplName}</p>
+                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                        <span className="text-[10px] text-gray-400">{ev.planCode}</span>
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold ${ev.tipo==="calendario"?"bg-emerald-100 text-emerald-700":"bg-blue-100 text-blue-700"}`}>
+                          {ev.tipo==="calendario"?"📅 Calendario":"⏱ Horómetro"}
+                        </span>
+                        {ev.horasRestantes!=null&&(
+                          <span className={`text-[10px] font-semibold ${ev.horasRestantes<0?"text-red-600":"text-gray-500"}`}>
+                            {ev.horasRestantes>=0?"+"+Math.round(ev.horasRestantes):Math.round(ev.horasRestantes)}h
+                          </span>
+                        )}
+                      </div>
+                      {ev.hasOpenOT&&<span className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-semibold mt-0.5 inline-block">OT abierta</span>}
+                      {ev.vencido&&!ev.hasOpenOT&&<span className="text-[9px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-semibold mt-0.5 inline-block">Vencido</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+        );
+      })()}
       <div className="flex gap-3 flex-wrap mb-4">
         <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded bg-blue-100 border border-blue-200"/><span className="text-[10px] text-gray-400">PM horómetro</span></div>
         <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded bg-emerald-100 border border-emerald-200"/><span className="text-[10px] text-gray-400">PM calendario</span></div>
         <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded bg-amber-100 border border-amber-200"/><span className="text-[10px] text-gray-400">OT en curso</span></div>
         <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded bg-red-100 border border-red-200"/><span className="text-[10px] text-gray-400">Vencido</span></div>
-      </div>
-      <div className="space-y-5">
-        {months12.map((viewDate,mi)=>{
-          const monthLabel=viewDate.toLocaleDateString("es-CL",{month:"long",year:"numeric"});
-          const daysInMonth=new Date(viewDate.getFullYear(),viewDate.getMonth()+1,0).getDate();
-          const firstDOW=new Date(viewDate.getFullYear(),viewDate.getMonth(),1).getDay();
-          const evByDay={};
-          events.forEach(ev=>{
-            if(ev.fecha.getFullYear()===viewDate.getFullYear()&&ev.fecha.getMonth()===viewDate.getMonth()){
-              const d=ev.fecha.getDate();
-              if(!evByDay[d]) evByDay[d]=[];
-              evByDay[d].push(ev);
-            }
-          });
-          return(
-          <div key={mi}>
-            <p className="font-semibold text-gray-700 capitalize text-xs mb-1.5">{monthLabel}</p>
-            <div className="grid grid-cols-7 gap-px bg-gray-200 rounded-xl overflow-hidden border border-gray-200 text-center">
-              {DOW.map(d=>(<div key={d} className="bg-gray-50 py-1.5 text-[10px] font-semibold text-gray-400">{d}</div>))}
-              {Array.from({length:firstDOW},(_,i)=>(<div key={`e${i}`} className="bg-white py-2"/>))}
-              {Array.from({length:daysInMonth},(_,i)=>{
-                const day=i+1;
-                const dayEvs=evByDay[day]||[];
-                const isToday=today.getDate()===day&&today.getMonth()===viewDate.getMonth()&&today.getFullYear()===viewDate.getFullYear();
-                return(
-                <div key={day} className={`bg-white p-0.5 min-h-[40px] ${isToday?"ring-1 ring-inset ring-blue-400":""}`}>
-                  <div className={`text-[10px] font-semibold mb-0.5 ${isToday?"text-blue-600":"text-gray-500"}`}>{day}</div>
-                  {dayEvs.map((ev,ei)=>(
-                    <div key={ei} title={`${ev.planCode}: ${ev.tplName}`}
-                      className={`text-[8px] leading-tight px-0.5 py-px rounded mb-px truncate font-medium ${ev.hasOpenOT?"bg-amber-100 text-amber-700":ev.vencido?"bg-red-100 text-red-600":ev.tipo==="calendario"?"bg-emerald-100 text-emerald-700":"bg-blue-100 text-blue-700"}`}>
-                      {ev.tplName.slice(0,8)}
-                    </div>
-                  ))}
-                </div>
-                );
-              })}
-            </div>
-          </div>
-          );
-        })}
       </div>
       {hasAvg&&<p className="text-gray-300 text-[9px] mt-4 text-center">Estimación basada en {avgH}h promedio entre mantenciones</p>}
     </div>
