@@ -21545,6 +21545,31 @@ const ejecutarResetMaritimo=async()=>{
   setResetting(false);
 };
 
+// Botón aparte, solo para csilva/jimunoz (mismo allowlist que Gastos y
+// Presupuesto, no por rol) — borra SOLO el historial de lecturas de
+// horómetro de Marítimo (Esperanza + Dalka), sin tocar OTs/planes ni el
+// horómetro ACTUAL de cada equipo (equipment.hours no se modifica).
+const [showResetHorometros,setShowResetHorometros]=useState(false);
+const [resetHorometrosConfirmText,setResetHorometrosConfirmText]=useState("");
+const [resettingHorometros,setResettingHorometros]=useState(false);
+const ejecutarResetHorometros=async()=>{
+  if(resetHorometrosConfirmText.trim().toUpperCase()!=="BORRAR") return;
+  setResettingHorometros(true);
+  try{
+    const vacio={data:[]};
+    for(const coll of [COLL_MARITIMO,COLL_DALKA]){
+      await setDoc(doc(db,coll,"hourmeterReadings"),vacio);
+    }
+    alert("✅ Historial de lecturas de horómetro borrado en Esperanza y Dalka. El horómetro actual de cada equipo no se tocó.");
+    setShowResetHorometros(false);
+    setResetHorometrosConfirmText("");
+  }catch(e){
+    console.error("ejecutarResetHorometros:",e);
+    alert("⚠️ Error al borrar — revisa manualmente antes de reintentar.");
+  }
+  setResettingHorometros(false);
+};
+
 // Auto-migración: usuarios que quedaron con deleted:true del sistema
 // anterior (borrado suave, grises con botón "Restaurar") se purgan del
 // todo apenas se abre esta pantalla — se sacan del array y se tombstonan,
@@ -21815,6 +21840,57 @@ return(
             {resetting?"Borrando…":"Confirmar borrado"}
           </button>
           <button onClick={()=>{setShowResetMaritimo(false);setResetConfirmText("");}}
+            className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2.5 rounded-lg text-sm transition">
+            Cancelar
+          </button>
+        </div>
+      </div>
+    </div>
+  )}
+
+  {/* Borrar historial de horómetros — solo csilva/jimunoz */}
+  {activeModule==="maritimo"&&canAccessGastos(currentUser)&&(
+    <div className="mt-4 border-2 border-dashed border-red-200 rounded-2xl p-4">
+      <p className="text-red-700 font-bold text-sm flex items-center gap-1.5 mb-1">⚠️ Borrar historial de horómetros</p>
+      <p className="text-gray-500 text-xs mb-3">Borra todas las lecturas de horómetro registradas en Esperanza y Dalka. No toca el horómetro actual de los equipos, ni OTs ni planes. No se puede deshacer.</p>
+      <button onClick={()=>setShowResetHorometros(true)}
+        className="flex items-center gap-1.5 text-xs font-semibold text-red-600 px-3 py-2 rounded-lg border border-red-300 bg-white hover:bg-red-50 transition">
+        <Trash2 size={13}/>Borrar historial de horómetros
+      </button>
+    </div>
+  )}
+
+  {showResetHorometros&&(
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-white border border-gray-200 rounded-2xl shadow-xl p-6 w-full max-w-md">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 bg-red-50 border border-red-200 rounded-xl flex items-center justify-center flex-shrink-0">
+            <Trash2 size={18} className="text-red-600"/>
+          </div>
+          <div>
+            <p className="text-gray-900 font-bold text-sm">Borrar historial de horómetros</p>
+            <p className="text-gray-500 text-xs">Esperanza + Dalka</p>
+          </div>
+        </div>
+        <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-3 text-xs text-red-700 space-y-1.5">
+          <p className="font-semibold">Esto borra permanentemente, en las dos naves:</p>
+          <ul className="list-disc list-inside space-y-0.5">
+            <li>Todo el historial de lecturas de horómetro registradas</li>
+          </ul>
+        </div>
+        <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 mb-4 text-xs text-emerald-700">
+          <p className="font-semibold mb-0.5">No se toca:</p>
+          <p>El horómetro actual de cada equipo, OTs, planes, usuarios, solicitudes, checklists, buques/certificados, travesías.</p>
+        </div>
+        <label className="text-xs text-gray-500 font-medium mb-1 block">Escribí <strong>BORRAR</strong> para confirmar</label>
+        <input value={resetHorometrosConfirmText} onChange={e=>setResetHorometrosConfirmText(e.target.value)}
+          className={iCls+" mb-4"} placeholder="BORRAR" autoFocus/>
+        <div className="flex gap-2">
+          <button onClick={ejecutarResetHorometros} disabled={resetHorometrosConfirmText.trim().toUpperCase()!=="BORRAR"||resettingHorometros}
+            className="flex-1 bg-red-600 hover:bg-red-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold py-2.5 rounded-lg text-sm transition">
+            {resettingHorometros?"Borrando…":"Confirmar borrado"}
+          </button>
+          <button onClick={()=>{setShowResetHorometros(false);setResetHorometrosConfirmText("");}}
             className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2.5 rounded-lg text-sm transition">
             Cancelar
           </button>
