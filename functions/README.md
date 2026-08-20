@@ -93,6 +93,10 @@ curl -X POST https://us-central1-<PROJECT_ID>.cloudfunctions.net/sendManualPush 
 - Equipo pasa a "falla" → notifica a todos los tokens registrados.
 - Nueva solicitud → notifica a supervisor y admin.
 - OT asignada → notifica solo al mecánico asignado.
+- OT completada (cierre real, `status` pasa a "completada") → notifica a
+  TODOS los tokens registrados, con el `data` necesario para que el
+  cliente arme un preview (`equipCode`, `observations`, `mec`) cuando quien
+  recibe la notificación no tiene acceso a la página de OTs.
 - Tokens que devuelven 410/404 al enviar se borran de `pushTokens`
   automáticamente en la misma llamada.
 - Un mismo usuario puede tener un token por dispositivo (`userId+device`),

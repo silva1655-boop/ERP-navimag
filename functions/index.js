@@ -226,6 +226,59 @@ exports.onOTAsignada = functions
   });
 
 // ══════════════════════════════════════════════════════════════════════
+// TRIGGER 5 — OT completada (cierre real, no solo guardado)
+// Llega a TODOS los tokens (sin filtro de rol) — incluye "data" con lo
+// necesario para el modal de preview en App.jsx (usuarios sin acceso a
+// workorders ven un preview en vez de navegar a una página vacía para
+// ellos).
+// ══════════════════════════════════════════════════════════════════════
+exports.onOTCompletada = functions
+  .region("us-central1")
+  .firestore.document("mantek_v2/workOrders")
+  .onWrite(async (change) => {
+    if (!change.after.exists) return null;
+
+    const before = change.before.exists ? (change.before.data()?.data || []) : [];
+    const after = change.after.data()?.data || [];
+
+    const recienCompletadas = after.filter(ot => {
+      const prev = before.find(b => b.id === ot.id);
+      return ot.status === "completada" && (!prev || prev.status !== "completada");
+    });
+    if (recienCompletadas.length === 0) return null;
+
+    const [equipSnap, usersSnap] = await Promise.all([
+      db.collection("mantek_v2").doc("equipment").get(),
+      db.collection("mantek_v2").doc("users").get(),
+    ]);
+    const equipList = equipSnap.exists ? (equipSnap.data().data || []) : [];
+    const usersList = usersSnap.exists ? (usersSnap.data().data || []) : [];
+    const tokens = await getAllTokens("mantek_v2");
+
+    for (const ot of recienCompletadas) {
+      const eq = equipList.find(e => e.id === ot.equipId);
+      const mec = usersList.find(u => u.id === ot.assignedTo);
+      const obs = (ot.observations || "").slice(0, 100);
+
+      const payload = {
+        title: "✅ OT Completada — " + ot.code,
+        body: (eq?.code || ot.equipId || "") + (obs ? ` · "${obs}"` : ""),
+        icon: "/icon-192.png",
+        badge: "/icon-192.png",
+        tag: `ot-completada-${ot.id}`,
+        data: {
+          url: "/", page: "workorders", type: "ot_completada",
+          otId: ot.id, code: ot.code,
+          equipCode: eq?.code || "", equipId: ot.equipId,
+          observations: obs, mec: mec?.name || "",
+        },
+      };
+      await sendPush("mantek_v2", tokens, payload);
+    }
+    return null;
+  });
+
+// ══════════════════════════════════════════════════════════════════════
 // ENDPOINT HTTP — Registrar token push
 // Lo llama el ERP (registerPushSubscription en App.jsx) cuando el usuario
 // acepta notificaciones.

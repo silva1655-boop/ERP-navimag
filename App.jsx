@@ -14661,8 +14661,9 @@ function printMonthlyReport(data, equipList, usersList, month) {
 }
 
 // ─── REPORTS ─────────────────────────────────────────────────────────────────
-function Reports({user,data}){
+function Reports({user,data,activeModule}){
   const {wos,equip,users,requests,checklists}=data;
+const [activeTab,setActiveTab]=useState("ots"); // "ots" | "resumen"
 const [rptDateFrom,setRptDateFrom]=useState(new Date().toISOString().slice(0,7)+"-01");
 const [rptDateTo,setRptDateTo]=useState(new Date().toISOString().slice(0,10));
 const inRange=w=>{
@@ -14699,6 +14700,21 @@ return(
           <button onClick={()=>printMonthlyReport(data,equip,users,thisMonth)} className={btnSecondary} style={{borderColor:NV.navy,color:NV.navy,background:"white"}}><Printer size={14}/>Informe Mensual</button>
         </div>
       </div>
+
+      <div className="flex gap-1 border-b border-gray-200">
+        <button onClick={()=>setActiveTab("ots")}
+          className={`pb-2 px-3 text-sm font-semibold border-b-2 transition ${activeTab==="ots"?"border-blue-600 text-blue-600":"border-transparent text-gray-400 hover:text-gray-600"}`}>
+          📊 Análisis OTs
+        </button>
+        <button onClick={()=>setActiveTab("resumen")}
+          className={`pb-2 px-3 text-sm font-semibold border-b-2 transition ${activeTab==="resumen"?"border-red-600 text-red-600":"border-transparent text-gray-400 hover:text-gray-600"}`}>
+          📋 Resumen Mensual
+        </button>
+      </div>
+
+      {activeTab==="resumen"&&<ResumenMensual data={data} activeModule={activeModule}/>}
+
+      {activeTab==="ots"&&(<>
 <div className="flex items-center gap-3 flex-wrap mb-2">
   <Filter size={14} className="text-gray-400 flex-shrink-0"/>
   <div className="flex items-center gap-2">
@@ -14758,8 +14774,223 @@ return(
 </tbody>
 </table>
 </div>
+</>)}
 </div>
 );
+}
+
+// Resumen Mensual — tab dentro de Reports. Ojo: data acá es SIEMPRE del
+// módulo activo (Taller o Marítimo/Esperanza/Dalka, nunca los dos a la vez
+// — la app solo mantiene un listener de Firestore vivo por vez, apuntando
+// a UNA colección). No mezcla módulos ni pide datos de otra colección; por
+// diseño (confirmado) muestra únicamente el módulo en el que estás parado.
+function ResumenMensual({data,activeModule}){
+  const {wos=[],requests=[],plans=[],equip=[],users=[],planAssignments=[]}=data;
+  const [mesSel,setMesSel]=useState(new Date().toISOString().slice(0,7)); // "2026-08"
+
+  const enMes=item=>{
+    const fecha=item.createdAt||item.closedAt||item.updatedAt||"";
+    return fecha.startsWith(mesSel);
+  };
+  const mesesDisp=Array.from({length:6},(_,i)=>{
+    const d=new Date();d.setMonth(d.getMonth()-i);
+    return d.toISOString().slice(0,7);
+  });
+
+  const otsMes=wos.filter(enMes);
+  const otsComp=otsMes.filter(w=>w.status==="completada");
+  const otsPend=otsMes.filter(w=>w.status!=="completada"&&w.status!=="cancelada");
+  const hoyStr=new Date().toISOString().slice(0,10);
+  const otsVenc=otsPend.filter(w=>w.scheduledDate&&w.scheduledDate<hoyStr);
+
+  const reqMes=requests.filter(r=>enMes(r)&&r.type!=="fuera_de_programa");
+  const reqComp=reqMes.filter(r=>r.status==="completada");
+  const reqPend=reqMes.filter(r=>r.status!=="completada"&&r.status!=="rechazada");
+  const reqRech=reqMes.filter(r=>r.status==="rechazada");
+
+  const fdpMes=requests.filter(r=>enMes(r)&&r.type==="fuera_de_programa");
+  const fdpComp=fdpMes.filter(r=>r.status==="completada");
+
+  // Marítimo genera OTs de plan con assignmentId, Taller con planId — el
+  // resto (type/nextDate vs nextDueDate) también difiere entre los dos
+  // sistemas de PM (plans/plans legacy vs planTemplates/planAssignments).
+  const pmMes=otsMes.filter(w=>w.type==="preventiva"||w.planId||w.assignmentId);
+  const pmComp=pmMes.filter(w=>w.status==="completada");
+  const pmPend=activeModule==="maritimo"
+    ?planAssignments.filter(a=>{const nd=a.nextDueDate||a.proximaFecha;return nd&&nd.startsWith(mesSel);})
+    :plans.filter(p=>p.nextDate&&p.nextDate.startsWith(mesSel));
+
+  const horasTotales=otsComp.reduce((s,w)=>s+(w.actualHours||0),0);
+
+  const detalle=[...otsComp].sort((a,b)=>
+    (b.closedAt||b.updatedAt||"").localeCompare(a.closedAt||a.updatedAt||"")
+  ).map(ot=>{
+    const eqx=equip.find(e=>e.id===ot.equipId);
+    const mec=users.find(u=>u.id===ot.assignedTo);
+    const req=requests.find(r=>r.id===ot.reqId);
+    return{ot,eq:eqx,mec,req};
+  });
+
+  const pct=(a,b)=>b>0?Math.round(a/b*100):0;
+  const fmtFecha=iso=>{
+    if(!iso) return "—";
+    return new Date(iso).toLocaleDateString("es-CL",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"});
+  };
+  const nombreMes=new Date(mesSel+"-15").toLocaleDateString("es-CL",{month:"long",year:"numeric"});
+  const colorMod=activeModule==="maritimo"?"#0055A4":"#CC0000";
+  const labelMod=activeModule==="maritimo"?"🚢 Marítimo":"🔧 Taller";
+
+  return(
+    <div className="space-y-6 mt-4">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h2 className="text-xl font-bold text-gray-900 capitalize">📋 Resumen — {nombreMes}</h2>
+          <p className="text-gray-500 text-sm mt-0.5">Gestión de solicitudes, OTs, FDP y plan preventivo</p>
+        </div>
+        <div className="flex gap-2 flex-wrap">
+          {mesesDisp.map(m=>(
+            <button key={m} onClick={()=>setMesSel(m)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition capitalize ${mesSel===m?"text-white border-transparent":"bg-white text-gray-600 border-gray-200 hover:border-gray-400"}`}
+              style={mesSel===m?{background:"#CC0000"}:{}}>
+              {new Date(m+"-15").toLocaleDateString("es-CL",{month:"short",year:"2-digit"})}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm">
+        <div className="px-5 py-3 flex items-center gap-3" style={{background:colorMod}}>
+          <p className="text-white font-bold text-base">{labelMod}</p>
+          <span className="text-white/70 text-sm">{nombreMes}</span>
+          <span className="ml-auto text-white/80 text-xs font-semibold">⏱ {horasTotales.toFixed(1)} hrs trabajadas</span>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-0 border-b border-gray-100">
+          <div className="p-4 border-r border-gray-100">
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">📋 Solicitudes Op.</p>
+            <div className="flex items-end gap-2 mb-1">
+              <p className="text-3xl font-black text-gray-900">{reqMes.length}</p>
+              <p className="text-sm text-gray-400 mb-1">total</p>
+            </div>
+            <div className="space-y-1">
+              <div className="flex justify-between text-xs">
+                <span className="text-emerald-600 font-semibold">✅ Completadas</span>
+                <span className="font-bold text-emerald-700">{reqComp.length}{reqMes.length>0&&` (${pct(reqComp.length,reqMes.length)}%)`}</span>
+              </div>
+              <div className="h-1.5 bg-gray-100 rounded-full"><div className="h-full bg-emerald-500 rounded-full" style={{width:pct(reqComp.length,reqMes.length)+"%"}}/></div>
+              <div className="flex justify-between text-xs"><span className="text-amber-600">⏳ Pendientes</span><span className="font-bold text-amber-700">{reqPend.length}</span></div>
+              <div className="flex justify-between text-xs"><span className="text-red-500">❌ Rechazadas</span><span className="font-bold text-red-600">{reqRech.length}</span></div>
+            </div>
+          </div>
+
+          <div className="p-4 border-r border-gray-100">
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">🔧 Órdenes de Trabajo</p>
+            <div className="flex items-end gap-2 mb-1">
+              <p className="text-3xl font-black text-gray-900">{otsMes.length}</p>
+              <p className="text-sm text-gray-400 mb-1">total</p>
+            </div>
+            <div className="space-y-1">
+              <div className="flex justify-between text-xs">
+                <span className="text-emerald-600 font-semibold">✅ Completadas</span>
+                <span className="font-bold text-emerald-700">{otsComp.length}{otsMes.length>0&&` (${pct(otsComp.length,otsMes.length)}%)`}</span>
+              </div>
+              <div className="h-1.5 bg-gray-100 rounded-full"><div className="h-full bg-emerald-500 rounded-full" style={{width:pct(otsComp.length,otsMes.length)+"%"}}/></div>
+              <div className="flex justify-between text-xs"><span className="text-amber-600">⏳ Pendientes</span><span className="font-bold text-amber-700">{otsPend.length}</span></div>
+              {otsVenc.length>0&&<div className="flex justify-between text-xs"><span className="text-red-500">⚠️ Vencidas</span><span className="font-bold text-red-600">{otsVenc.length}</span></div>}
+            </div>
+          </div>
+
+          <div className="p-4 border-r border-gray-100">
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">📝 Fuera de Programa</p>
+            <div className="flex items-end gap-2 mb-1">
+              <p className="text-3xl font-black text-gray-900">{fdpMes.length}</p>
+              <p className="text-sm text-gray-400 mb-1">total</p>
+            </div>
+            <div className="space-y-1">
+              <div className="flex justify-between text-xs">
+                <span className="text-emerald-600 font-semibold">✅ Completadas</span>
+                <span className="font-bold text-emerald-700">{fdpComp.length}{fdpMes.length>0&&` (${pct(fdpComp.length,fdpMes.length)}%)`}</span>
+              </div>
+              <div className="h-1.5 bg-gray-100 rounded-full"><div className="h-full bg-emerald-500 rounded-full" style={{width:pct(fdpComp.length,fdpMes.length)+"%"}}/></div>
+              <div className="flex justify-between text-xs"><span className="text-amber-600">⏳ Pendientes</span><span className="font-bold text-amber-700">{fdpMes.length-fdpComp.length}</span></div>
+            </div>
+          </div>
+
+          <div className="p-4">
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">🛡 Plan Preventivo</p>
+            <div className="flex items-end gap-2 mb-1">
+              <p className="text-3xl font-black text-gray-900">{pmMes.length}</p>
+              <p className="text-sm text-gray-400 mb-1">ejecutados</p>
+            </div>
+            <div className="space-y-1">
+              <div className="flex justify-between text-xs">
+                <span className="text-emerald-600 font-semibold">✅ Completados</span>
+                <span className="font-bold text-emerald-700">{pmComp.length}</span>
+              </div>
+              <div className="h-1.5 bg-gray-100 rounded-full"><div className="h-full bg-emerald-500 rounded-full" style={{width:pct(pmComp.length,pmMes.length)+"%"}}/></div>
+              <div className="flex justify-between text-xs"><span className="text-amber-600">📅 Programados mes</span><span className="font-bold text-amber-700">{pmPend.length}</span></div>
+            </div>
+          </div>
+        </div>
+
+        {detalle.length>0&&(
+          <div className="divide-y divide-gray-50">
+            <div className="px-5 py-2 bg-gray-50 flex items-center justify-between">
+              <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Detalle OTs completadas</p>
+              <p className="text-xs text-gray-400">{otsComp.length} órdenes · {horasTotales.toFixed(1)} hrs</p>
+            </div>
+            {detalle.slice(0,10).map(({ot,eq,mec,req})=>(
+              <div key={ot.id} className="px-5 py-3 hover:bg-gray-50 transition">
+                <div className="flex items-start gap-3">
+                  <div className={`flex-shrink-0 w-8 h-8 rounded-xl flex items-center justify-center text-sm mt-0.5 ${ot.type==="preventiva"?"bg-blue-100":"bg-amber-100"}`}>
+                    {ot.type==="preventiva"?"🛡":"🔧"}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold text-gray-900 leading-tight">
+                      {ot.code} — {eq?.code||"—"}
+                      {req&&<span className="ml-2 text-xs font-normal text-gray-500">· {(req.title||req.description||"").slice(0,50)}</span>}
+                    </p>
+                    <div className="flex items-center gap-3 mt-1 flex-wrap">
+                      <span className="text-xs text-gray-400">👤 {mec?.name||"Sin asignar"}</span>
+                      <span className="text-xs text-gray-400">📅 {fmtFecha(ot.closedAt||ot.updatedAt)}</span>
+                      {ot.actualHours>0&&<span className="text-xs text-gray-400">⏱ {ot.actualHours}h</span>}
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${ot.type==="preventiva"?"bg-blue-100 text-blue-700":"bg-amber-100 text-amber-700"}`}>
+                        {ot.type==="preventiva"?"PM":"Correctiva"}
+                      </span>
+                    </div>
+                    {ot.observations&&(
+                      <p className="text-xs text-gray-600 mt-1.5 bg-gray-50 rounded-lg px-2 py-1.5 border border-gray-100 italic leading-relaxed">
+                        💬 "{ot.observations.slice(0,150)}{ot.observations.length>150?"...":""}"
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+            {detalle.length>10&&(
+              <div className="px-5 py-2 text-center"><p className="text-xs text-gray-400">+ {detalle.length-10} OTs más en el período</p></div>
+            )}
+          </div>
+        )}
+
+        {(reqPend.length>0||otsVenc.length>0)&&(
+          <div className="px-5 py-3 bg-amber-50 border-t border-amber-100">
+            <p className="text-xs font-bold text-amber-700 uppercase tracking-wide mb-2">⚠️ Requieren atención</p>
+            <div className="space-y-1">
+              {otsVenc.slice(0,3).map(ot=>{
+                const eqx=equip.find(e=>e.id===ot.equipId);
+                return <p key={ot.id} className="text-xs text-amber-800">· {ot.code} — {eqx?.code} vencida desde {fmtFecha(ot.scheduledDate)}</p>;
+              })}
+              {reqPend.slice(0,3).map(r=>{
+                const eqx=equip.find(e=>e.id===r.equipId);
+                return <p key={r.id} className="text-xs text-amber-800">· Solicitud pendiente: {eqx?.code} — {(r.title||r.description||"").slice(0,50)}</p>;
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // ─── GASTOS Y PRESUPUESTO (Bloque 1: colecciones + import con dedupe) ────────
@@ -34637,13 +34868,24 @@ useEffect(()=>{
 // está abierta y el usuario clickea la notificación (ver notificationclick
 // en sw.js). Se usa setPage directo en vez de handleNav (definido más
 // abajo en este componente) para no depender de un orden de declaración.
+// Caso especial "ot_completada": quien no tiene acceso a workorders (ej.
+// operador) no puede "navegar" ahí — en vez de mandarlo a una página en
+// blanco para él, se muestra un preview de solo lectura con lo mismo que
+// traía la notificación.
+const [otPreview,setOtPreview]=useState(null);
 useEffect(()=>{
   const handleSWMessage=e=>{
-    if(e.data?.type==="NAVIGATE"&&e.data.page) setPage(e.data.page);
+    if(e.data?.type!=="NAVIGATE"||!e.data.page) return;
+    const{page:navPage,data:navData}=e.data;
+    if(navPage==="workorders"&&navData?.type==="ot_completada"&&getUserPerms(user)?.workorders!==true){
+      setOtPreview(navData);
+      return;
+    }
+    setPage(navPage);
   };
   navigator.serviceWorker?.addEventListener("message",handleSWMessage);
   return()=>navigator.serviceWorker?.removeEventListener("message",handleSWMessage);
-},[]);
+},[user]);
 const [online,setOnline]=useState(true);
 const [loading,setLoading]=useState(false);
 const [showChangePwd,setShowChangePwd]=useState(false);
@@ -35789,7 +36031,7 @@ notifications: <Notifications user={user} data={data} onSeen={()=>setSeenNotifs(
 checklist:     <Checklist     user={user} data={data} setData={setData} activeModule={activeModule} activeBarco={activeBarco} saveData={saveData} appendToArray={appendToArray} updateInArray={updateInArray}/>,
 historial_postop: <HistorialPostOperacional data={data}/>,
 dashboard_checklist: <DashboardChecklist data={data} activeModule={activeModule}/>,
-reports:       <Reports       user={user} data={data}/>,
+reports:       <Reports       user={user} data={data} activeModule={activeModule}/>,
 deviaciones:   <DeviationReports user={user} data={data} setData={setData} saveData={saveData} appendToArray={appendToArray} updateInArray={updateInArray} activeCOLL={activeCOLL}/>,
 users:         <UsersPage     data={data} setData={setData} currentUser={user} saveData={saveData} appendToArray={appendToArray} updateInArray={updateInArray} activeModule={activeModule} activeCOLL={activeCOLL}/>,
 operadores:    <OperadoresPage user={user} data={data} setData={setData} saveData={saveData}/>,
@@ -35903,6 +36145,32 @@ return(
 {showChatPanel&&<ChatPanel user={user} users={data.users||[]} conversaciones={conversaciones} activeCOLL={activeCOLL} onClose={()=>setShowChatPanel(false)}/>}
 {showPlanner&&<PlannerPanel user={user} data={data} activeCOLL={activeCOLL} onNav={handleNav} onClose={()=>{setShowPlanner(false);marcarPlannerVisto();}}/>}
 {showChangePwd&&<ChangePasswordModal user={user} onSave={async(o,n)=>handleChangePwd(o,n)} onClose={()=>setShowChangePwd(false)}/>}
+{otPreview&&(
+  <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{background:"rgba(0,0,0,0.5)"}}>
+    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+      <div className="px-5 py-4 flex items-center gap-3" style={{background:"#16a34a"}}>
+        <span className="text-2xl">✅</span>
+        <div>
+          <p className="text-white font-bold text-sm">OT Completada</p>
+          <p className="text-green-200 text-xs">{otPreview?.code||""}</p>
+        </div>
+        <button onClick={()=>setOtPreview(null)} className="ml-auto text-white/70 hover:text-white text-xl">×</button>
+      </div>
+      <div className="px-5 py-4 space-y-2">
+        <p className="text-sm font-semibold text-gray-800">{otPreview?.equipCode||otPreview?.equipId||""}</p>
+        {otPreview?.observations&&(
+          <p className="text-sm text-gray-600 italic bg-gray-50 rounded-xl px-3 py-2 border border-gray-100">💬 "{otPreview.observations}"</p>
+        )}
+        {otPreview?.mec&&(
+          <p className="text-xs text-gray-400">👤 {otPreview.mec} · {new Date().toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit"})}</p>
+        )}
+      </div>
+      <div className="px-5 pb-4">
+        <button onClick={()=>setOtPreview(null)} className="w-full py-2.5 rounded-xl bg-gray-100 text-gray-600 text-sm font-semibold hover:bg-gray-200 transition">Cerrar</button>
+      </div>
+    </div>
+  </div>
+)}
 </div>
 );
 }
