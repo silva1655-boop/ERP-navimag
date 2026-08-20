@@ -9780,7 +9780,7 @@ const openEditPlanAssign=(assign)=>{
     // Estos 5 campos existen en el modal de creación (EMPTY_PLAN_FORM) pero
     // faltaban acá — mismo bug que en el plan legacy, esta era la otra mitad.
     fechaUltima:assign._isLegacy?(refLegacy?.fechaUltima||""):(assign.fechaUltima||assign.lastExecutionDate||""),
-    pctAnticipacion:assign._isLegacy?(refLegacy?.pctAnticipacion??20):(assign.pctAnticipacion??tplA?.pctAnticipacion??20),
+    pctAnticipacion:assign._isLegacy?(refLegacy?.pctAnticipacion??0):(assign.pctAnticipacion??tplA?.pctAnticipacion??0),
     valorRepuesto:String(assign._isLegacy?(refLegacy?.valorRepuesto||""):(assign.valorRepuesto||"")),
     valorServicio:String(assign._isLegacy?(refLegacy?.valorServicio||""):(assign.valorServicio||"")),
     moneda:(assign._isLegacy?refLegacy?.moneda:assign.moneda)||"USD",
@@ -10176,8 +10176,8 @@ if(isMaritimo){
           <input type="date" value={editPlanAssignForm.fechaUltima||""} onChange={e=>setEditPlanAssignForm(f=>({...f,fechaUltima:e.target.value}))} className={iCls}/>
         </div>
         <div>
-          <label className={lbl}>% ANTICIPACIÓN PARA GENERAR OT <span className="text-blue-500 font-bold">{parseFloat(editPlanAssignForm.pctAnticipacion)||20}%</span></label>
-          <input type="range" min="0" max="50" step="5" value={editPlanAssignForm.pctAnticipacion!=null?parseFloat(editPlanAssignForm.pctAnticipacion):20} onChange={e=>setEditPlanAssignForm(f=>({...f,pctAnticipacion:parseFloat(e.target.value)}))} className="w-full accent-blue-600"/>
+          <label className={lbl}>% ANTICIPACIÓN PARA GENERAR OT <span className="text-blue-500 font-bold">{editPlanAssignForm.pctAnticipacion!=null?parseFloat(editPlanAssignForm.pctAnticipacion):0}%</span></label>
+          <input type="range" min="0" max="50" step="5" value={editPlanAssignForm.pctAnticipacion!=null?parseFloat(editPlanAssignForm.pctAnticipacion):0} onChange={e=>setEditPlanAssignForm(f=>({...f,pctAnticipacion:parseFloat(e.target.value)}))} className="w-full accent-blue-600"/>
         </div>
         <div className="grid grid-cols-3 gap-2">
           <div><label className={lbl}>VALOR REPUESTO</label>
@@ -10877,7 +10877,7 @@ if(isMaritimo){
         </div>
         <div>
           <label className="text-gray-500 text-xs font-medium mb-1.5 block">% ANTICIPACIÓN PARA GENERAR OT <span className="text-blue-500 font-bold">{parseFloat(planForm.pctAnticipacion)||20}%</span></label>
-          <input type="range" min="0" max="50" step="5" value={planForm.pctAnticipacion!=null?parseFloat(planForm.pctAnticipacion):20} onChange={e=>setPlanForm(f=>({...f,pctAnticipacion:parseFloat(e.target.value)}))} className="w-full accent-blue-600"/>
+          <input type="range" min="0" max="50" step="5" value={planForm.pctAnticipacion!=null?parseFloat(planForm.pctAnticipacion):0} onChange={e=>setPlanForm(f=>({...f,pctAnticipacion:parseFloat(e.target.value)}))} className="w-full accent-blue-600"/>
           <p className="text-gray-400 text-xs mt-1">La OT se genera cuando se alcanza el {parseFloat(planForm.pctAnticipacion)||20}% previo al vencimiento</p>
         </div>
       </div>
@@ -12563,7 +12563,7 @@ return(
   </div>
   <div>
     <label className="text-gray-500 text-xs font-medium mb-1 block">% ANTICIPACIÓN PARA GENERAR OT <span className="text-blue-500 font-bold">{parseFloat(editPlanForm.pctAnticipacion)||20}%</span></label>
-    <input type="range" min="0" max="50" step="5" value={editPlanForm.pctAnticipacion!=null?parseFloat(editPlanForm.pctAnticipacion):20} onChange={e=>setEditPlanForm(f=>({...f,pctAnticipacion:parseFloat(e.target.value)}))} className="w-full accent-blue-600"/>
+    <input type="range" min="0" max="50" step="5" value={editPlanForm.pctAnticipacion!=null?parseFloat(editPlanForm.pctAnticipacion):0} onChange={e=>setEditPlanForm(f=>({...f,pctAnticipacion:parseFloat(e.target.value)}))} className="w-full accent-blue-600"/>
   </div>
   <div className="grid grid-cols-3 gap-3">
     <div><label className="text-gray-500 text-xs font-medium mb-1 block">VALOR REPUESTO</label>
