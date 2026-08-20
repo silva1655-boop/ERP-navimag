@@ -10172,7 +10172,7 @@ if(isMaritimo){
         </div>
         <div>
           <label className={lbl}>% ANTICIPACIÓN PARA GENERAR OT <span className="text-blue-500 font-bold">{parseFloat(editPlanAssignForm.pctAnticipacion)||20}%</span></label>
-          <input type="range" min="0" max="50" step="5" value={parseFloat(editPlanAssignForm.pctAnticipacion)||20} onChange={e=>setEditPlanAssignForm(f=>({...f,pctAnticipacion:parseFloat(e.target.value)}))} className="w-full accent-blue-600"/>
+          <input type="range" min="0" max="50" step="5" value={editPlanAssignForm.pctAnticipacion!=null?parseFloat(editPlanAssignForm.pctAnticipacion):20} onChange={e=>setEditPlanAssignForm(f=>({...f,pctAnticipacion:parseFloat(e.target.value)}))} className="w-full accent-blue-600"/>
         </div>
         <div className="grid grid-cols-3 gap-2">
           <div><label className={lbl}>VALOR REPUESTO</label>
@@ -10872,7 +10872,7 @@ if(isMaritimo){
         </div>
         <div>
           <label className="text-gray-500 text-xs font-medium mb-1.5 block">% ANTICIPACIÓN PARA GENERAR OT <span className="text-blue-500 font-bold">{parseFloat(planForm.pctAnticipacion)||20}%</span></label>
-          <input type="range" min="0" max="50" step="5" value={parseFloat(planForm.pctAnticipacion)||20} onChange={e=>setPlanForm(f=>({...f,pctAnticipacion:parseFloat(e.target.value)}))} className="w-full accent-blue-600"/>
+          <input type="range" min="0" max="50" step="5" value={planForm.pctAnticipacion!=null?parseFloat(planForm.pctAnticipacion):20} onChange={e=>setPlanForm(f=>({...f,pctAnticipacion:parseFloat(e.target.value)}))} className="w-full accent-blue-600"/>
           <p className="text-gray-400 text-xs mt-1">La OT se genera cuando se alcanza el {parseFloat(planForm.pctAnticipacion)||20}% previo al vencimiento</p>
         </div>
       </div>
@@ -12558,7 +12558,7 @@ return(
   </div>
   <div>
     <label className="text-gray-500 text-xs font-medium mb-1 block">% ANTICIPACIÓN PARA GENERAR OT <span className="text-blue-500 font-bold">{parseFloat(editPlanForm.pctAnticipacion)||20}%</span></label>
-    <input type="range" min="0" max="50" step="5" value={parseFloat(editPlanForm.pctAnticipacion)||20} onChange={e=>setEditPlanForm(f=>({...f,pctAnticipacion:parseFloat(e.target.value)}))} className="w-full accent-blue-600"/>
+    <input type="range" min="0" max="50" step="5" value={editPlanForm.pctAnticipacion!=null?parseFloat(editPlanForm.pctAnticipacion):20} onChange={e=>setEditPlanForm(f=>({...f,pctAnticipacion:parseFloat(e.target.value)}))} className="w-full accent-blue-600"/>
   </div>
   <div className="grid grid-cols-3 gap-3">
     <div><label className="text-gray-500 text-xs font-medium mb-1 block">VALOR REPUESTO</label>
