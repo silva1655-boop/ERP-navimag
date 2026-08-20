@@ -1221,6 +1221,7 @@ function parsePlanMaritimoCSV(text, equip, plans) {
     const valorRepuesto = parseCurrency(cols[15]);
     const valorServicio = parseCurrency(cols[16]);
     const criticidadPlan = normCrit(cols[17]);
+    const pctAnticipacionXls = cols[18]!=null&&cols[18]!==""?Math.round(parseFloat(String(cols[18]).replace(",","."))*100):20;
 
     const nave = (cols[1]||"").trim();
     const area = (cols[2]||"").trim().toLowerCase().replace(/[\s/]+/g,"_");
@@ -1265,6 +1266,7 @@ function parsePlanMaritimoCSV(text, equip, plans) {
       lastExecutionDate,
       nextDueDate,
       valorRepuesto,
+      pctAnticipacion: pctAnticipacionXls,
       valorServicio,
       moneda: "CLP",
     });
@@ -1392,6 +1394,7 @@ function parsePlanMaritimoCSVv2(text, equip, planTemplates, planAssignments) {
     const valorRepuesto = parseCurrency(cols[15]);
     const valorServicio = parseCurrency(cols[16]);
     const criticidadPlan = normCrit(cols[17]);
+    const pctAnticipacionXls = cols[18]!=null&&cols[18]!==""?Math.round(parseFloat(String(cols[18]).replace(",","."))*100):20;
 
     const nave = (cols[1]||"").trim();
     const area = (cols[2]||"").trim().toLowerCase().replace(/[\s/]+/g,"_");
@@ -1447,6 +1450,7 @@ function parsePlanMaritimoCSVv2(text, equip, planTemplates, planAssignments) {
       criticidad: criticidadPlan,
       valorRepuesto,
       valorServicio,
+      pctAnticipacion: pctAnticipacionXls,
       moneda: "CLP",
       tipoPlan,
       lastBaseHours: tipoPlan==="horometro" ? lastHorometro : null,
@@ -1562,6 +1566,7 @@ function parsePlanMaritimoXLSXRows(rows, equip, planTemplates, planAssignments) 
     const valorRepuesto=parseCurrency(row[15]);
     const valorServicio=parseCurrency(row[16]);
     const criticidadPlan=normCrit(row[17]);
+    const pctAnticipacionXls=row[18]!=null&&row[18]!==""?Math.round(parseFloat(String(row[18]).replace(",","."))*100):20;
     const nave=toStr(row[1]);
     const area=toStr(row[2]).toLowerCase().replace(/[\s/]+/g,"_");
     const responsable=capitalizarNombre(toStr(row[4]));
@@ -1601,7 +1606,7 @@ function parsePlanMaritimoXLSXRows(rows, equip, planTemplates, planAssignments) 
       id:uid(),code:assignCode,
       templateId:tpl.id,templateCode:tpl.code,equipId:eq.id,
       activo,nave,area,responsable:responsableFinal,responsablePlan:responsableFinal,technician:responsableFinal,sujetoCondicion,
-      criticidad:criticidadPlan,valorRepuesto,valorServicio,moneda:"CLP",tipoPlan,
+      criticidad:criticidadPlan,valorRepuesto,valorServicio,moneda:"CLP",tipoPlan,pctAnticipacion:pctAnticipacionXls,
       lastBaseHours:tipoPlan==="horometro"?lastHorometro:null,
       nextDueHours:tipoPlan==="horometro"?horometroTarget:null,
       lastExecutionDate:tipoPlan==="calendario"?lastExecutionDate:null,
