@@ -14840,6 +14840,124 @@ function ResumenMensual({data,activeModule}){
   const colorMod=activeModule==="maritimo"?"#0055A4":"#CC0000";
   const labelMod=activeModule==="maritimo"?"🚢 Marítimo":"🔧 Taller";
 
+  // null = ninguna tarjeta expandida | id de OT = esa tarjeta muestra el
+  // comentario completo (si no, queda cortado en 2 líneas con line-clamp).
+  const [expandedOT,setExpandedOT]=useState(null);
+
+  // PDF del resumen visual — mismo patrón que printMonthlyReport/
+  // imprimirTablaPDF (window.open + print, sin librerías nuevas), pero con
+  // el contenido de ESTE tab (KPIs + detalle de OTs con comentario
+  // completo), no la tabla de "OT por Equipo" del botón viejo.
+  const exportarResumenPDF=()=>{
+    const pct=(a,b)=>b>0?Math.round(a/b*100):0;
+    const esc=s=>String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    let html=`<!DOCTYPE html><html><head><meta charset="UTF-8">
+    <style>
+      body{font-family:Arial,sans-serif;font-size:11px;color:#1a1a1a;background:#fff;margin:0;padding:24px;}
+      .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;border-bottom:3px solid #CC0000;padding-bottom:12px;}
+      .company{font-size:22px;font-weight:bold;color:#0A1628;letter-spacing:1px;}
+      .subtitle{font-size:12px;color:#666;margin-top:4px;}
+      .fecha{font-size:11px;color:#666;}
+      .modulo-header{padding:10px 14px;color:white;font-weight:bold;font-size:13px;border-radius:8px 8px 0 0;margin-top:20px;}
+      .kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:0;border:1px solid #e5e7eb;border-radius:0 0 8px 8px;margin-bottom:16px;overflow:hidden;}
+      .kpi-card{padding:12px;border-right:1px solid #e5e7eb;}
+      .kpi-card:last-child{border-right:none;}
+      .kpi-label{font-size:9px;font-weight:bold;text-transform:uppercase;color:#6b7280;letter-spacing:0.5px;margin-bottom:6px;}
+      .kpi-num{font-size:24px;font-weight:900;color:#111827;}
+      .kpi-row{display:flex;justify-content:space-between;font-size:10px;margin-top:4px;}
+      .kpi-green{color:#059669;font-weight:bold;}
+      .kpi-amber{color:#d97706;font-weight:bold;}
+      .kpi-red{color:#dc2626;font-weight:bold;}
+      .prog-bar{height:4px;background:#f3f4f6;border-radius:2px;margin:3px 0;}
+      .prog-fill{height:4px;background:#059669;border-radius:2px;}
+      .detalle-header{font-size:10px;font-weight:bold;text-transform:uppercase;color:#6b7280;padding:8px 0;border-bottom:1px solid #f3f4f6;margin-bottom:6px;}
+      .ot-row{padding:8px 0;border-bottom:1px solid #f9fafb;}
+      .ot-code{font-weight:bold;font-size:11px;color:#111;}
+      .ot-meta{font-size:10px;color:#9ca3af;margin-top:2px;}
+      .ot-obs{font-size:10px;color:#4b5563;background:#f9fafb;border-radius:4px;padding:4px 8px;margin-top:4px;border-left:2px solid #e5e7eb;font-style:italic;}
+      .badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:9px;font-weight:bold;}
+      .badge-pm{background:#dbeafe;color:#1d4ed8;}
+      .badge-corr{background:#fef3c7;color:#92400e;}
+      .pendientes{background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:10px;margin-top:8px;}
+      .pend-title{font-size:10px;font-weight:bold;color:#92400e;margin-bottom:4px;}
+      .pend-item{font-size:10px;color:#92400e;padding:2px 0;}
+      .hrs-badge{font-size:11px;font-weight:bold;color:rgba(255,255,255,0.9);float:right;}
+      @media print{body{padding:0;}}
+    </style></head><body>
+    <div class="header">
+      <div><div class="company">NAVIMAG CARGA</div><div class="subtitle">Resumen Mensual de Mantenimiento — ${esc(nombreMes)}</div></div>
+      <div class="fecha">Generado: ${esc(new Date().toLocaleDateString("es-CL"))}</div>
+    </div>
+    <div class="modulo-header" style="background:${colorMod}">${esc(labelMod)}<span class="hrs-badge">⏱ ${horasTotales.toFixed(1)} hrs trabajadas</span></div>
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-label">📋 Solicitudes Op.</div>
+        <div class="kpi-num">${reqMes.length}</div>
+        <div class="kpi-row"><span class="kpi-green">✅ Completadas</span><span class="kpi-green">${reqComp.length} (${pct(reqComp.length,reqMes.length)}%)</span></div>
+        <div class="prog-bar"><div class="prog-fill" style="width:${pct(reqComp.length,reqMes.length)}%"></div></div>
+        <div class="kpi-row"><span class="kpi-amber">⏳ Pendientes</span><span class="kpi-amber">${reqPend.length}</span></div>
+        <div class="kpi-row"><span class="kpi-red">❌ Rechazadas</span><span class="kpi-red">${reqRech.length}</span></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">🔧 Órdenes de Trabajo</div>
+        <div class="kpi-num">${otsMes.length}</div>
+        <div class="kpi-row"><span class="kpi-green">✅ Completadas</span><span class="kpi-green">${otsComp.length} (${pct(otsComp.length,otsMes.length)}%)</span></div>
+        <div class="prog-bar"><div class="prog-fill" style="width:${pct(otsComp.length,otsMes.length)}%"></div></div>
+        <div class="kpi-row"><span class="kpi-amber">⏳ Pendientes</span><span class="kpi-amber">${otsPend.length}</span></div>
+        ${otsVenc.length>0?`<div class="kpi-row"><span class="kpi-red">⚠️ Vencidas</span><span class="kpi-red">${otsVenc.length}</span></div>`:""}
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">📝 Fuera de Programa</div>
+        <div class="kpi-num">${fdpMes.length}</div>
+        <div class="kpi-row"><span class="kpi-green">✅ Completadas</span><span class="kpi-green">${fdpComp.length} (${pct(fdpComp.length,fdpMes.length)}%)</span></div>
+        <div class="prog-bar"><div class="prog-fill" style="width:${pct(fdpComp.length,fdpMes.length)}%"></div></div>
+        <div class="kpi-row"><span class="kpi-amber">⏳ Pendientes</span><span class="kpi-amber">${fdpMes.length-fdpComp.length}</span></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">🛡 Plan Preventivo</div>
+        <div class="kpi-num">${pmMes.length}</div>
+        <div class="kpi-row"><span class="kpi-green">✅ Completados</span><span class="kpi-green">${pmComp.length}</span></div>
+        <div class="prog-bar"><div class="prog-fill" style="width:${pct(pmComp.length,pmMes.length)}%"></div></div>
+        <div class="kpi-row"><span class="kpi-amber">📅 Programados mes</span><span class="kpi-amber">${pmPend.length}</span></div>
+      </div>
+    </div>`;
+
+    if(detalle.length>0){
+      html+=`<div class="detalle-header">Detalle OTs Completadas — ${otsComp.length} órdenes · ${horasTotales.toFixed(1)} hrs</div>`;
+      detalle.forEach(({ot,eq:eqx,mec,req})=>{
+        html+=`<div class="ot-row">
+          <div>
+            <span class="ot-code">${esc(ot.code)} — ${esc(eqx?.code||"—")}</span>
+            <span class="badge ${ot.type==="preventiva"?"badge-pm":"badge-corr"}" style="margin-left:8px">${ot.type==="preventiva"?"PM":"Correctiva"}</span>
+            ${req?`<span style="color:#6b7280;font-size:10px;margin-left:6px">· ${esc((req.title||req.description||"").slice(0,60))}</span>`:""}
+          </div>
+          <div class="ot-meta">👤 ${esc(mec?.name||"Sin asignar")} &nbsp;·&nbsp; 📅 ${ot.closedAt?esc(new Date(ot.closedAt).toLocaleDateString("es-CL")):""}&nbsp;·&nbsp; ⏱ ${ot.actualHours||0}h</div>
+          ${ot.observations?`<div class="ot-obs">💬 "${esc(ot.observations)}"</div>`:""}
+        </div>`;
+      });
+    }
+
+    if(otsVenc.length>0||reqPend.length>0){
+      html+=`<div class="pendientes"><div class="pend-title">⚠️ Requieren atención</div>`;
+      otsVenc.slice(0,5).forEach(ot=>{
+        const eqx=equip.find(e=>e.id===ot.equipId);
+        html+=`<div class="pend-item">· ${esc(ot.code)} — ${esc(eqx?.code||"")} vencida</div>`;
+      });
+      reqPend.slice(0,5).forEach(r=>{
+        const eqx=equip.find(e=>e.id===r.equipId);
+        html+=`<div class="pend-item">· Solicitud: ${esc(eqx?.code||"")} — ${esc((r.title||r.description||"").slice(0,50))}</div>`;
+      });
+      html+=`</div>`;
+    }
+
+    html+="</body></html>";
+    const win=window.open("","_blank");
+    if(!win){alert("El navegador bloqueó la ventana de impresión — habilitá pop-ups para este sitio.");return;}
+    win.document.write(html);
+    win.document.close();
+    setTimeout(()=>win.print(),500);
+  };
+
   return(
     <div className="space-y-6 mt-4">
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -14847,7 +14965,7 @@ function ResumenMensual({data,activeModule}){
           <h2 className="text-xl font-bold text-gray-900 capitalize">📋 Resumen — {nombreMes}</h2>
           <p className="text-gray-500 text-sm mt-0.5">Gestión de solicitudes, OTs, FDP y plan preventivo</p>
         </div>
-        <div className="flex gap-2 flex-wrap">
+        <div className="flex gap-2 flex-wrap items-center">
           {mesesDisp.map(m=>(
             <button key={m} onClick={()=>setMesSel(m)}
               className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition capitalize ${mesSel===m?"text-white border-transparent":"bg-white text-gray-600 border-gray-200 hover:border-gray-400"}`}
@@ -14855,6 +14973,11 @@ function ResumenMensual({data,activeModule}){
               {new Date(m+"-15").toLocaleDateString("es-CL",{month:"short",year:"2-digit"})}
             </button>
           ))}
+          <button onClick={exportarResumenPDF}
+            className="flex items-center gap-1.5 text-sm font-semibold px-4 py-2 rounded-xl border transition"
+            style={{borderColor:NV.navy,color:NV.navy,background:"white"}}>
+            <Printer size={14}/>Exportar PDF
+          </button>
         </div>
       </div>
 
@@ -14939,8 +15062,12 @@ function ResumenMensual({data,activeModule}){
               <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Detalle OTs completadas</p>
               <p className="text-xs text-gray-400">{otsComp.length} órdenes · {horasTotales.toFixed(1)} hrs</p>
             </div>
-            {detalle.slice(0,10).map(({ot,eq,mec,req})=>(
-              <div key={ot.id} className="px-5 py-3 hover:bg-gray-50 transition">
+            {detalle.slice(0,10).map(({ot,eq,mec,req})=>{
+              const expandido=expandedOT===ot.id;
+              const obsLarga=(ot.observations||"").length>150;
+              return(
+              <div key={ot.id} className="px-5 py-3 hover:bg-gray-50 transition cursor-pointer"
+                onClick={()=>setExpandedOT(expandido?null:ot.id)}>
                 <div className="flex items-start gap-3">
                   <div className={`flex-shrink-0 w-8 h-8 rounded-xl flex items-center justify-center text-sm mt-0.5 ${ot.type==="preventiva"?"bg-blue-100":"bg-amber-100"}`}>
                     {ot.type==="preventiva"?"🛡":"🔧"}
@@ -14958,15 +15085,22 @@ function ResumenMensual({data,activeModule}){
                         {ot.type==="preventiva"?"PM":"Correctiva"}
                       </span>
                     </div>
-                    {ot.observations&&(
-                      <p className="text-xs text-gray-600 mt-1.5 bg-gray-50 rounded-lg px-2 py-1.5 border border-gray-100 italic leading-relaxed">
-                        💬 "{ot.observations.slice(0,150)}{ot.observations.length>150?"...":""}"
+                    {ot.observations&&(<>
+                      <p className={`text-xs text-gray-600 mt-1.5 bg-gray-50 rounded-lg px-2 py-1.5 border border-gray-100 italic leading-relaxed transition-all ${expandido?"":"line-clamp-2"}`}>
+                        💬 "{ot.observations}"
                       </p>
-                    )}
+                      {obsLarga&&(
+                        <button onClick={e=>{e.stopPropagation();setExpandedOT(expandido?null:ot.id);}}
+                          className="text-[10px] text-blue-500 hover:underline mt-1 ml-2">
+                          {expandido?"Ver menos ▲":"Ver más ▼"}
+                        </button>
+                      )}
+                    </>)}
                   </div>
                 </div>
               </div>
-            ))}
+              );
+            })}
             {detalle.length>10&&(
               <div className="px-5 py-2 text-center"><p className="text-xs text-gray-400">+ {detalle.length-10} OTs más en el período</p></div>
             )}
