@@ -1536,7 +1536,7 @@ function parsePlanMaritimoXLSXRows(rows, equip, planTemplates, planAssignments) 
   };
   const capitalizarNombre=s=>(s||"").trim().split(/\s+/).map(w=>w.charAt(0).toUpperCase()+w.slice(1).toLowerCase()).join(" ");
 
-  if(rows.length<2) return{newTemplates:[],newAssignments:[],errors:["Archivo vacío o sin filas de datos"]};
+  if(rows.length<2) return{newTemplates:[],newAssignments:[],updatedAssignments:[],errors:["Archivo vacío o sin filas de datos"]};
 
   // Template dedup: key = name.lower + "::" + freq + "::" + tipoPlan
   const tplMap={};
@@ -1555,10 +1555,16 @@ function parsePlanMaritimoXLSXRows(rows, equip, planTemplates, planAssignments) 
     if(m){const prefix=`${m[1]}-`;const n=parseInt(m[2])||0;if(n>=(assignCounters[prefix]||0))assignCounters[prefix]=n;}
   });
 
-  const assignSeen=new Set();
-  (planAssignments||[]).forEach(a=>assignSeen.add(`${a.equipId}::${a.templateId}`));
+  // assignByKey: equipId::templateId → asignación existente. Una fila cuyo
+  // par equipo+actividad ya está asignado NO se omite como duplicado — se
+  // trata como una corrección: pisa los campos de esa asignación existente
+  // con lo que diga esta fila (todo excepto activo/inactivo, que se
+  // mantiene tal como esté en el sistema — no lo trae el Excel).
+  const assignByKey=new Map();
+  (planAssignments||[]).forEach(a=>assignByKey.set(`${a.equipId}::${a.templateId}`,a));
+  const assignSeen=new Set(); // pares ya procesados EN ESTE archivo, para no duplicar dentro del mismo import
 
-  const newTemplates=[],newAssignments=[],errors=[];
+  const newTemplates=[],newAssignments=[],updatedAssignments=[],errors=[];
   const autoEquip={};
 
   rows.slice(1).forEach((row,idx)=>{
@@ -1624,19 +1630,38 @@ function parsePlanMaritimoXLSXRows(rows, equip, planTemplates, planAssignments) 
 
     const assignKey=`${eq.id}::${tpl.id}`;
     if(assignSeen.has(assignKey)){
-      errors.push(`Fila ${rowNum}: asignación "${nombre.slice(0,30)}" para ${eq.code} ya existe — omitida`);
+      errors.push(`Fila ${rowNum}: asignación "${nombre.slice(0,30)}" para ${eq.code} repetida dentro del mismo archivo — omitida`);
       return;
     }
     assignSeen.add(assignKey);
-
-    const prefix=`PMA-${eq.code}-${tpl.code}-`;
-    assignCounters[prefix]=(assignCounters[prefix]||0)+1;
-    const assignCode=`${prefix}${String(assignCounters[prefix]).padStart(2,"0")}`;
 
     const responsableFallback=!responsable
       ?capitalizarNombre((tpl?.tasks||[]).find(t=>t.responsable)?.responsable||"")
       :"";
     const responsableFinal=responsable||responsableFallback;
+
+    const existing=assignByKey.get(assignKey);
+    if(existing){
+      // Corrección de una asignación ya cargada antes: pisa todo lo que
+      // trae la fila EXCEPTO id/code/createdAt/lastClosedAt (identidad e
+      // historial de la asignación) y activo (el estado activo/inactivo se
+      // maneja a mano en la app, el Excel no lo controla).
+      updatedAssignments.push({
+        ...existing,
+        templateId:tpl.id,templateCode:tpl.code,
+        nave,area,responsable:responsableFinal,responsablePlan:responsableFinal,technician:responsableFinal,sujetoCondicion,
+        criticidad:criticidadPlan,valorRepuesto,valorServicio,moneda:"CLP",tipoPlan,pctAnticipacion:pctAnticipacionXls,
+        lastBaseHours:tipoPlan==="horometro"?lastHorometro:existing.lastBaseHours,
+        nextDueHours:tipoPlan==="horometro"?horometroTarget:existing.nextDueHours,
+        lastExecutionDate:tipoPlan==="calendario"?lastExecutionDate:existing.lastExecutionDate,
+        nextDueDate:tipoPlan==="calendario"?nextDueDate:existing.nextDueDate,
+      });
+      return;
+    }
+
+    const prefix=`PMA-${eq.code}-${tpl.code}-`;
+    assignCounters[prefix]=(assignCounters[prefix]||0)+1;
+    const assignCode=`${prefix}${String(assignCounters[prefix]).padStart(2,"0")}`;
 
     newAssignments.push({
       id:uid(),code:assignCode,
@@ -1651,7 +1676,7 @@ function parsePlanMaritimoXLSXRows(rows, equip, planTemplates, planAssignments) 
     });
   });
 
-  return{newTemplates,newAssignments,newEquip:Object.values(autoEquip),errors};
+  return{newTemplates,newAssignments,updatedAssignments,newEquip:Object.values(autoEquip),errors};
 }
 
 // ─── NAVIMAG COLORS ───────────────────────────────────────────────────────────
@@ -9743,9 +9768,17 @@ const handleXlsxPlanesMar=e=>{
 
 const saveCsvPlanesMar=()=>{
   const res=csvPlanesMarResult;
-  if(!res?.newAssignments?.length&&!res?.newTemplates?.length) return;
+  if(!res?.newAssignments?.length&&!res?.newTemplates?.length&&!res?.updatedAssignments?.length) return;
   const updTpl=[...(data.planTemplates||[]),...(res.newTemplates||[])];
-  const updAss=[...(data.planAssignments||[]),...(res.newAssignments||[])];
+  // updatedAssignments: filas cuyo equipo+actividad ya existía — pisan la
+  // asignación existente en vez de agregarse aparte (antes se omitían en
+  // silencio como "ya existe", así que un archivo "corregido" nunca
+  // llegaba a corregir nada de lo ya cargado).
+  const updById=new Map((res.updatedAssignments||[]).map(a=>[a.id,a]));
+  const updAss=[
+    ...(data.planAssignments||[]).map(a=>updById.get(a.id)||a),
+    ...(res.newAssignments||[]),
+  ];
   setData(d=>({...d,planTemplates:updTpl,planAssignments:updAss}));
   saveData("planTemplates",updTpl);
   saveData("planAssignments",updAss);
@@ -9759,6 +9792,7 @@ const saveCsvPlanesMar=()=>{
   const normalizar=s=>(s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").trim();
   const nombresResp=[...new Set([
     ...(res.newAssignments||[]).map(a=>a.responsable),
+    ...(res.updatedAssignments||[]).map(a=>a.responsable),
     ...(res.newTemplates||[]).flatMap(t=>(t.tasks||[]).map(task=>task.responsable||"")),
   ].filter(Boolean))];
   const noRegistrados=nombresResp.filter(n=>!(users||[]).find(u=>normalizar(u.name)===normalizar(n)));
@@ -9778,7 +9812,7 @@ const saveCsvPlanesMar=()=>{
     setData(d=>({...d,wos:updW}));
     saveData("workOrders",updW);
   }
-  alert(`✅ ${res.newTemplates?.length||0} plantilla(s) + ${res.newAssignments?.length||0} asignación(es) importadas${res.newEquip?.length>0?` · ${res.newEquip.length} equipo(s) creado(s)`:""}${newOTs.length>0?` · ${newOTs.length} OT(s) generada(s) automáticamente`:""}`);
+  alert(`✅ ${res.newTemplates?.length||0} plantilla(s) + ${res.newAssignments?.length||0} asignación(es) nuevas${res.updatedAssignments?.length>0?` · ${res.updatedAssignments.length} asignación(es) actualizadas`:""}${res.newEquip?.length>0?` · ${res.newEquip.length} equipo(s) creado(s)`:""}${newOTs.length>0?` · ${newOTs.length} OT(s) generada(s) automáticamente`:""}`);
   setShowCsvPlanesMar(false);setCsvPlanesMarFileName("");setCsvPlanesMarResult(null);
 };
 
@@ -10866,9 +10900,12 @@ if(isMaritimo){
     </div>
     {csvPlanesMarResult&&(
       <div className="mt-2 space-y-2 max-h-64 overflow-y-auto">
-        {(csvPlanesMarResult.newTemplates?.length>0||csvPlanesMarResult.newAssignments?.length>0)&&(
+        {(csvPlanesMarResult.newTemplates?.length>0||csvPlanesMarResult.newAssignments?.length>0||csvPlanesMarResult.updatedAssignments?.length>0)&&(
           <div className="p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-xs text-emerald-700 space-y-0.5">
-            <p>✅ {csvPlanesMarResult.newTemplates?.length||0} plantilla(s) nuevas · {csvPlanesMarResult.newAssignments?.length||0} asignación(es) para importar</p>
+            <p>✅ {csvPlanesMarResult.newTemplates?.length||0} plantilla(s) nuevas · {csvPlanesMarResult.newAssignments?.length||0} asignación(es) nuevas para importar</p>
+            {csvPlanesMarResult.updatedAssignments?.length>0&&(
+              <p className="font-semibold">🔄 {csvPlanesMarResult.updatedAssignments.length} asignación(es) ya existentes se van a actualizar (equipo+actividad ya asignados — se pisan sus datos con lo del Excel, excepto activo/inactivo)</p>
+            )}
             {csvPlanesMarResult.newEquip?.length>0&&(
               <div className="mt-1 pt-1 border-t border-emerald-200">
                 <p className="font-semibold text-amber-700">⚠️ {csvPlanesMarResult.newEquip.length} equipo(s) no encontrado(s) — se crearán automáticamente:</p>
@@ -10881,7 +10918,7 @@ if(isMaritimo){
             )}
           </div>
         )}
-        {!csvPlanesMarResult.newAssignments?.length&&!csvPlanesMarResult.newTemplates?.length&&csvPlanesMarResult.errors.length===0&&(
+        {!csvPlanesMarResult.newAssignments?.length&&!csvPlanesMarResult.newTemplates?.length&&!csvPlanesMarResult.updatedAssignments?.length&&csvPlanesMarResult.errors.length===0&&(
           <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-700">⚠️ Sin resultados — verifica el formato del archivo y los códigos de equipo</div>
         )}
         {csvPlanesMarResult.errors.length>0&&(
@@ -10896,7 +10933,7 @@ if(isMaritimo){
     <ModalActions
       onSave={saveCsvPlanesMar}
       onCancel={()=>{setShowCsvPlanesMar(false);setCsvPlanesMarResult(null);setCsvPlanesMarFileName("");}}
-      label={`Confirmar importación${csvPlanesMarResult?.newAssignments?.length?` (${csvPlanesMarResult.newAssignments.length} asig.)`:""}`}
+      label={`Confirmar importación${csvPlanesMarResult?.newAssignments?.length?` (${csvPlanesMarResult.newAssignments.length} nuevas`+(csvPlanesMarResult?.updatedAssignments?.length?`, ${csvPlanesMarResult.updatedAssignments.length} actualizadas)`:")"):csvPlanesMarResult?.updatedAssignments?.length?` (${csvPlanesMarResult.updatedAssignments.length} actualizadas)`:""}`}
     />
   </Modal>
   )}
