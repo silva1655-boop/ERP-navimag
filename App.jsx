@@ -10,7 +10,7 @@ Check, RefreshCw, Activity, ArrowRight, Edit2, Trash2,
 TrendingUp, Layers, Info, Wifi, WifiOff, Gauge, Key, FileWarning,
 Printer, Filter, Eye, EyeOff, Copy, Link, ChevronDown, Camera, Download, FileDown, Menu,
 ClipboardCheck, ZoomIn, ChevronLeft, Save, Play, HelpCircle, ChevronUp, MessageCircle, Truck, Upload, Send, RotateCcw,
-Hash, Tag, UserCheck, User as UserIcon, MessageSquare, ExternalLink, PieChart, TrendingDown, MapPin, BookOpen, Calculator, Ruler
+Hash, Tag, UserCheck, User as UserIcon, MessageSquare, ExternalLink, PieChart, TrendingDown, MapPin, BookOpen, Calculator, Ruler, Image as ImageIcon
 } from "lucide-react";
 import { db, storage } from "./firebase.js";
 import { ref, uploadString, getDownloadURL } from "firebase/storage";
@@ -5595,16 +5595,33 @@ if(!rep.actualHours){
       const diff=(fin-ini)/(1000*60*60);
       if(diff>0) horasCalc=Math.round(diff*100)/100;
     }
-    // Upload report photos to Firebase Storage
-    let uploadedRepPhotos=[];
-    if((rep.photos||[]).length>0){
+    // Upload report photos to Firebase Storage — fotoFalla/fotoResultado
+    // se guardaban antes como base64 crudo directo en el patch, sin subir.
+    // Con 2 fotos c/u eso puede empujar el doc de workOrders completo por
+    // encima del límite de saveData (900KB/1000KB) o del límite real de
+    // Firestore (1MB) — la escritura fallaba en silencio (el error solo
+    // queda en consola, no hay alert) y la OT quedaba "guardada" en
+    // pantalla (estado local optimista) pero sin persistir de verdad, así
+    // que al recargar las fotos desaparecían.
+    const uploadFotosRep=async fotos=>{
+      if(!fotos||!fotos.length) return [];
       try{
-        uploadedRepPhotos=await Promise.all((rep.photos||[]).map(async b64=>{
+        return await Promise.all(fotos.map(async b64=>{
           if(!b64.startsWith("data:")) return b64;
           const url=await uploadToFirebaseStorage(b64);
           return url||b64;
         }));
-      }catch(e){uploadedRepPhotos=rep.photos||[];}
+      }catch(e){return fotos;}
+    };
+    let uploadedRepPhotos=[],uploadedFotoFalla=[],uploadedFotoResultado=[];
+    try{
+      [uploadedRepPhotos,uploadedFotoFalla,uploadedFotoResultado]=await Promise.all([
+        uploadFotosRep(rep.photos),
+        uploadFotosRep(rep.fotoFalla),
+        uploadFotosRep(rep.fotoResultado),
+      ]);
+    }catch(e){
+      uploadedRepPhotos=rep.photos||[];uploadedFotoFalla=rep.fotoFalla||[];uploadedFotoResultado=rep.fotoResultado||[];
     }
     const patch={
       status:rep.status,
@@ -5616,8 +5633,8 @@ if(!rep.actualHours){
       reportPhotos:uploadedRepPhotos,
       horaInicioReal:rep.fechaInicio&&rep.horaInicio?`${rep.fechaInicio}T${rep.horaInicio}`:null,
       horaTerminoReal:rep.fechaTermino&&rep.horaTermino?`${rep.fechaTermino}T${rep.horaTermino}`:null,
-      fotoFalla:rep.fotoFalla||[],
-      fotoResultado:rep.fotoResultado||[],
+      fotoFalla:uploadedFotoFalla,
+      fotoResultado:uploadedFotoResultado,
     };
     if(signature)patch.mechanicSignature=signature;
     updWO(sel.id,patch,`Trabajo reportado — ${patch.actualHours}h reales · Horómetro: ${patch.horometroCierre}h · Estado: ${ST[patch.status]?.label}`);
@@ -5842,12 +5859,16 @@ if(wizardOT){
                     <button onClick={()=>setWz(w=>({...w,fotosAntes:(w.fotosAntes||[]).filter((_,j)=>j!==i)}))} className="absolute top-0.5 right-0.5 bg-red-500 rounded-full w-5 h-5 flex items-center justify-center opacity-0 group-hover:opacity-100 transition"><X size={9} className="text-white"/></button>
                   </div>
                 ))}
-                {(wz.fotosAntes||[]).length<4&&(
+                {(wz.fotosAntes||[]).length<4&&(<>
                   <label className="w-16 h-16 border-2 border-dashed border-red-300 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:border-red-400 hover:bg-red-50 text-red-400 transition flex-shrink-0">
-                    <Camera size={16}/><span className="text-[10px] mt-0.5">Agregar</span>
+                    <Camera size={16}/><span className="text-[10px] mt-0.5">Cámara</span>
                     <input type="file" accept="image/*" capture="environment" className="hidden" onChange={e=>{Array.from(e.target.files||[]).forEach(f=>{const r=new FileReader();r.onload=ev=>{const img=new Image();img.onload=()=>{const mW=800;let w=img.width,h=img.height;if(w>mW){h=Math.round(h*mW/w);w=mW;}const c=document.createElement("canvas");c.width=w;c.height=h;c.getContext("2d").drawImage(img,0,0,w,h);setWz(wz=>({...wz,fotosAntes:[...(wz.fotosAntes||[]),c.toDataURL("image/jpeg",0.7)]}));};img.src=ev.target.result;};r.readAsDataURL(f);});e.target.value="";}}/>
                   </label>
-                )}
+                  <label className="w-16 h-16 border-2 border-dashed border-red-300 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:border-red-400 hover:bg-red-50 text-red-400 transition flex-shrink-0">
+                    <ImageIcon size={16}/><span className="text-[10px] mt-0.5">Galería</span>
+                    <input type="file" accept="image/*" multiple className="hidden" onChange={e=>{Array.from(e.target.files||[]).forEach(f=>{const r=new FileReader();r.onload=ev=>{const img=new Image();img.onload=()=>{const mW=800;let w=img.width,h=img.height;if(w>mW){h=Math.round(h*mW/w);w=mW;}const c=document.createElement("canvas");c.width=w;c.height=h;c.getContext("2d").drawImage(img,0,0,w,h);setWz(wz=>({...wz,fotosAntes:[...(wz.fotosAntes||[]),c.toDataURL("image/jpeg",0.7)]}));};img.src=ev.target.result;};r.readAsDataURL(f);});e.target.value="";}}/>
+                  </label>
+                </>)}
               </div>
             </div>
 
@@ -5927,12 +5948,16 @@ if(wizardOT){
                     <button onClick={()=>setWz(w=>({...w,fotosDespues:(w.fotosDespues||[]).filter((_,j)=>j!==i)}))} className="absolute top-0.5 right-0.5 bg-red-500 rounded-full w-5 h-5 flex items-center justify-center opacity-0 group-hover:opacity-100 transition"><X size={9} className="text-white"/></button>
                   </div>
                 ))}
-                {(wz.fotosDespues||[]).length<4&&(
+                {(wz.fotosDespues||[]).length<4&&(<>
                   <label className="w-16 h-16 border-2 border-dashed border-emerald-300 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:border-emerald-400 hover:bg-emerald-50 text-emerald-400 transition flex-shrink-0">
-                    <Camera size={16}/><span className="text-[10px] mt-0.5">Agregar</span>
+                    <Camera size={16}/><span className="text-[10px] mt-0.5">Cámara</span>
                     <input type="file" accept="image/*" capture="environment" className="hidden" onChange={e=>{Array.from(e.target.files||[]).forEach(f=>{const r=new FileReader();r.onload=ev=>{const img=new Image();img.onload=()=>{const mW=800;let w=img.width,h=img.height;if(w>mW){h=Math.round(h*mW/w);w=mW;}const c=document.createElement("canvas");c.width=w;c.height=h;c.getContext("2d").drawImage(img,0,0,w,h);setWz(wz=>({...wz,fotosDespues:[...(wz.fotosDespues||[]),c.toDataURL("image/jpeg",0.7)]}));};img.src=ev.target.result;};r.readAsDataURL(f);});e.target.value="";}}/>
                   </label>
-                )}
+                  <label className="w-16 h-16 border-2 border-dashed border-emerald-300 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:border-emerald-400 hover:bg-emerald-50 text-emerald-400 transition flex-shrink-0">
+                    <ImageIcon size={16}/><span className="text-[10px] mt-0.5">Galería</span>
+                    <input type="file" accept="image/*" multiple className="hidden" onChange={e=>{Array.from(e.target.files||[]).forEach(f=>{const r=new FileReader();r.onload=ev=>{const img=new Image();img.onload=()=>{const mW=800;let w=img.width,h=img.height;if(w>mW){h=Math.round(h*mW/w);w=mW;}const c=document.createElement("canvas");c.width=w;c.height=h;c.getContext("2d").drawImage(img,0,0,w,h);setWz(wz=>({...wz,fotosDespues:[...(wz.fotosDespues||[]),c.toDataURL("image/jpeg",0.7)]}));};img.src=ev.target.result;};r.readAsDataURL(f);});e.target.value="";}}/>
+                  </label>
+                </>)}
               </div>
             </div>
 
@@ -6094,12 +6119,16 @@ if(wizardOT){
                   <button onClick={()=>setWz(w=>({...w,fotosAntes:(w.fotosAntes||[]).filter((_,j)=>j!==i)}))} className="absolute top-0.5 right-0.5 bg-red-500 rounded-full w-5 h-5 flex items-center justify-center opacity-0 group-hover:opacity-100 transition"><X size={9} className="text-white"/></button>
                 </div>
               ))}
-              {(wz.fotosAntes||[]).length<4&&(
+              {(wz.fotosAntes||[]).length<4&&(<>
                 <label className="w-16 h-16 border-2 border-dashed border-red-300 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:border-red-400 hover:bg-red-50 text-red-400 transition flex-shrink-0">
-                  <Camera size={16}/><span className="text-[10px] mt-0.5">Agregar</span>
+                  <Camera size={16}/><span className="text-[10px] mt-0.5">Cámara</span>
                   <input type="file" accept="image/*" capture="environment" className="hidden" onChange={e=>{Array.from(e.target.files||[]).forEach(f=>{const r=new FileReader();r.onload=ev=>{const img=new Image();img.onload=()=>{const mW=800;let w=img.width,h=img.height;if(w>mW){h=Math.round(h*mW/w);w=mW;}const c=document.createElement("canvas");c.width=w;c.height=h;c.getContext("2d").drawImage(img,0,0,w,h);setWz(wz=>({...wz,fotosAntes:[...(wz.fotosAntes||[]),c.toDataURL("image/jpeg",0.7)]}));};img.src=ev.target.result;};r.readAsDataURL(f);});e.target.value="";}}/>
                 </label>
-              )}
+                <label className="w-16 h-16 border-2 border-dashed border-red-300 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:border-red-400 hover:bg-red-50 text-red-400 transition flex-shrink-0">
+                  <ImageIcon size={16}/><span className="text-[10px] mt-0.5">Galería</span>
+                  <input type="file" accept="image/*" multiple className="hidden" onChange={e=>{Array.from(e.target.files||[]).forEach(f=>{const r=new FileReader();r.onload=ev=>{const img=new Image();img.onload=()=>{const mW=800;let w=img.width,h=img.height;if(w>mW){h=Math.round(h*mW/w);w=mW;}const c=document.createElement("canvas");c.width=w;c.height=h;c.getContext("2d").drawImage(img,0,0,w,h);setWz(wz=>({...wz,fotosAntes:[...(wz.fotosAntes||[]),c.toDataURL("image/jpeg",0.7)]}));};img.src=ev.target.result;};r.readAsDataURL(f);});e.target.value="";}}/>
+                </label>
+              </>)}
             </div>
           </div>
 
@@ -6187,12 +6216,16 @@ if(wizardOT){
                   <button onClick={()=>setWz(w=>({...w,fotosDespues:(w.fotosDespues||[]).filter((_,j)=>j!==i)}))} className="absolute top-0.5 right-0.5 bg-red-500 rounded-full w-5 h-5 flex items-center justify-center opacity-0 group-hover:opacity-100 transition"><X size={9} className="text-white"/></button>
                 </div>
               ))}
-              {(wz.fotosDespues||[]).length<4&&(
+              {(wz.fotosDespues||[]).length<4&&(<>
                 <label className="w-16 h-16 border-2 border-dashed border-emerald-300 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:border-emerald-400 hover:bg-emerald-50 text-emerald-400 transition flex-shrink-0">
-                  <Camera size={16}/><span className="text-[10px] mt-0.5">Agregar</span>
+                  <Camera size={16}/><span className="text-[10px] mt-0.5">Cámara</span>
                   <input type="file" accept="image/*" capture="environment" className="hidden" onChange={e=>{Array.from(e.target.files||[]).forEach(f=>{const r=new FileReader();r.onload=ev=>{const img=new Image();img.onload=()=>{const mW=800;let w=img.width,h=img.height;if(w>mW){h=Math.round(h*mW/w);w=mW;}const c=document.createElement("canvas");c.width=w;c.height=h;c.getContext("2d").drawImage(img,0,0,w,h);setWz(wz=>({...wz,fotosDespues:[...(wz.fotosDespues||[]),c.toDataURL("image/jpeg",0.7)]}));};img.src=ev.target.result;};r.readAsDataURL(f);});e.target.value="";}}/>
                 </label>
-              )}
+                <label className="w-16 h-16 border-2 border-dashed border-emerald-300 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:border-emerald-400 hover:bg-emerald-50 text-emerald-400 transition flex-shrink-0">
+                  <ImageIcon size={16}/><span className="text-[10px] mt-0.5">Galería</span>
+                  <input type="file" accept="image/*" multiple className="hidden" onChange={e=>{Array.from(e.target.files||[]).forEach(f=>{const r=new FileReader();r.onload=ev=>{const img=new Image();img.onload=()=>{const mW=800;let w=img.width,h=img.height;if(w>mW){h=Math.round(h*mW/w);w=mW;}const c=document.createElement("canvas");c.width=w;c.height=h;c.getContext("2d").drawImage(img,0,0,w,h);setWz(wz=>({...wz,fotosDespues:[...(wz.fotosDespues||[]),c.toDataURL("image/jpeg",0.7)]}));};img.src=ev.target.result;};r.readAsDataURL(f);});e.target.value="";}}/>
+                </label>
+              </>)}
             </div>
           </div>
 
@@ -7693,10 +7726,16 @@ style={sel?.id===w.id?{borderColor:NV.blue,background:"#EBF4FF"}:sem?{borderColo
               </div>
             ))}
             {(rep.fotoFalla||[]).length<2&&(
-              <label className="flex flex-col items-center justify-center h-16 border-2 border-dashed rounded-xl cursor-pointer transition border-red-300 hover:border-red-400 hover:bg-red-50 text-red-400 hover:text-red-500">
-                <Camera size={18}/><span className="text-xs mt-0.5">Agregar</span>
-                <input type="file" accept="image/*" capture="environment" className="hidden" onChange={capturarFoto("fotoFalla",2)}/>
-              </label>
+              <div className="flex gap-1.5">
+                <label className="flex flex-1 flex-col items-center justify-center h-16 border-2 border-dashed rounded-xl cursor-pointer transition border-red-300 hover:border-red-400 hover:bg-red-50 text-red-400 hover:text-red-500">
+                  <Camera size={18}/><span className="text-xs mt-0.5">Cámara</span>
+                  <input type="file" accept="image/*" capture="environment" className="hidden" onChange={capturarFoto("fotoFalla",2)}/>
+                </label>
+                <label className="flex flex-1 flex-col items-center justify-center h-16 border-2 border-dashed rounded-xl cursor-pointer transition border-red-300 hover:border-red-400 hover:bg-red-50 text-red-400 hover:text-red-500">
+                  <ImageIcon size={18}/><span className="text-xs mt-0.5">Galería</span>
+                  <input type="file" accept="image/*" multiple className="hidden" onChange={capturarFoto("fotoFalla",2)}/>
+                </label>
+              </div>
             )}
           </div>
         </div>
@@ -7710,10 +7749,16 @@ style={sel?.id===w.id?{borderColor:NV.blue,background:"#EBF4FF"}:sem?{borderColo
               </div>
             ))}
             {(rep.fotoResultado||[]).length<2&&(
-              <label className="flex flex-col items-center justify-center h-16 border-2 border-dashed rounded-xl cursor-pointer transition border-emerald-300 hover:border-emerald-400 hover:bg-emerald-50 text-emerald-400 hover:text-emerald-500">
-                <Camera size={18}/><span className="text-xs mt-0.5">Agregar</span>
-                <input type="file" accept="image/*" capture="environment" className="hidden" onChange={capturarFoto("fotoResultado",2)}/>
-              </label>
+              <div className="flex gap-1.5">
+                <label className="flex flex-1 flex-col items-center justify-center h-16 border-2 border-dashed rounded-xl cursor-pointer transition border-emerald-300 hover:border-emerald-400 hover:bg-emerald-50 text-emerald-400 hover:text-emerald-500">
+                  <Camera size={18}/><span className="text-xs mt-0.5">Cámara</span>
+                  <input type="file" accept="image/*" capture="environment" className="hidden" onChange={capturarFoto("fotoResultado",2)}/>
+                </label>
+                <label className="flex flex-1 flex-col items-center justify-center h-16 border-2 border-dashed rounded-xl cursor-pointer transition border-emerald-300 hover:border-emerald-400 hover:bg-emerald-50 text-emerald-400 hover:text-emerald-500">
+                  <ImageIcon size={18}/><span className="text-xs mt-0.5">Galería</span>
+                  <input type="file" accept="image/*" multiple className="hidden" onChange={capturarFoto("fotoResultado",2)}/>
+                </label>
+              </div>
             )}
           </div>
         </div>
@@ -23195,13 +23240,18 @@ return(
             </button>
           </div>
         ))}
-        {(form.fotoFalla||[]).length<2&&(
+        {(form.fotoFalla||[]).length<2&&(<>
           <label className="border-2 border-dashed border-red-300 rounded-xl flex flex-col items-center justify-center gap-1 text-red-400 hover:border-red-500 transition cursor-pointer" style={{height:"80px"}}>
             <Camera size={18}/>
-            <span className="text-xs">Agregar</span>
+            <span className="text-xs">Cámara</span>
             <input type="file" accept="image/*" capture="environment" className="hidden" onChange={capturarFotoDev("fotoFalla",2)}/>
           </label>
-        )}
+          <label className="border-2 border-dashed border-red-300 rounded-xl flex flex-col items-center justify-center gap-1 text-red-400 hover:border-red-500 transition cursor-pointer" style={{height:"80px"}}>
+            <ImageIcon size={18}/>
+            <span className="text-xs">Galería</span>
+            <input type="file" accept="image/*" multiple className="hidden" onChange={capturarFotoDev("fotoFalla",2)}/>
+          </label>
+        </>)}
       </div>
     </div>
 
@@ -23256,13 +23306,18 @@ return(
             </button>
           </div>
         ))}
-        {(form.fotoResultado||[]).length<2&&(
+        {(form.fotoResultado||[]).length<2&&(<>
           <label className="border-2 border-dashed border-emerald-300 rounded-xl flex flex-col items-center justify-center gap-1 text-emerald-500 hover:border-emerald-500 transition cursor-pointer" style={{height:"80px"}}>
             <Camera size={18}/>
-            <span className="text-xs">Agregar</span>
+            <span className="text-xs">Cámara</span>
             <input type="file" accept="image/*" capture="environment" className="hidden" onChange={capturarFotoDev("fotoResultado",2)}/>
           </label>
-        )}
+          <label className="border-2 border-dashed border-emerald-300 rounded-xl flex flex-col items-center justify-center gap-1 text-emerald-500 hover:border-emerald-500 transition cursor-pointer" style={{height:"80px"}}>
+            <ImageIcon size={18}/>
+            <span className="text-xs">Galería</span>
+            <input type="file" accept="image/*" multiple className="hidden" onChange={capturarFotoDev("fotoResultado",2)}/>
+          </label>
+        </>)}
       </div>
     </div>
 
