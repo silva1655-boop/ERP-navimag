@@ -1789,7 +1789,7 @@ const ROLE_DEFAULT_PERMS={
     checklist:true, historial_postop:true, deviaciones:true, reports:true,
     users:true, accesos:true, notifications:true,
     vessels:true, voyages:true, repuestos:true,
-    dashboard_checklist:true, operadores:true, config_reportes:true, faena_activa:true, estado_tractos:true, gestion_documental:true, manuales:true, torque:true
+    dashboard_checklist:true, operadores:true, config_reportes:true, faena_activa:true, estado_tractos:true, gestion_documental:true, manuales:true, torque:true, procedimientos_trabajo:true
   },
   supervisor:{
     dashboard:true, workorders:true, equipment:true,
@@ -1797,7 +1797,7 @@ const ROLE_DEFAULT_PERMS={
     checklist:true, historial_postop:true, deviaciones:true, reports:true,
     users:true, accesos:true, notifications:false,
     vessels:true, voyages:true, repuestos:true, dashboard_checklist:true, operadores:true,
-    config_reportes:true, faena_activa:true, estado_tractos:true, gestion_documental:true
+    config_reportes:true, faena_activa:true, estado_tractos:true, gestion_documental:true, procedimientos_trabajo:true
   },
   operaciones:{
     dashboard:true, workorders:false, equipment:false,
@@ -1805,7 +1805,7 @@ const ROLE_DEFAULT_PERMS={
     checklist:true, historial_postop:true, deviaciones:false, reports:false,
     users:false, accesos:false, notifications:true,
     vessels:true, voyages:true, repuestos:false, dashboard_checklist:true, operadores:true,
-    faena_activa:true, estado_tractos:true, gestion_documental:true
+    faena_activa:true, estado_tractos:true, gestion_documental:true, procedimientos_trabajo:true
   },
   // Herramientas Técnicas (Manuales + Calculadora de Torque) es exclusivo
   // de mecánicos (Taller) y csilva/jimunoz (override en getUserPerms) —
@@ -1814,13 +1814,13 @@ const ROLE_DEFAULT_PERMS={
     dashboard:true, workorders:true, equipment:false,
     plans:false, indicadores:false, requests:false,
     checklist:true, historial_postop:true, deviaciones:true, reports:true,
-    users:false, accesos:false, notifications:false, repuestos:false, estado_tractos:true, gestion_documental:true, manuales:true, torque:true
+    users:false, accesos:false, notifications:false, repuestos:false, estado_tractos:true, gestion_documental:true, manuales:true, torque:true, procedimientos_trabajo:true
   },
   operador:{
     dashboard:true, workorders:false, equipment:false,
     plans:false, indicadores:false, requests:false,
     checklist:true, historial_postop:true, deviaciones:false, reports:false,
-    users:false, accesos:false, notifications:true, repuestos:false
+    users:false, accesos:false, notifications:true, repuestos:false, procedimientos_trabajo:true
   },
   bodega:{
     dashboard:true, workorders:false, equipment:false,
@@ -1834,7 +1834,7 @@ const ROLE_DEFAULT_PERMS={
     plans:false, indicadores:false, requests:false,
     checklist:true, historial_postop:true, deviaciones:false, reports:true,
     users:false, accesos:false, notifications:false,
-    vessels:true, voyages:true, repuestos:false, dashboard_checklist:true, operadores:false
+    vessels:true, voyages:true, repuestos:false, dashboard_checklist:true, operadores:false, procedimientos_trabajo:true
   },
 };
 
@@ -1943,6 +1943,7 @@ const NAV_CATEGORIAS={
       {key:"plans",       label:"Plan Preventivo"},
       {key:"equipment",   label:"Equipos"},
       {key:"requests",    label:"Solicitudes"},
+      {key:"procedimientos_trabajo", label:"Procedimientos de Trabajo"},
     ],
   },
   inventario:{
@@ -1993,6 +1994,7 @@ const NAV_CATEGORIAS_MARITIMO={
       {key:"plans",       label:"Plan Preventivo"},
       {key:"equipment",   label:"Equipos"},
       {key:"requests",    label:"Solicitudes"},
+      {key:"procedimientos_trabajo", label:"Procedimientos de Trabajo"},
     ],
   },
   gestion:{
@@ -21212,6 +21214,256 @@ function ConfigReportes({user}){
   );
 }
 
+// ─── PROCEDIMIENTOS DE TRABAJO ─────────────────────────────────────────────
+// Repositorio de PDF (procedimientos escritos) por equipo, separado por
+// módulo — vive en data.procedimientosTrabajo (doc "procedimientosTrabajo"
+// dentro de la colección activa: Taller/Esperanza/Dalka, mismo patrón que
+// equip/plans/wos). No confundir con data.procedimientos (nombre+pasos de
+// texto, usado hoy solo para prellenar el checklist de un reporte de OT
+// desde un plan) — son features distintas, esta es específicamente para
+// visualizar el documento PDF del procedimiento.
+// El PDF se sube a Firebase Storage (uploadToFirebaseStorage, ya genérico
+// para cualquier tipo de archivo) — en Firestore solo se guarda la URL +
+// metadata, nunca el binario, para no acercarse al límite de 1MB del doc.
+const PROC_TRABAJO_MAX_MB=15;
+function ProcedimientosTrabajoPage({user,data,setData,saveData,activeModule}){
+  const equip=(data.equip||[]).filter(e=>!e.deleted);
+  const procedimientos=data.procedimientosTrabajo||[];
+  const puedeEditar=user.role==="supervisor"||user.role==="operaciones"||canAccessGastos(user);
+
+  const [busqueda,setBusqueda]=useState("");
+  const [filtroEquip,setFiltroEquip]=useState("");
+  const [showForm,setShowForm]=useState(false);
+  const [form,setForm]=useState({equipId:"",titulo:"",descripcion:"",archivo:null,archivoNombre:""});
+  const [subiendo,setSubiendo]=useState(false);
+  const [confirmDel,setConfirmDel]=useState(null);
+
+  const equipoDe=id=>equip.find(e=>e.id===id);
+
+  const filtrados=procedimientos.filter(p=>{
+    if(filtroEquip&&p.equipId!==filtroEquip) return false;
+    if(!busqueda.trim()) return true;
+    const q=busqueda.toLowerCase();
+    const eq=equipoDe(p.equipId);
+    return (p.titulo||"").toLowerCase().includes(q)
+      ||(p.descripcion||"").toLowerCase().includes(q)
+      ||(eq?.code||"").toLowerCase().includes(q)
+      ||(eq?.name||"").toLowerCase().includes(q);
+  });
+
+  // Agrupados por equipo — "Sin equipo asignado" al final para los que no
+  // se les asoció ninguno (procedimientos generales, ej. EPP/seguridad).
+  const grupos={};
+  filtrados.forEach(p=>{
+    const key=p.equipId||"__sin_equipo__";
+    (grupos[key]=grupos[key]||[]).push(p);
+  });
+  const gruposOrdenados=Object.entries(grupos).sort(([a],[b])=>{
+    if(a==="__sin_equipo__") return 1;
+    if(b==="__sin_equipo__") return -1;
+    const ea=equipoDe(a)?.code||"";
+    const eb=equipoDe(b)?.code||"";
+    return ea.localeCompare(eb);
+  });
+
+  const abrirNuevo=()=>{
+    setForm({equipId:"",titulo:"",descripcion:"",archivo:null,archivoNombre:""});
+    setShowForm(true);
+  };
+
+  const onFileChange=e=>{
+    const f=e.target.files?.[0];
+    e.target.value="";
+    if(!f) return;
+    if(f.type!=="application/pdf"&&!f.name.toLowerCase().endsWith(".pdf")){
+      alert("Solo se aceptan archivos PDF.");
+      return;
+    }
+    if(f.size>PROC_TRABAJO_MAX_MB*1024*1024){
+      alert(`El archivo pesa ${(f.size/1024/1024).toFixed(1)}MB — el máximo es ${PROC_TRABAJO_MAX_MB}MB.`);
+      return;
+    }
+    const reader=new FileReader();
+    reader.onload=ev=>setForm(fo=>({...fo,archivo:ev.target.result,archivoNombre:f.name}));
+    reader.readAsDataURL(f);
+  };
+
+  const guardar=async()=>{
+    if(subiendo) return; // evita doble click mientras sube (ModalActions no soporta disabled)
+    if(!form.titulo.trim()){alert("Falta el título.");return;}
+    if(!form.archivo){alert("Falta seleccionar el PDF.");return;}
+    setSubiendo(true);
+    try{
+      const url=await uploadToFirebaseStorage(form.archivo,"procedimientos_trabajo");
+      if(!url){alert("No se pudo subir el archivo — intenta de nuevo.");setSubiendo(false);return;}
+      const nuevo={
+        id:uid(),equipId:form.equipId||null,titulo:form.titulo.trim(),
+        descripcion:form.descripcion.trim(),archivoUrl:url,archivoNombre:form.archivoNombre,
+        subidoPor:user.name||user.username||"",subidoPorId:user.id,
+        fecha:new Date().toISOString(),
+      };
+      const actualizados=[...procedimientos,nuevo];
+      setData(d=>({...d,procedimientosTrabajo:actualizados}));
+      await saveData("procedimientosTrabajo",actualizados);
+      setShowForm(false);
+    }catch(e){
+      console.error("Error subiendo procedimiento:",e);
+      alert("Error al subir el archivo.");
+    }
+    setSubiendo(false);
+  };
+
+  const eliminar=async(p)=>{
+    const actualizados=procedimientos.filter(x=>x.id!==p.id);
+    setData(d=>({...d,procedimientosTrabajo:actualizados}));
+    await saveData("procedimientosTrabajo",actualizados);
+    setConfirmDel(null);
+    // El archivo en Storage queda huérfano (no se borra) — no bloquea el
+    // borrado del registro por un posible error de permisos/red en
+    // Storage, y no genera un costo relevante a este volumen de uso.
+  };
+
+  if(!getUserPerms(user).procedimientos_trabajo) return null;
+
+  return(
+    <div className="p-4 lg:p-6 space-y-4">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-gray-900 font-bold text-xl">Procedimientos de Trabajo</h1>
+          <p className="text-gray-500 text-sm mt-0.5">Repositorio de procedimientos en PDF por equipo</p>
+        </div>
+        {puedeEditar&&(
+          <button onClick={abrirNuevo} className={btnPrimary} style={{background:NV.blue}}>
+            <Upload size={15}/>Subir Procedimiento
+          </button>
+        )}
+      </div>
+
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="relative flex-1 min-w-[200px]">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
+          <input value={busqueda} onChange={e=>setBusqueda(e.target.value)} placeholder="Buscar por título, equipo..."
+            className="w-full bg-white border border-gray-300 rounded-lg pl-9 pr-3 py-2 text-sm focus:outline-none focus:border-blue-400"/>
+        </div>
+        <select value={filtroEquip} onChange={e=>setFiltroEquip(e.target.value)} className={sCls+" max-w-[220px]"}>
+          <option value="">Todos los equipos</option>
+          {equip.slice().sort((a,b)=>(a.code||"").localeCompare(b.code||"")).map(e=>(
+            <option key={e.id} value={e.id}>{e.code} — {e.name}</option>
+          ))}
+        </select>
+      </div>
+
+      {filtrados.length===0?(
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+          <FileText size={40} className="text-gray-200 mb-3"/>
+          <p className="text-gray-500 font-semibold text-sm">
+            {procedimientos.length===0?"Sin procedimientos cargados todavía":"Sin resultados para este filtro"}
+          </p>
+          {puedeEditar&&procedimientos.length===0&&(
+            <p className="text-gray-400 text-xs mt-1">Usa "Subir Procedimiento" para cargar el primero</p>
+          )}
+        </div>
+      ):(
+        <div className="space-y-5">
+          {gruposOrdenados.map(([equipId,items])=>{
+            const eq=equipId!=="__sin_equipo__"?equipoDe(equipId):null;
+            return(
+              <div key={equipId}>
+                <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">
+                  {eq?`${eq.code} — ${eq.name}`:"Sin equipo asignado"}
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                  {items.map(p=>(
+                    <div key={p.id} className={`${card} p-4 flex flex-col gap-2`}>
+                      <div className="flex items-start gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-red-50 border border-red-100 flex items-center justify-center flex-shrink-0">
+                          <FileText size={18} className="text-red-600"/>
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-bold text-gray-800 leading-tight truncate" title={p.titulo}>{p.titulo}</p>
+                          {p.descripcion&&<p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{p.descripcion}</p>}
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-gray-400">
+                        {p.subidoPor&&`${p.subidoPor} · `}{new Date(p.fecha).toLocaleDateString("es-CL",{day:"2-digit",month:"short",year:"numeric"})}
+                      </p>
+                      <div className="flex gap-2 mt-1">
+                        <button onClick={()=>window.open(p.archivoUrl,"_blank")}
+                          className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg text-white transition hover:opacity-90"
+                          style={{background:NV.blue}}>
+                          <FileText size={13}/>Ver PDF
+                        </button>
+                        {puedeEditar&&(
+                          <button onClick={()=>setConfirmDel(p)}
+                            className="p-2 rounded-lg text-red-500 hover:bg-red-50 transition" title="Eliminar">
+                            <Trash2 size={14}/>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {showForm&&(
+        <Modal title="Subir Procedimiento" onClose={()=>!subiendo&&setShowForm(false)}>
+          <div className="space-y-3">
+            <div>
+              <label className="text-gray-500 text-xs font-medium mb-1 block">TÍTULO *</label>
+              <input value={form.titulo} onChange={e=>setForm(f=>({...f,titulo:e.target.value}))} className={iCls} placeholder="ej: Mantención general motor de partida"/>
+            </div>
+            <div>
+              <label className="text-gray-500 text-xs font-medium mb-1 block">EQUIPO (opcional)</label>
+              <select value={form.equipId} onChange={e=>setForm(f=>({...f,equipId:e.target.value}))} className={sCls}>
+                <option value="">Sin equipo asignado (procedimiento general)</option>
+                {equip.slice().sort((a,b)=>(a.code||"").localeCompare(b.code||"")).map(e=>(
+                  <option key={e.id} value={e.id}>{e.code} — {e.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-gray-500 text-xs font-medium mb-1 block">DESCRIPCIÓN (opcional)</label>
+              <textarea value={form.descripcion} onChange={e=>setForm(f=>({...f,descripcion:e.target.value}))} className={iCls} rows={2}/>
+            </div>
+            <div>
+              <label className="text-gray-500 text-xs font-medium mb-1 block">ARCHIVO PDF * (máx. {PROC_TRABAJO_MAX_MB}MB)</label>
+              <input type="file" accept="application/pdf,.pdf" onChange={onFileChange}
+                className="w-full text-sm text-gray-600 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-red-50 file:text-red-700 hover:file:bg-red-100"/>
+              {form.archivoNombre&&<p className="text-xs text-emerald-600 mt-1">✓ {form.archivoNombre}</p>}
+            </div>
+          </div>
+          <ModalActions onSave={guardar} onCancel={()=>{if(!subiendo)setShowForm(false);}} label={subiendo?"Subiendo…":"Subir Procedimiento"}/>
+        </Modal>
+      )}
+
+      {confirmDel&&(
+        <div className="fixed inset-0 bg-black/25 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white border border-gray-200 rounded-2xl shadow-xl p-6 w-full max-w-sm">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-red-50 border border-red-200 rounded-xl flex items-center justify-center flex-shrink-0">
+                <Trash2 size={18} className="text-red-600"/>
+              </div>
+              <div>
+                <p className="text-gray-900 font-bold text-sm">Eliminar procedimiento</p>
+                <p className="text-gray-500 text-xs">{confirmDel.titulo}</p>
+              </div>
+            </div>
+            <p className="text-gray-500 text-xs mb-5">Esta acción no se puede deshacer.</p>
+            <div className="flex gap-2">
+              <button onClick={()=>eliminar(confirmDel)} className="flex-1 bg-red-600 hover:bg-red-500 text-white font-semibold py-2.5 rounded-lg text-sm transition">Eliminar</button>
+              <button onClick={()=>setConfirmDel(null)} className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2.5 rounded-lg text-sm transition">Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const MANUALES_TECNICOS=[
   {file:"APC200_Manual_Digital.html",              title:"Manual APC200",                        desc:"Manual digital del controlador APC200.",                              icon:BookOpen, color:"blue",    sizeMB:"8.4"},
   {file:"TAD760VE_Manual_Digital.html",             title:"Manual Motor TAD760VE",                desc:"Manual digital del motor Volvo Penta TAD760VE.",                      icon:Wrench,   color:"amber",   sizeMB:"15.4"},
@@ -35449,6 +35701,7 @@ const [data,setData]=useState({
   planTemplates:[],
   planAssignments:[],
   materialesEquipo:[],
+  procedimientosTrabajo:[],
 });
 const unsubs=useRef([]);
 const [onlineUsers,setOnlineUsers]=useState([]);
@@ -35537,9 +35790,9 @@ const currentCOLL=getActiveCOLL(activeModule,activeBarco);
 const currentSeedEquip=activeModule==="maritimo"?SEED_EQUIPMENT_MARITIMO:SEED_EQUIPMENT;
 setLoading(true);
 const currentSeedUsers=activeModule==="maritimo"?(activeBarco==="dalka"?SEED_USERS_DALKA:SEED_USERS_MARITIMO):SEED_USERS_TALLER;
-const keys=["users","equipment","plans","requests","workOrders","taskTemplates","loginHistory","vessels","certificates","voyages","repuestos","movimientosStock","taxonomiaRepuestos","operadores","hourmeterReadings","planTemplates","planAssignments","procedimientos","materialesEquipo"];
-const seeds={users:currentSeedUsers,equipment:currentSeedEquip,plans:SEED_PM_PLANS,requests:SEED_REQUESTS,workOrders:SEED_WORK_ORDERS,taskTemplates:SEED_TASK_TEMPLATES,loginHistory:[],vessels:SEED_VESSELS,certificates:SEED_CERTIFICATES,voyages:SEED_VOYAGES,repuestos:[],movimientosStock:[],taxonomiaRepuestos:SEED_TAXONOMIA,operadores:[],hourmeterReadings:[],planTemplates:[],planAssignments:[],procedimientos:[],materialesEquipo:[]};
-const dk={users:"users",equipment:"equip",plans:"plans",workOrders:"wos",taskTemplates:"taskTemplates",loginHistory:"loginHistory",vessels:"vessels",certificates:"certificates",voyages:"voyages",repuestos:"repuestos",movimientosStock:"movimientosStock",taxonomiaRepuestos:"taxonomiaRepuestos",operadores:"operadores",hourmeterReadings:"hourmeterReadings",planTemplates:"planTemplates",planAssignments:"planAssignments",procedimientos:"procedimientos",materialesEquipo:"materialesEquipo"};
+const keys=["users","equipment","plans","requests","workOrders","taskTemplates","loginHistory","vessels","certificates","voyages","repuestos","movimientosStock","taxonomiaRepuestos","operadores","hourmeterReadings","planTemplates","planAssignments","procedimientos","materialesEquipo","procedimientosTrabajo"];
+const seeds={users:currentSeedUsers,equipment:currentSeedEquip,plans:SEED_PM_PLANS,requests:SEED_REQUESTS,workOrders:SEED_WORK_ORDERS,taskTemplates:SEED_TASK_TEMPLATES,loginHistory:[],vessels:SEED_VESSELS,certificates:SEED_CERTIFICATES,voyages:SEED_VOYAGES,repuestos:[],movimientosStock:[],taxonomiaRepuestos:SEED_TAXONOMIA,operadores:[],hourmeterReadings:[],planTemplates:[],planAssignments:[],procedimientos:[],materialesEquipo:[],procedimientosTrabajo:[]};
+const dk={users:"users",equipment:"equip",plans:"plans",workOrders:"wos",taskTemplates:"taskTemplates",loginHistory:"loginHistory",vessels:"vessels",certificates:"certificates",voyages:"voyages",repuestos:"repuestos",movimientosStock:"movimientosStock",taxonomiaRepuestos:"taxonomiaRepuestos",operadores:"operadores",hourmeterReadings:"hourmeterReadings",planTemplates:"planTemplates",planAssignments:"planAssignments",procedimientos:"procedimientos",materialesEquipo:"materialesEquipo",procedimientosTrabajo:"procedimientosTrabajo"};
 // requests is excluded from onSnapshot — managed via individual docs + loadRequests
 const snapshotKeys=keys.filter(k=>k!=="requests");
 (async()=>{
@@ -36478,6 +36731,7 @@ voyages:       <VoyagesPage   user={user} data={data} setData={setData}/>,
 accesos:       <AccessLog     data={data}/>,
 repuestos:     <RepuestosPage user={user} data={data} setData={setData} saveData={saveData}/>,
 manuales:      <ManualesPage/>,
+procedimientos_trabajo:<ProcedimientosTrabajoPage user={user} data={data} setData={setData} saveData={saveData} activeModule={activeModule}/>,
 torque:        <TorqueCalculatorPage/>,
 config_reportes:<ConfigReportes user={user}/>,
 gastos:        <GastosPresupuesto user={user} data={data} activeModule={activeModule} activeBarco={activeBarco}/>,
