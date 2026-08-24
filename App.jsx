@@ -15117,19 +15117,24 @@ function ResumenMensual({data,activeModule}){
       .kpi-red{color:#dc2626;font-weight:bold;}
       .prog-bar{height:4px;background:#f3f4f6;border-radius:2px;margin:3px 0;}
       .prog-fill{height:4px;background:#059669;border-radius:2px;}
-      .detalle-header{font-size:10px;font-weight:bold;text-transform:uppercase;color:#6b7280;padding:8px 0;border-bottom:1px solid #f3f4f6;margin-bottom:6px;}
-      .ot-row{padding:8px 0;border-bottom:1px solid #f9fafb;}
+      .detalle-header{font-size:10px;font-weight:bold;text-transform:uppercase;color:#6b7280;padding:8px 0;border-bottom:1px solid #f3f4f6;margin-bottom:8px;}
+      .ot-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+      .ot-card{border:1px solid #e5e7eb;border-radius:8px;padding:10px;break-inside:avoid;page-break-inside:avoid;}
+      .ot-card-top{display:flex;justify-content:space-between;align-items:flex-start;gap:6px;}
       .ot-code{font-weight:bold;font-size:11px;color:#111;}
-      .ot-meta{font-size:10px;color:#9ca3af;margin-top:2px;}
-      .ot-obs{font-size:10px;color:#4b5563;background:#f9fafb;border-radius:4px;padding:4px 8px;margin-top:4px;border-left:2px solid #e5e7eb;font-style:italic;}
-      .badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:9px;font-weight:bold;}
+      .ot-eqname{font-size:9px;color:#9ca3af;margin-top:1px;}
+      .ot-req{font-size:9px;color:#6b7280;margin-top:4px;}
+      .ot-meta{font-size:9px;color:#9ca3af;margin-top:5px;}
+      .ot-obs{font-size:10px;color:#4b5563;background:#f9fafb;border-radius:4px;padding:5px 8px;margin-top:5px;border-left:2px solid #e5e7eb;font-style:italic;line-height:1.4;}
+      .ot-obs-vacio{font-size:9px;color:#d1d5db;font-style:italic;margin-top:5px;}
+      .badge{display:inline-block;flex-shrink:0;padding:2px 8px;border-radius:10px;font-size:9px;font-weight:bold;white-space:nowrap;}
       .badge-pm{background:#dbeafe;color:#1d4ed8;}
       .badge-corr{background:#fef3c7;color:#92400e;}
       .pendientes{background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:10px;margin-top:8px;}
       .pend-title{font-size:10px;font-weight:bold;color:#92400e;margin-bottom:4px;}
       .pend-item{font-size:10px;color:#92400e;padding:2px 0;}
       .hrs-badge{font-size:11px;font-weight:bold;color:rgba(255,255,255,0.9);float:right;}
-      @media print{body{padding:0;}}
+      @media print{body{padding:0;} .ot-card{break-inside:avoid;}}
     </style></head><body>
     <div class="header">
       <div><div class="company">NAVIMAG CARGA</div><div class="subtitle">Resumen Mensual de Mantenimiento — ${esc(nombreMes)}</div></div>
@@ -15170,18 +15175,22 @@ function ResumenMensual({data,activeModule}){
     </div>`;
 
     if(detalle.length>0){
-      html+=`<div class="detalle-header">Detalle OTs Completadas — ${otsComp.length} órdenes · ${horasTotales.toFixed(1)} hrs</div>`;
+      html+=`<div class="detalle-header">Detalle OTs Completadas — ${otsComp.length} órdenes · ${horasTotales.toFixed(1)} hrs</div><div class="ot-grid">`;
       detalle.forEach(({ot,eq:eqx,mec,req})=>{
-        html+=`<div class="ot-row">
-          <div>
-            <span class="ot-code">${esc(ot.code)} — ${esc(eqx?.code||"—")}</span>
-            <span class="badge ${ot.type==="preventiva"?"badge-pm":"badge-corr"}" style="margin-left:8px">${ot.type==="preventiva"?"PM":"Correctiva"}</span>
-            ${req?`<span style="color:#6b7280;font-size:10px;margin-left:6px">· ${esc((req.title||req.description||"").slice(0,60))}</span>`:""}
+        html+=`<div class="ot-card">
+          <div class="ot-card-top">
+            <div>
+              <div class="ot-code">${esc(ot.code)} — ${esc(eqx?.code||"—")}</div>
+              ${eqx?.name?`<div class="ot-eqname">${esc(eqx.name)}</div>`:""}
+            </div>
+            <span class="badge ${ot.type==="preventiva"?"badge-pm":"badge-corr"}">${ot.type==="preventiva"?"PM":"Correctiva"}</span>
           </div>
+          ${req?`<div class="ot-req">📋 ${esc((req.title||req.description||"").slice(0,70))}</div>`:""}
           <div class="ot-meta">👤 ${esc(mec?.name||"Sin asignar")} &nbsp;·&nbsp; 📅 ${ot.closedAt?esc(new Date(ot.closedAt).toLocaleDateString("es-CL")):""}&nbsp;·&nbsp; ⏱ ${ot.actualHours||0}h</div>
-          ${ot.observations?`<div class="ot-obs">💬 "${esc(ot.observations)}"</div>`:""}
+          ${ot.observations?`<div class="ot-obs">💬 "${esc(ot.observations)}"</div>`:`<div class="ot-obs-vacio">Sin comentario</div>`}
         </div>`;
       });
+      html+=`</div>`;
     }
 
     if(otsVenc.length>0||reqPend.length>0){
