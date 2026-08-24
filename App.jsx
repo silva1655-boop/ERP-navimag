@@ -15018,12 +15018,19 @@ return(
 // — la app solo mantiene un listener de Firestore vivo por vez, apuntando
 // a UNA colección). No mezcla módulos ni pide datos de otra colección; por
 // diseño (confirmado) muestra únicamente el módulo en el que estás parado.
+const MES_TODOS="todos";
 function ResumenMensual({data,activeModule}){
   const {wos=[],requests=[],plans=[],equip=[],users=[],planAssignments=[]}=data;
-  const [mesSel,setMesSel]=useState(new Date().toISOString().slice(0,7)); // "2026-08"
+  const [mesSel,setMesSel]=useState(new Date().toISOString().slice(0,7)); // "2026-08" | MES_TODOS
 
   const enMes=item=>{
-    const fecha=item.createdAt||item.closedAt||item.updatedAt||"";
+    if(mesSel===MES_TODOS) return true;
+    // Las solicitudes (incluidas las de Fuera de Programa) se crean con
+    // "requestedAt", NUNCA con "createdAt" — sin este candidato quedaban
+    // siempre afuera del filtro por mes y el tab mostraba 0 solicitudes
+    // aunque existieran (el conteo "Pendientes" del sidebar sí las veía
+    // porque ese cuenta el total histórico, sin filtrar por mes).
+    const fecha=item.createdAt||item.requestedAt||item.closedAt||item.updatedAt||"";
     return fecha.startsWith(mesSel);
   };
   const mesesDisp=Array.from({length:6},(_,i)=>{
@@ -15051,8 +15058,9 @@ function ResumenMensual({data,activeModule}){
   const pmMes=otsMes.filter(w=>w.type==="preventiva"||w.planId||w.assignmentId);
   const pmComp=pmMes.filter(w=>w.status==="completada");
   const pmPend=activeModule==="maritimo"
-    ?planAssignments.filter(a=>{const nd=a.nextDueDate||a.proximaFecha;return nd&&nd.startsWith(mesSel);})
-    :plans.filter(p=>p.nextDate&&p.nextDate.startsWith(mesSel));
+    ?planAssignments.filter(a=>{const nd=a.nextDueDate||a.proximaFecha;return nd&&(mesSel===MES_TODOS||nd.startsWith(mesSel));})
+    :plans.filter(p=>p.nextDate&&(mesSel===MES_TODOS||p.nextDate.startsWith(mesSel)));
+  const labelProgramados=mesSel===MES_TODOS?"Programados":"Programados mes";
 
   const horasTotales=otsComp.reduce((s,w)=>s+(w.actualHours||0),0);
 
@@ -15070,13 +15078,18 @@ function ResumenMensual({data,activeModule}){
     if(!iso) return "—";
     return new Date(iso).toLocaleDateString("es-CL",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"});
   };
-  const nombreMes=new Date(mesSel+"-15").toLocaleDateString("es-CL",{month:"long",year:"numeric"});
+  const nombreMes=mesSel===MES_TODOS?"Todos los períodos":new Date(mesSel+"-15").toLocaleDateString("es-CL",{month:"long",year:"numeric"});
   const colorMod=activeModule==="maritimo"?"#0055A4":"#CC0000";
   const labelMod=activeModule==="maritimo"?"🚢 Marítimo":"🔧 Taller";
 
   // null = ninguna tarjeta expandida | id de OT = esa tarjeta muestra el
-  // comentario completo (si no, queda cortado en 2 líneas con line-clamp).
+  // comentario completo (si no, queda cortado en 3 líneas con line-clamp).
   const [expandedOT,setExpandedOT]=useState(null);
+  // Grilla de tarjetas: se muestran las primeras VISIBLE_DETALLE de una y
+  // "Ver más" despliega el resto — separado del PDF, que siempre exporta
+  // el detalle completo sin este recorte.
+  const VISIBLE_DETALLE=9;
+  const [verTodoDetalle,setVerTodoDetalle]=useState(false);
 
   // PDF del resumen visual — mismo patrón que printMonthlyReport/
   // imprimirTablaPDF (window.open + print, sin librerías nuevas), pero con
@@ -15152,7 +15165,7 @@ function ResumenMensual({data,activeModule}){
         <div class="kpi-num">${pmMes.length}</div>
         <div class="kpi-row"><span class="kpi-green">✅ Completados</span><span class="kpi-green">${pmComp.length}</span></div>
         <div class="prog-bar"><div class="prog-fill" style="width:${pct(pmComp.length,pmMes.length)}%"></div></div>
-        <div class="kpi-row"><span class="kpi-amber">📅 Programados mes</span><span class="kpi-amber">${pmPend.length}</span></div>
+        <div class="kpi-row"><span class="kpi-amber">📅 ${esc(labelProgramados)}</span><span class="kpi-amber">${pmPend.length}</span></div>
       </div>
     </div>`;
 
@@ -15200,6 +15213,11 @@ function ResumenMensual({data,activeModule}){
           <p className="text-gray-500 text-sm mt-0.5">Gestión de solicitudes, OTs, FDP y plan preventivo</p>
         </div>
         <div className="flex gap-2 flex-wrap items-center">
+          <button onClick={()=>setMesSel(MES_TODOS)}
+            className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition ${mesSel===MES_TODOS?"text-white border-transparent":"bg-white text-gray-600 border-gray-200 hover:border-gray-400"}`}
+            style={mesSel===MES_TODOS?{background:NV.navy}:{}}>
+            Todos
+          </button>
           {mesesDisp.map(m=>(
             <button key={m} onClick={()=>setMesSel(m)}
               className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition capitalize ${mesSel===m?"text-white border-transparent":"bg-white text-gray-600 border-gray-200 hover:border-gray-400"}`}
@@ -15285,58 +15303,70 @@ function ResumenMensual({data,activeModule}){
                 <span className="font-bold text-emerald-700">{pmComp.length}</span>
               </div>
               <div className="h-1.5 bg-gray-100 rounded-full"><div className="h-full bg-emerald-500 rounded-full" style={{width:pct(pmComp.length,pmMes.length)+"%"}}/></div>
-              <div className="flex justify-between text-xs"><span className="text-amber-600">📅 Programados mes</span><span className="font-bold text-amber-700">{pmPend.length}</span></div>
+              <div className="flex justify-between text-xs"><span className="text-amber-600">📅 {labelProgramados}</span><span className="font-bold text-amber-700">{pmPend.length}</span></div>
             </div>
           </div>
         </div>
 
         {detalle.length>0&&(
-          <div className="divide-y divide-gray-50">
-            <div className="px-5 py-2 bg-gray-50 flex items-center justify-between">
+          <div className="p-4 lg:p-5 bg-gray-50/60">
+            <div className="flex items-center justify-between mb-3">
               <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Detalle OTs completadas</p>
               <p className="text-xs text-gray-400">{otsComp.length} órdenes · {horasTotales.toFixed(1)} hrs</p>
             </div>
-            {detalle.slice(0,10).map(({ot,eq,mec,req})=>{
-              const expandido=expandedOT===ot.id;
-              const obsLarga=(ot.observations||"").length>150;
-              return(
-              <div key={ot.id} className="px-5 py-3 hover:bg-gray-50 transition cursor-pointer"
-                onClick={()=>setExpandedOT(expandido?null:ot.id)}>
-                <div className="flex items-start gap-3">
-                  <div className={`flex-shrink-0 w-8 h-8 rounded-xl flex items-center justify-center text-sm mt-0.5 ${ot.type==="preventiva"?"bg-blue-100":"bg-amber-100"}`}>
-                    {ot.type==="preventiva"?"🛡":"🔧"}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-bold text-gray-900 leading-tight">
-                      {ot.code} — {eq?.code||"—"}
-                      {req&&<span className="ml-2 text-xs font-normal text-gray-500">· {(req.title||req.description||"").slice(0,50)}</span>}
-                    </p>
-                    <div className="flex items-center gap-3 mt-1 flex-wrap">
-                      <span className="text-xs text-gray-400">👤 {mec?.name||"Sin asignar"}</span>
-                      <span className="text-xs text-gray-400">📅 {fmtFecha(ot.closedAt||ot.updatedAt)}</span>
-                      {ot.actualHours>0&&<span className="text-xs text-gray-400">⏱ {ot.actualHours}h</span>}
-                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${ot.type==="preventiva"?"bg-blue-100 text-blue-700":"bg-amber-100 text-amber-700"}`}>
-                        {ot.type==="preventiva"?"PM":"Correctiva"}
-                      </span>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+              {(verTodoDetalle?detalle:detalle.slice(0,VISIBLE_DETALLE)).map(({ot,eq,mec,req})=>{
+                const expandido=expandedOT===ot.id;
+                const obsLarga=(ot.observations||"").length>150;
+                return(
+                <div key={ot.id}
+                  className="rounded-xl border border-gray-200 bg-white p-3.5 flex flex-col gap-2 hover:border-gray-300 hover:shadow-sm transition cursor-pointer"
+                  onClick={()=>setExpandedOT(expandido?null:ot.id)}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className={`flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-sm ${ot.type==="preventiva"?"bg-blue-100":"bg-amber-100"}`}>
+                        {ot.type==="preventiva"?"🛡":"🔧"}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold text-gray-900 truncate">{ot.code} — {eq?.code||"—"}</p>
+                        {eq?.name&&<p className="text-[11px] text-gray-400 truncate">{eq.name}</p>}
+                      </div>
                     </div>
-                    {ot.observations&&(<>
-                      <p className={`text-xs text-gray-600 mt-1.5 bg-gray-50 rounded-lg px-2 py-1.5 border border-gray-100 italic leading-relaxed transition-all ${expandido?"":"line-clamp-2"}`}>
+                    <span className={`flex-shrink-0 text-[10px] px-2 py-0.5 rounded-full font-semibold ${ot.type==="preventiva"?"bg-blue-100 text-blue-700":"bg-amber-100 text-amber-700"}`}>
+                      {ot.type==="preventiva"?"PM":"Correctiva"}
+                    </span>
+                  </div>
+                  {req&&<p className="text-[11px] text-gray-500 truncate">📋 {(req.title||req.description||"").slice(0,70)}</p>}
+                  <div className="flex items-center gap-2.5 flex-wrap text-[11px] text-gray-400">
+                    <span>👤 {mec?.name||"Sin asignar"}</span>
+                    <span>📅 {fmtFecha(ot.closedAt||ot.updatedAt)}</span>
+                    {ot.actualHours>0&&<span>⏱ {ot.actualHours}h</span>}
+                  </div>
+                  {ot.observations?(
+                    <div className="mt-auto pt-0.5">
+                      <p className={`text-xs text-gray-600 bg-gray-50 rounded-lg px-2.5 py-2 border border-gray-100 italic leading-relaxed transition-all ${expandido?"":"line-clamp-3"}`}>
                         💬 "{ot.observations}"
                       </p>
                       {obsLarga&&(
                         <button onClick={e=>{e.stopPropagation();setExpandedOT(expandido?null:ot.id);}}
-                          className="text-[10px] text-blue-500 hover:underline mt-1 ml-2">
+                          className="text-[10px] text-blue-500 hover:underline mt-1">
                           {expandido?"Ver menos ▲":"Ver más ▼"}
                         </button>
                       )}
-                    </>)}
-                  </div>
+                    </div>
+                  ):(
+                    <p className="text-xs text-gray-300 italic mt-auto pt-0.5">Sin comentario</p>
+                  )}
                 </div>
+                );
+              })}
+            </div>
+            {detalle.length>VISIBLE_DETALLE&&(
+              <div className="text-center mt-3">
+                <button onClick={()=>setVerTodoDetalle(v=>!v)} className="text-xs font-semibold text-blue-600 hover:underline">
+                  {verTodoDetalle?"Ver menos ▲":`Ver las ${detalle.length-VISIBLE_DETALLE} OTs restantes ▼`}
+                </button>
               </div>
-              );
-            })}
-            {detalle.length>10&&(
-              <div className="px-5 py-2 text-center"><p className="text-xs text-gray-400">+ {detalle.length-10} OTs más en el período</p></div>
             )}
           </div>
         )}
