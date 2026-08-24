@@ -15048,6 +15048,11 @@ function ResumenMensual({data,activeModule}){
   const reqComp=reqMes.filter(r=>r.status==="completada");
   const reqPend=reqMes.filter(r=>r.status!=="completada"&&r.status!=="rechazada");
   const reqRech=reqMes.filter(r=>r.status==="rechazada");
+  // Solicitudes que ya tienen trabajo en curso pero TODAVÍA no generaron
+  // una OT (mismo criterio que ya usa RequestsPage para su tab "Pend. OT":
+  // aprobada/ops_aprobada sin otId) — separado de reqPend, que mezcla esto
+  // con solicitudes recién creadas que ni fueron revisadas todavía.
+  const solicitudesSinOT=reqPend.filter(r=>!r.otId);
 
   const fdpMes=requests.filter(r=>enMes(r)&&r.type==="fuera_de_programa");
   const fdpComp=fdpMes.filter(r=>r.status==="completada");
@@ -15057,21 +15062,36 @@ function ResumenMensual({data,activeModule}){
   // sistemas de PM (plans/plans legacy vs planTemplates/planAssignments).
   const pmMes=otsMes.filter(w=>w.type==="preventiva"||w.planId||w.assignmentId);
   const pmComp=pmMes.filter(w=>w.status==="completada");
-  const pmPend=activeModule==="maritimo"
-    ?planAssignments.filter(a=>{const nd=a.nextDueDate||a.proximaFecha;return nd&&(mesSel===MES_TODOS||nd.startsWith(mesSel));})
-    :plans.filter(p=>p.nextDate&&(mesSel===MES_TODOS||p.nextDate.startsWith(mesSel)));
+  // OJO: "plans" (legacy) y "planTemplates"/"planAssignments" (modelo
+  // nuevo) coexisten para AMBOS módulos — Taller también puede tener
+  // asignaciones en planAssignments (ver PlanesPreventivos, que las
+  // combina en un solo listado con plans/legacy). Antes esto solo miraba
+  // planAssignments para Marítimo y plans para todo el resto, así que en
+  // Taller el conteo de "Programados" quedaba siempre en 0 si el plan
+  // vivía en planAssignments — ahora se juntan ambas fuentes siempre.
+  const pmPend=[
+    ...plans.filter(p=>p.nextDate&&(mesSel===MES_TODOS||p.nextDate.startsWith(mesSel))),
+    ...planAssignments.filter(a=>{const nd=a.nextDueDate||a.proximaFecha;return nd&&(mesSel===MES_TODOS||nd.startsWith(mesSel));}),
+  ];
   const labelProgramados=mesSel===MES_TODOS?"Programados":"Programados mes";
 
   const horasTotales=otsComp.reduce((s,w)=>s+(w.actualHours||0),0);
 
-  const detalle=[...otsComp].sort((a,b)=>
-    (b.closedAt||b.updatedAt||"").localeCompare(a.closedAt||a.updatedAt||"")
-  ).map(ot=>{
+  const enriquecerOT=ot=>{
     const eqx=equip.find(e=>e.id===ot.equipId);
     const mec=users.find(u=>u.id===ot.assignedTo);
     const req=requests.find(r=>r.id===ot.reqId);
     return{ot,eq:eqx,mec,req};
-  });
+  };
+  const detalle=[...otsComp].sort((a,b)=>
+    (b.closedAt||b.updatedAt||"").localeCompare(a.closedAt||a.updatedAt||"")
+  ).map(enriquecerOT);
+  const detallePend=[...otsPend].sort((a,b)=>
+    (a.scheduledDate||a.createdAt||"").localeCompare(b.scheduledDate||b.createdAt||"")
+  ).map(enriquecerOT);
+  const detalleSolic=[...solicitudesSinOT].sort((a,b)=>
+    (b.requestedAt||"").localeCompare(a.requestedAt||"")
+  ).map(r=>({r,eq:equip.find(e=>e.id===r.equipId),reqBy:users.find(u=>u.id===r.requestedBy)}));
 
   const pct=(a,b)=>b>0?Math.round(a/b*100):0;
   const fmtFecha=iso=>{
@@ -15082,14 +15102,20 @@ function ResumenMensual({data,activeModule}){
   const colorMod=activeModule==="maritimo"?"#0055A4":"#CC0000";
   const labelMod=activeModule==="maritimo"?"🚢 Marítimo":"🔧 Taller";
 
-  // null = ninguna tarjeta expandida | id de OT = esa tarjeta muestra el
-  // comentario completo (si no, queda cortado en 3 líneas con line-clamp).
+  // null = ninguna tarjeta expandida | id de la OT/solicitud = esa tarjeta
+  // muestra el texto completo (si no, queda cortado en 3 líneas con
+  // line-clamp). Un estado separado por sección — completadas, pendientes
+  // y solicitudes sin OT — para que expandir una no afecte a las otras.
   const [expandedOT,setExpandedOT]=useState(null);
-  // Grilla de tarjetas: se muestran las primeras VISIBLE_DETALLE de una y
-  // "Ver más" despliega el resto — separado del PDF, que siempre exporta
-  // el detalle completo sin este recorte.
+  const [expandedPend,setExpandedPend]=useState(null);
+  const [expandedSolic,setExpandedSolic]=useState(null);
+  // Grilla de tarjetas: se muestran las primeras VISIBLE_DETALLE de cada
+  // sección y "Ver más" despliega el resto — separado del PDF, que siempre
+  // exporta el detalle completo sin este recorte.
   const VISIBLE_DETALLE=9;
-  const [verTodoDetalle,setVerTodoDetalle]=useState(false);
+  const [verTodoComp,setVerTodoComp]=useState(false);
+  const [verTodoPend,setVerTodoPend]=useState(false);
+  const [verTodoSolic,setVerTodoSolic]=useState(false);
 
   // PDF del resumen visual — mismo patrón que printMonthlyReport/
   // imprimirTablaPDF (window.open + print, sin librerías nuevas), pero con
@@ -15174,8 +15200,21 @@ function ResumenMensual({data,activeModule}){
       </div>
     </div>`;
 
+    // Colores de badge de estado (ST usa clases Tailwind, que no existen en
+    // esta ventana aparte — se traduce a un color plano equivalente).
+    const statusColorPDF={
+      pendiente:["#f3f4f6","#374151"],ops_pendiente:["#f5f3ff","#6d28d9"],
+      ops_aprobada:["#dbeafe","#1d4ed8"],ops_rechazada:["#fee2e2","#b91c1c"],
+      asignada:["#dbeafe","#1d4ed8"],en_proceso:["#fef3c7","#92400e"],
+      completada:["#d1fae5","#065f46"],cancelada:["#fee2e2","#b91c1c"],
+      aprobada:["#d1fae5","#065f46"],rechazada:["#fee2e2","#b91c1c"],
+      revisado:["#dbeafe","#1d4ed8"],planificada:["#f5f3ff","#6d28d9"],
+      pendiente_aprobacion:["#ffedd5","#c2410c"],coordinada_externo:["#ffedd5","#c2410c"],
+    };
+    const badgeStatus=st=>{const c=statusColorPDF[st]||["#f3f4f6","#374151"];return`style="background:${c[0]};color:${c[1]}"`;};
+
     if(detalle.length>0){
-      html+=`<div class="detalle-header">Detalle OTs Completadas — ${otsComp.length} órdenes · ${horasTotales.toFixed(1)} hrs</div><div class="ot-grid">`;
+      html+=`<div class="detalle-header">✅ OTs completadas — ${otsComp.length} órdenes · ${horasTotales.toFixed(1)} hrs</div><div class="ot-grid">`;
       detalle.forEach(({ot,eq:eqx,mec,req})=>{
         html+=`<div class="ot-card">
           <div class="ot-card-top">
@@ -15193,15 +15232,40 @@ function ResumenMensual({data,activeModule}){
       html+=`</div>`;
     }
 
-    if(otsVenc.length>0||reqPend.length>0){
-      html+=`<div class="pendientes"><div class="pend-title">⚠️ Requieren atención</div>`;
-      otsVenc.slice(0,5).forEach(ot=>{
-        const eqx=equip.find(e=>e.id===ot.equipId);
-        html+=`<div class="pend-item">· ${esc(ot.code)} — ${esc(eqx?.code||"")} vencida</div>`;
+    if(detallePend.length>0){
+      html+=`<div class="detalle-header">🟡 OTs pendientes — ${detallePend.length} órdenes</div><div class="ot-grid">`;
+      detallePend.forEach(({ot,eq:eqx,mec,req})=>{
+        const vencida=ot.scheduledDate&&ot.scheduledDate<hoyStr;
+        html+=`<div class="ot-card"${vencida?` style="border-color:#fecaca"`:""}>
+          <div class="ot-card-top">
+            <div>
+              <div class="ot-code">${esc(ot.code)} — ${esc(eqx?.code||"—")}</div>
+              ${eqx?.name?`<div class="ot-eqname">${esc(eqx.name)}</div>`:""}
+            </div>
+            <span class="badge" ${badgeStatus(ot.status)}>${esc(ST[ot.status]?.label||ot.status)}</span>
+          </div>
+          ${req?`<div class="ot-req">📋 ${esc((req.title||req.description||"").slice(0,70))}</div>`:""}
+          <div class="ot-meta">👤 ${esc(mec?.name||"Sin asignar")} &nbsp;·&nbsp; 📅 Programada: ${ot.scheduledDate?esc(new Date(ot.scheduledDate).toLocaleDateString("es-CL")):"—"}${vencida?` &nbsp;·&nbsp; <span style="color:#b91c1c;font-weight:bold">⚠️ Vencida</span>`:""}</div>
+          ${ot.description?`<div class="ot-obs">${esc(ot.description)}</div>`:`<div class="ot-obs-vacio">Sin descripción</div>`}
+        </div>`;
       });
-      reqPend.slice(0,5).forEach(r=>{
-        const eqx=equip.find(e=>e.id===r.equipId);
-        html+=`<div class="pend-item">· Solicitud: ${esc(eqx?.code||"")} — ${esc((r.title||r.description||"").slice(0,50))}</div>`;
+      html+=`</div>`;
+    }
+
+    if(detalleSolic.length>0){
+      html+=`<div class="detalle-header">📋 Solicitudes sin OT — ${detalleSolic.length} solicitudes</div><div class="ot-grid">`;
+      detalleSolic.forEach(({r,eq:eqx,reqBy})=>{
+        html+=`<div class="ot-card">
+          <div class="ot-card-top">
+            <div>
+              <div class="ot-code">${esc(eqx?.code||"—")} — ${esc((r.title||"").slice(0,40))}</div>
+              ${eqx?.name?`<div class="ot-eqname">${esc(eqx.name)}</div>`:""}
+            </div>
+            <span class="badge" ${badgeStatus(r.status)}>${esc(ST[r.status]?.label||r.status)}</span>
+          </div>
+          <div class="ot-meta">👤 ${esc(reqBy?.name||"—")} &nbsp;·&nbsp; 📅 ${r.requestedAt?esc(new Date(r.requestedAt).toLocaleDateString("es-CL")):"—"}</div>
+          ${r.description?`<div class="ot-obs">${esc(r.description)}</div>`:`<div class="ot-obs-vacio">Sin descripción</div>`}
+        </div>`;
       });
       html+=`</div>`;
     }
@@ -15304,7 +15368,7 @@ function ResumenMensual({data,activeModule}){
             <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">🛡 Plan Preventivo</p>
             <div className="flex items-end gap-2 mb-1">
               <p className="text-3xl font-black text-gray-900">{pmMes.length}</p>
-              <p className="text-sm text-gray-400 mb-1">ejecutados</p>
+              <p className="text-sm text-gray-400 mb-1">total</p>
             </div>
             <div className="space-y-1">
               <div className="flex justify-between text-xs">
@@ -15318,13 +15382,13 @@ function ResumenMensual({data,activeModule}){
         </div>
 
         {detalle.length>0&&(
-          <div className="p-4 lg:p-5 bg-gray-50/60">
+          <div className="p-4 lg:p-5 bg-gray-50/60 border-b border-gray-100">
             <div className="flex items-center justify-between mb-3">
-              <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Detalle OTs completadas</p>
+              <p className="text-xs font-bold text-emerald-700 uppercase tracking-wide">✅ OTs completadas</p>
               <p className="text-xs text-gray-400">{otsComp.length} órdenes · {horasTotales.toFixed(1)} hrs</p>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-              {(verTodoDetalle?detalle:detalle.slice(0,VISIBLE_DETALLE)).map(({ot,eq,mec,req})=>{
+              {(verTodoComp?detalle:detalle.slice(0,VISIBLE_DETALLE)).map(({ot,eq,mec,req})=>{
                 const expandido=expandedOT===ot.id;
                 const obsLarga=(ot.observations||"").length>150;
                 return(
@@ -15372,29 +15436,142 @@ function ResumenMensual({data,activeModule}){
             </div>
             {detalle.length>VISIBLE_DETALLE&&(
               <div className="text-center mt-3">
-                <button onClick={()=>setVerTodoDetalle(v=>!v)} className="text-xs font-semibold text-blue-600 hover:underline">
-                  {verTodoDetalle?"Ver menos ▲":`Ver las ${detalle.length-VISIBLE_DETALLE} OTs restantes ▼`}
+                <button onClick={()=>setVerTodoComp(v=>!v)} className="text-xs font-semibold text-blue-600 hover:underline">
+                  {verTodoComp?"Ver menos ▲":`Ver las ${detalle.length-VISIBLE_DETALLE} OTs restantes ▼`}
                 </button>
               </div>
             )}
           </div>
         )}
 
-        {(reqPend.length>0||otsVenc.length>0)&&(
-          <div className="px-5 py-3 bg-amber-50 border-t border-amber-100">
-            <p className="text-xs font-bold text-amber-700 uppercase tracking-wide mb-2">⚠️ Requieren atención</p>
-            <div className="space-y-1">
-              {otsVenc.slice(0,3).map(ot=>{
-                const eqx=equip.find(e=>e.id===ot.equipId);
-                return <p key={ot.id} className="text-xs text-amber-800">· {ot.code} — {eqx?.code} vencida desde {fmtFecha(ot.scheduledDate)}</p>;
-              })}
-              {reqPend.slice(0,3).map(r=>{
-                const eqx=equip.find(e=>e.id===r.equipId);
-                return <p key={r.id} className="text-xs text-amber-800">· Solicitud pendiente: {eqx?.code} — {(r.title||r.description||"").slice(0,50)}</p>;
+        {detallePend.length>0&&(
+          <div className="p-4 lg:p-5 bg-amber-50/40 border-b border-gray-100">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-xs font-bold text-amber-700 uppercase tracking-wide">🟡 OTs pendientes</p>
+              <p className="text-xs text-gray-400">{detallePend.length} órdenes</p>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+              {(verTodoPend?detallePend:detallePend.slice(0,VISIBLE_DETALLE)).map(({ot,eq,mec,req})=>{
+                const expandido=expandedPend===ot.id;
+                const descLarga=(ot.description||"").length>150;
+                const vencida=ot.scheduledDate&&ot.scheduledDate<hoyStr;
+                return(
+                <div key={ot.id}
+                  className={`rounded-xl border bg-white p-3.5 flex flex-col gap-2 hover:shadow-sm transition cursor-pointer ${vencida?"border-red-200":"border-gray-200 hover:border-gray-300"}`}
+                  onClick={()=>setExpandedPend(expandido?null:ot.id)}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className={`flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-sm ${ot.type==="preventiva"?"bg-blue-100":"bg-amber-100"}`}>
+                        {ot.type==="preventiva"?"🛡":"🔧"}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold text-gray-900 truncate">{ot.code} — {eq?.code||"—"}</p>
+                        {eq?.name&&<p className="text-[11px] text-gray-400 truncate">{eq.name}</p>}
+                      </div>
+                    </div>
+                    <div className="flex-shrink-0 flex flex-col items-end gap-1">
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${ST[ot.status]?.cls||"bg-gray-100 text-gray-600"}`}>
+                        {ST[ot.status]?.label||ot.status}
+                      </span>
+                      {vencida&&<span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-red-100 text-red-700">⚠️ Vencida</span>}
+                    </div>
+                  </div>
+                  {req&&<p className="text-[11px] text-gray-500 truncate">📋 {(req.title||req.description||"").slice(0,70)}</p>}
+                  <div className="flex items-center gap-2.5 flex-wrap text-[11px] text-gray-400">
+                    <span>👤 {mec?.name||"Sin asignar"}</span>
+                    <span>📅 Programada: {ot.scheduledDate?fmtFecha(ot.scheduledDate):"—"}</span>
+                    {ot.priority&&<span>⚑ {ot.priority}</span>}
+                  </div>
+                  {ot.description?(
+                    <div className="mt-auto pt-0.5">
+                      <p className={`text-xs text-gray-600 bg-gray-50 rounded-lg px-2.5 py-2 border border-gray-100 leading-relaxed transition-all ${expandido?"":"line-clamp-3"}`}>
+                        {ot.description}
+                      </p>
+                      {descLarga&&(
+                        <button onClick={e=>{e.stopPropagation();setExpandedPend(expandido?null:ot.id);}}
+                          className="text-[10px] text-blue-500 hover:underline mt-1">
+                          {expandido?"Ver menos ▲":"Ver más ▼"}
+                        </button>
+                      )}
+                    </div>
+                  ):(
+                    <p className="text-xs text-gray-300 italic mt-auto pt-0.5">Sin descripción</p>
+                  )}
+                </div>
+                );
               })}
             </div>
+            {detallePend.length>VISIBLE_DETALLE&&(
+              <div className="text-center mt-3">
+                <button onClick={()=>setVerTodoPend(v=>!v)} className="text-xs font-semibold text-blue-600 hover:underline">
+                  {verTodoPend?"Ver menos ▲":`Ver las ${detallePend.length-VISIBLE_DETALLE} OTs restantes ▼`}
+                </button>
+              </div>
+            )}
           </div>
         )}
+
+        {detalleSolic.length>0&&(
+          <div className="p-4 lg:p-5 bg-blue-50/30">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-xs font-bold text-blue-700 uppercase tracking-wide">📋 Solicitudes sin OT</p>
+              <p className="text-xs text-gray-400">{detalleSolic.length} solicitudes</p>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+              {(verTodoSolic?detalleSolic:detalleSolic.slice(0,VISIBLE_DETALLE)).map(({r,eq,reqBy})=>{
+                const expandido=expandedSolic===r.id;
+                const descLarga=(r.description||"").length>150;
+                return(
+                <div key={r.id}
+                  className="rounded-xl border border-gray-200 bg-white p-3.5 flex flex-col gap-2 hover:border-gray-300 hover:shadow-sm transition cursor-pointer"
+                  onClick={()=>setExpandedSolic(expandido?null:r.id)}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-bold text-gray-900 truncate">{eq?.code||"—"} — {(r.title||"").slice(0,40)}</p>
+                      {eq?.name&&<p className="text-[11px] text-gray-400 truncate">{eq.name}</p>}
+                    </div>
+                    <span className={`flex-shrink-0 text-[10px] px-2 py-0.5 rounded-full font-semibold ${ST[r.status]?.cls||"bg-gray-100 text-gray-600"}`}>
+                      {ST[r.status]?.label||r.status}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2.5 flex-wrap text-[11px] text-gray-400">
+                    <span>👤 {reqBy?.name||"—"}</span>
+                    <span>📅 {fmtFecha(r.requestedAt)}</span>
+                    {r.priority&&<span>⚑ {r.priority}</span>}
+                  </div>
+                  {r.description?(
+                    <div className="mt-auto pt-0.5">
+                      <p className={`text-xs text-gray-600 bg-gray-50 rounded-lg px-2.5 py-2 border border-gray-100 leading-relaxed transition-all ${expandido?"":"line-clamp-3"}`}>
+                        {r.description}
+                      </p>
+                      {descLarga&&(
+                        <button onClick={e=>{e.stopPropagation();setExpandedSolic(expandido?null:r.id);}}
+                          className="text-[10px] text-blue-500 hover:underline mt-1">
+                          {expandido?"Ver menos ▲":"Ver más ▼"}
+                        </button>
+                      )}
+                    </div>
+                  ):(
+                    <p className="text-xs text-gray-300 italic mt-auto pt-0.5">Sin descripción</p>
+                  )}
+                </div>
+                );
+              })}
+            </div>
+            {detalleSolic.length>VISIBLE_DETALLE&&(
+              <div className="text-center mt-3">
+                <button onClick={()=>setVerTodoSolic(v=>!v)} className="text-xs font-semibold text-blue-600 hover:underline">
+                  {verTodoSolic?"Ver menos ▲":`Ver las ${detalleSolic.length-VISIBLE_DETALLE} restantes ▼`}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* El aviso "Requieren atención" que había acá quedó redundante: las
+            OTs vencidas ahora se marcan con badge rojo dentro de "OTs
+            pendientes", y las solicitudes activas tienen su propia sección
+            completa ("Solicitudes sin OT") en vez de un resumen de 3. */}
       </div>
     </div>
   );
