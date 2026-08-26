@@ -2072,6 +2072,60 @@ const getActividadReciente=(data)=>{
   ].filter(a=>a.time).sort((a,b)=>new Date(b.time)-new Date(a.time)).slice(0,5);
 };
 
+// ─── CENTRO DE NOTIFICACIONES (campana del Topbar) ───────────────────────────
+// Feed real, por rol, con destino de navegación Y, para OTs/solicitudes,
+// el id concreto a abrir (focusKind/focusId) — WorkOrders y Requests
+// escuchan ese id (props focusOTId/focusReqId) para abrir el detalle
+// directo en vez de solo caer en la página general. Equipos en falla
+// navegan a Equipos pero sin abrir un detalle puntual (no hay un estado
+// de "detalle" único y compartido entre Taller/Marítimo para eso).
+const getNotifCenter=(user,data)=>{
+  if(!user) return[];
+  const {wos=[],requests=[],equip=[]}=data||{};
+  const hoyStr=new Date().toISOString().slice(0,10);
+  const esSuper=["supervisor","admin","operaciones"].includes(user.role);
+  const items=[];
+
+  if(esSuper){
+    requests.filter(r=>r.status==="ops_pendiente"||r.status==="pendiente").forEach(r=>{
+      const eq=equip.find(e=>e.id===r.equipId);
+      items.push({id:`req_${r.id}`,page:"requests",focusKind:"solicitud",focusId:r.id,
+        icon:Bell,color:"text-blue-600",bg:"bg-blue-50",
+        title:"Solicitud por revisar",sub:`${eq?.code||""} — ${(r.title||r.description||"").slice(0,60)}`,
+        time:r.requestedAt});
+    });
+  }
+
+  requests.filter(r=>r.requestedBy===user.id&&(r.status==="aprobada"||r.status==="rechazada")).forEach(r=>{
+    const eq=equip.find(e=>e.id===r.equipId);
+    items.push({id:`reqst_${r.id}`,page:"requests",focusKind:"solicitud",focusId:r.id,
+      icon:r.status==="aprobada"?CheckCircle:X,color:r.status==="aprobada"?"text-emerald-600":"text-red-600",
+      bg:r.status==="aprobada"?"bg-emerald-50":"bg-red-50",
+      title:`Solicitud ${(ST[r.status]?.label||r.status).toLowerCase()}`,
+      sub:`${eq?.code||""} — ${(r.title||r.description||"").slice(0,60)}`,
+      time:r.requestedAt});
+  });
+
+  wos.filter(w=>w.assignedTo===user.id&&w.status!=="completada"&&w.status!=="cancelada").forEach(w=>{
+    const eq=equip.find(e=>e.id===w.equipId);
+    const vencida=w.scheduledDate&&w.scheduledDate<hoyStr;
+    items.push({id:`ot_${w.id}`,page:"workorders",focusKind:"ot",focusId:w.id,
+      icon:vencida?AlertTriangle:Wrench,color:vencida?"text-red-600":"text-purple-600",
+      bg:vencida?"bg-red-50":"bg-purple-50",
+      title:vencida?`${w.code} — vencida`:`${w.code} asignada`,
+      sub:`${eq?.code||""} — ${(w.title||"").slice(0,60)}`,
+      time:w.createdAt});
+  });
+
+  const urgentes=equip.filter(e=>e.status==="falla").map(e=>({
+    id:`eq_${e.id}`,page:"equipment",focusKind:null,focusId:null,
+    icon:AlertTriangle,color:"text-red-600",bg:"bg-red-50",
+    title:`Equipo en falla: ${e.code||e.name}`,sub:e.location||"",time:null,
+  }));
+
+  return[...urgentes,...items.sort((a,b)=>new Date(b.time||0)-new Date(a.time||0))].slice(0,20);
+};
+
 const iCls="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 text-sm focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100";
 const sCls="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 text-sm focus:outline-none focus:border-blue-400";
 const card="bg-white border border-gray-200 rounded-xl shadow-sm";
@@ -2827,18 +2881,27 @@ manuales:      {label:"Manuales Técnicos",    icon:BookOpen},
 torque:        {label:"Calculadora de Torque",icon:Calculator},
 gruas_arrendadas:{label:"Grúas Arrendadas",   icon:Truck},
 };
-function Topbar({user,page,onNav,notifCount,onToggleSidebar,fontSize,setFontSize,onChangePassword,onChangeModule,onLogout,onInstall,onOpenChat,chatBadge,onOpenPlanner,plannerBadge,navCategorias:navCats}){
+function Topbar({user,page,onNav,notifCount,onToggleSidebar,fontSize,setFontSize,onChangePassword,onChangeModule,onLogout,onInstall,onOpenChat,chatBadge,onOpenPlanner,plannerBadge,navCategorias:navCats,notifItems,onNotifClick}){
 const navCategorias=navCats||NAV_CATEGORIAS;
 const canUsePlanner=["supervisor","admin","operaciones"].includes(user?.role)||user?.authRole==="ADMIN";
 const catKey=getCategoriaActiva(page,navCategorias);
 const categoria=catKey?navCategorias[catKey]:null;
 const [showUserMenu,setShowUserMenu]=useState(false);
 const userMenuRef=useRef(null);
+const [showNotifPanel,setShowNotifPanel]=useState(false);
+const notifRef=useRef(null);
 useEffect(()=>{
-  const handler=e=>{if(userMenuRef.current&&!userMenuRef.current.contains(e.target))setShowUserMenu(false);};
+  const handler=e=>{if(userMenuRef.current&&!userMenuRef.current.contains(e.target))setShowUserMenu(false);if(notifRef.current&&!notifRef.current.contains(e.target))setShowNotifPanel(false);};
   document.addEventListener("mousedown",handler);
   return()=>document.removeEventListener("mousedown",handler);
 },[]);
+const fmtNotifTime=iso=>{
+  if(!iso) return "Activo";
+  const d=new Date(iso);
+  const diffH=(Date.now()-d.getTime())/3600000;
+  if(diffH<24) return d.toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit"});
+  return d.toLocaleDateString("es-CL",{day:"numeric",month:"short"});
+};
 return(
 <div className="sticky top-0 z-30 bg-white border-b border-gray-200">
   <div className="flex items-center justify-between px-5 py-3 gap-4">
@@ -2855,10 +2918,45 @@ return(
       <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-300 text-xs border border-gray-200 rounded px-1.5 py-0.5">⌘K</span>
     </div>
     <div className="flex items-center gap-2 flex-shrink-0">
-      <button className="relative p-2 rounded-lg hover:bg-gray-50 transition">
-        <Bell size={17} className="text-gray-500"/>
-        {notifCount>0&&<span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-bold">{notifCount}</span>}
-      </button>
+      <div className="relative" ref={notifRef}>
+        <button onClick={()=>setShowNotifPanel(s=>!s)} className="relative p-2 rounded-lg hover:bg-gray-50 transition">
+          <Bell size={17} className="text-gray-500"/>
+          {notifCount>0&&<span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-bold">{notifCount>9?"9+":notifCount}</span>}
+        </button>
+        {showNotifPanel&&(
+          <div className="absolute right-0 top-full mt-2 w-80 max-w-[90vw] bg-white border border-gray-200 rounded-xl shadow-lg z-50 overflow-hidden">
+            <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+              <p className="text-gray-800 text-sm font-bold">Notificaciones</p>
+              {notifItems?.length>0&&<span className="text-xs text-gray-400">{notifItems.length}</span>}
+            </div>
+            <div className="max-h-96 overflow-y-auto">
+              {(!notifItems||notifItems.length===0)&&(
+                <div className="text-center py-10 text-gray-400">
+                  <Bell size={28} className="mx-auto mb-2 text-gray-300"/>
+                  <p className="text-xs font-medium">Sin notificaciones</p>
+                </div>
+              )}
+              {notifItems?.map(n=>(
+                <button key={n.id} onClick={()=>{onNotifClick?.(n);setShowNotifPanel(false);}}
+                  className="w-full text-left px-4 py-3 border-b border-gray-50 last:border-0 hover:bg-gray-50 transition flex items-start gap-2.5">
+                  <div className={`flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center ${n.bg}`}>
+                    <n.icon size={13} className={n.color}/>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-gray-800 truncate">{n.title}</p>
+                    {n.sub&&<p className="text-xs text-gray-400 truncate mt-0.5">{n.sub}</p>}
+                  </div>
+                  <span className="flex-shrink-0 text-[10px] text-gray-400 mt-0.5">{fmtNotifTime(n.time)}</span>
+                </button>
+              ))}
+            </div>
+            <button onClick={()=>{onNav("notifications");setShowNotifPanel(false);}}
+              className="w-full text-center py-2.5 text-xs font-semibold text-blue-600 hover:bg-blue-50 transition border-t border-gray-100">
+              Ver todas
+            </button>
+          </div>
+        )}
+      </div>
       <button onClick={onOpenChat} className="relative p-2 rounded-lg hover:bg-gray-50 transition">
         <MessageCircle size={17} className="text-gray-500"/>
         {chatBadge>0&&<span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-bold">{chatBadge}</span>}
@@ -4853,7 +4951,7 @@ function MaterialesEquipoQuickPick({equipId,materialesEquipo,onAgregarAPlan,onAb
   );
 }
 
-function WorkOrders({user,data,setData,saveData,appendToArray,updateInArray,activeCOLL,setPmNotifications,activeModule}){
+function WorkOrders({user,data,setData,saveData,appendToArray,updateInArray,activeCOLL,setPmNotifications,activeModule,focusOTId,onFocusHandled}){
 const {wos,equip,users,requests,plans}=data;
   // "Solo Ver" (permiso "workorders"==="readonly") oculta crear/editar/
   // eliminar — solo aplica en Marítimo, Taller no cambia.
@@ -4864,6 +4962,16 @@ const {wos,equip,users,requests,plans}=data;
   const [vistaMecanico,setVistaMecanico]=useState(activeModule==="maritimo"?"abiertas_asig":"asignadas"); // maritimo: abiertas_asig|cerradas · taller: todas|asignadas|disponibles
   const [showWorkload,setShowWorkload]=useState(false);
 const [sel,setSel]=useState(null); const [showRep,setShowRep]=useState(false);
+// Click en una notificación de la campana ("OT asignada"/"vencida") — abre
+// el detalle de esa OT directo, sin que el usuario tenga que buscarla.
+// Se consume una sola vez (onFocusHandled limpia el id en el padre) para
+// no reabrirla si el usuario vuelve a esta página por su cuenta.
+useEffect(()=>{
+  if(!focusOTId) return;
+  const w=wos.find(x=>x.id===focusOTId);
+  if(w) setSel(w);
+  onFocusHandled?.();
+},[focusOTId]);
 const [showFullChecklist,setShowFullChecklist]=useState(false);
 const [saveMsg,setSaveMsg]=useState("");
 const [viewMode,setViewMode]=useState(()=>typeof window!=="undefined"&&window.innerWidth<768?"tarjetas":"tabla");
@@ -13696,11 +13804,19 @@ const deleteDeviacion=async(req)=>{
   }
 };
 
-function Requests({user,data,setData,saveData,appendToArray,updateInArray,activeCOLL,activeModule}){
+function Requests({user,data,setData,saveData,appendToArray,updateInArray,activeCOLL,activeModule,focusReqId,onFocusHandled}){
 const {requests=[],equip=[],users=[],wos=[]}=data;
 const [showForm,setShowForm]=useState(false);
   const [form,setForm]=useState({equipId:"",title:"",description:"",priority:"media",subsistema:"",componente:"",photos:[]});
 const [selReqId,setSelReqId]=useState(null);
+// Click en una notificación de la campana ("solicitud por revisar" / "mi
+// solicitud aprobada o rechazada") — abre el detalle de esa solicitud
+// directo. Se consume una sola vez (onFocusHandled limpia el id arriba).
+useEffect(()=>{
+  if(!focusReqId) return;
+  if(requests.some(r=>r.id===focusReqId)) setSelReqId(focusReqId);
+  onFocusHandled?.();
+},[focusReqId]);
 const [supervisorApproveModal,setSupervisorApproveModal]=useState(null);
 const [supForm,setSupForm]=useState({mechanic:"",priority:"media",plannedDate:"",plannedReason:"",action:"now"});
 const [lightboxSrc,setLightboxSrc]=useState(null);
@@ -36891,6 +37007,18 @@ if(!user) return <LoginPage users={data.users} activeModule={activeModule} activ
 
 const handleNav=p=>{setPage(p);if(p==="requests"||p==="notifications")setSeenNotifs(true);if(window.innerWidth<1024)setSidebarOpen(false);if(user&&activeModule){const coll=getActiveCOLL(activeModule,activeBarco);updatePresence(coll,user,p);}};
 
+// Campana del Topbar: feed real de notificaciones + "ir directo a esa
+// notificación específica". notifFocus viaja a WorkOrders/Requests como
+// focusOTId/focusReqId — cada una lo consume una sola vez (limpia con
+// onFocusHandled) para no reabrir el detalle si el usuario navega de
+// nuevo a esa página por su cuenta.
+const notifItems=getNotifCenter(user,data);
+const [notifFocus,setNotifFocus]=useState(null); // {kind:"ot"|"solicitud", id} | null
+const onNotifClick=item=>{
+  handleNav(item.page);
+  if(item.focusKind&&item.focusId) setNotifFocus({kind:item.focusKind,id:item.focusId});
+};
+
 // ── SGN bifurcación ────────────────────────────────────────────────────────
 const isSgn=activeModule==="sgn";
 if(isSgn){
@@ -36983,11 +37111,11 @@ const PAGES={
 dashboard:     activeModule==="maritimo"
                  ?<DashboardMaritimo user={user} data={data} activeBarco={activeBarco} onNav={p=>{setPage(p);if(user&&activeModule){const coll=getActiveCOLL(activeModule,activeBarco);updatePresence(coll,user,p);}}}/>
                  :<Dashboard     user={user} data={data} onNav={p=>{setPage(p);if(user&&activeModule){const coll=getActiveCOLL(activeModule,activeBarco);updatePresence(coll,user,p);}}} onlineUsers={onlineUsers} pmNotifications={pmNotifications} onDismissPM={()=>setPmNotifications([])} onAssignPM={()=>{setPmNotifications([]);setPage("workorders");}}/>,
-workorders:    <WorkOrders    user={user} data={data} setData={setData} saveData={saveData} appendToArray={appendToArray} updateInArray={updateInArray} activeCOLL={activeCOLL} setPmNotifications={setPmNotifications} activeModule={activeModule}/>,
+workorders:    <WorkOrders    user={user} data={data} setData={setData} saveData={saveData} appendToArray={appendToArray} updateInArray={updateInArray} activeCOLL={activeCOLL} setPmNotifications={setPmNotifications} activeModule={activeModule} focusOTId={notifFocus?.kind==="ot"?notifFocus.id:null} onFocusHandled={()=>setNotifFocus(null)}/>,
 equipment:     <Equipment     user={user} data={data} setData={setData} saveData={saveData} appendToArray={appendToArray} updateInArray={updateInArray} activeModule={activeModule}/>,
 plans:         <Plans         user={user} data={data} setData={setData} saveData={saveData} appendToArray={appendToArray} updateInArray={updateInArray} activeModule={activeModule} activeBarco={activeBarco}/>,
 indicadores:   <Indicadores   data={data}/>,
-requests:      <Requests      user={user} data={data} setData={setData} saveData={saveData} appendToArray={appendToArray} updateInArray={updateInArray} activeCOLL={activeCOLL} activeModule={activeModule}/>,
+requests:      <Requests      user={user} data={data} setData={setData} saveData={saveData} appendToArray={appendToArray} updateInArray={updateInArray} activeCOLL={activeCOLL} activeModule={activeModule} focusReqId={notifFocus?.kind==="solicitud"?notifFocus.id:null} onFocusHandled={()=>setNotifFocus(null)}/>,
 gruas_arrendadas:<GruasArrendadasPage user={user} data={data} setData={setData} activeCOLL={activeCOLL}/>,
 notifications: <Notifications user={user} data={data} onSeen={()=>setSeenNotifs(true)}/>,
 checklist:     <Checklist     user={user} data={data} setData={setData} activeModule={activeModule} activeBarco={activeBarco} saveData={saveData} appendToArray={appendToArray} updateInArray={updateInArray}/>,
@@ -37018,7 +37146,7 @@ return(
 {sidebarOpen&&<div className="fixed inset-0 bg-black/40 z-40 lg:hidden" onClick={()=>setSidebarOpen(false)}/>}
 <Sidebar user={user} active={page} onNav={handleNav} onLogout={async()=>{try{await fetch(AUTH_URL+'/api/auth/logout',{method:'POST',credentials:'include'});}catch(e){console.warn('logout:',e);}setUser(null);setPage("dashboard");}} onChangePassword={()=>setShowChangePwd(true)} onChangeModule={()=>{setActiveModule(null);setActiveBarco(null);setPage("dashboard");setUser(null);setLoading(false);unsubs.current.forEach(u=>u());unsubs.current=[];setData({users:[],equip:[],plans:[],requests:[],wos:[],taskTemplates:[],checklists:[]});}} notifications={pendingReqs} devBadge={devBadge} online={online} collapsed={!sidebarOpen} moduleLabel={MODULE_LABEL} onInstall={showInstallBtn?async()=>{if(!installPrompt)return;installPrompt.prompt();const r=await installPrompt.userChoice;if(r.outcome==="accepted"){setShowInstallBtn(false);setInstallPrompt(null);}}:null} fontSize={fontSize} setFontSize={setFontSize} data={data} navCategorias={activeModule==="sgn"?SGN_NAV_CATEGORIAS:activeModule==="maritimo"?NAV_CATEGORIAS_MARITIMO:NAV_CATEGORIAS} userPerms={activeModule==="sgn"?getSgnUserPerms(user):getUserPerms(user)}/>
 <div className="flex-1 min-h-screen flex flex-col overflow-hidden">
-  <Topbar user={user} page={page} onNav={handleNav} notifCount={pendingReqs} onToggleSidebar={()=>setSidebarOpen(s=>!s)} fontSize={fontSize} setFontSize={setFontSize} onChangePassword={()=>setShowChangePwd(true)} onChangeModule={()=>{setActiveModule(null);setActiveBarco(null);setPage("dashboard");setUser(null);setLoading(false);unsubs.current.forEach(u=>u());unsubs.current=[];setData({users:[],equip:[],plans:[],requests:[],wos:[],taskTemplates:[],checklists:[]});}} onLogout={async()=>{try{await fetch(AUTH_URL+'/api/auth/logout',{method:'POST',credentials:'include'});}catch(e){console.warn('logout:',e);}setUser(null);setPage("dashboard");}} onInstall={showInstallBtn?async()=>{if(!installPrompt)return;installPrompt.prompt();const r=await installPrompt.userChoice;if(r.outcome==="accepted"){setShowInstallBtn(false);setInstallPrompt(null);}}:null} onOpenChat={()=>setShowChatPanel(true)} chatBadge={totalNoLeidos} onOpenPlanner={()=>{setShowPlanner(true);marcarPlannerVisto();}} plannerBadge={plannerBadgeCount} navCategorias={activeModule==="sgn"?SGN_NAV_CATEGORIAS:activeModule==="maritimo"?NAV_CATEGORIAS_MARITIMO:NAV_CATEGORIAS}/>
+  <Topbar user={user} page={page} onNav={handleNav} notifCount={notifItems.length} notifItems={notifItems} onNotifClick={onNotifClick} onToggleSidebar={()=>setSidebarOpen(s=>!s)} fontSize={fontSize} setFontSize={setFontSize} onChangePassword={()=>setShowChangePwd(true)} onChangeModule={()=>{setActiveModule(null);setActiveBarco(null);setPage("dashboard");setUser(null);setLoading(false);unsubs.current.forEach(u=>u());unsubs.current=[];setData({users:[],equip:[],plans:[],requests:[],wos:[],taskTemplates:[],checklists:[]});}} onLogout={async()=>{try{await fetch(AUTH_URL+'/api/auth/logout',{method:'POST',credentials:'include'});}catch(e){console.warn('logout:',e);}setUser(null);setPage("dashboard");}} onInstall={showInstallBtn?async()=>{if(!installPrompt)return;installPrompt.prompt();const r=await installPrompt.userChoice;if(r.outcome==="accepted"){setShowInstallBtn(false);setInstallPrompt(null);}}:null} onOpenChat={()=>setShowChatPanel(true)} chatBadge={totalNoLeidos} onOpenPlanner={()=>{setShowPlanner(true);marcarPlannerVisto();}} plannerBadge={plannerBadgeCount} navCategorias={activeModule==="sgn"?SGN_NAV_CATEGORIAS:activeModule==="maritimo"?NAV_CATEGORIAS_MARITIMO:NAV_CATEGORIAS}/>
   {(()=>{const _navCats=activeModule==="sgn"?SGN_NAV_CATEGORIAS:activeModule==="maritimo"?NAV_CATEGORIAS_MARITIMO:NAV_CATEGORIAS;const catKey=getCategoriaActiva(page,_navCats);const categoria=catKey?_navCats[catKey]:null;const paginaLabel=getPaginaLabel(page);if(!categoria)return null;return(<div className="flex items-center gap-1.5 text-xs text-gray-400 px-5 pt-3 pb-1"><span>{categoria.label}</span><ChevronRight size={11}/><span className="text-gray-600 font-medium">{paginaLabel}</span></div>);})()}
   <main className="flex-1 overflow-y-auto"><ErrorBoundary key={page}>{
     (()=>{
