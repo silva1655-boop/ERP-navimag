@@ -35967,6 +35967,12 @@ const [online,setOnline]=useState(true);
 const [loading,setLoading]=useState(false);
 const [showChangePwd,setShowChangePwd]=useState(false);
 const [seenNotifs,setSeenNotifs]=useState(false);
+// Declarado acá (antes de cualquier "return" temprano de este componente —
+// selección de módulo/barco, loading, login) para no violar el orden de
+// hooks: si este useState quedara después de un early return condicional,
+// React tira el error #310 ("rendered more hooks than during the previous
+// render") apenas cambia si ese return se toma o no entre renders.
+const [notifFocus,setNotifFocus]=useState(null); // {kind:"ot"|"solicitud", id} | null
 const [sidebarOpen,setSidebarOpen]=useState(true);
 const [pmNotifications,setPmNotifications]=useState([]);
 const [imgViewer,setImgViewer]=useState(null);
@@ -37011,9 +37017,9 @@ const handleNav=p=>{setPage(p);if(p==="requests"||p==="notifications")setSeenNot
 // notificación específica". notifFocus viaja a WorkOrders/Requests como
 // focusOTId/focusReqId — cada una lo consume una sola vez (limpia con
 // onFocusHandled) para no reabrir el detalle si el usuario navega de
-// nuevo a esa página por su cuenta.
+// nuevo a esa página por su cuenta. (El useState de notifFocus está
+// arriba, antes de los early return de este componente — ver comentario ahí.)
 const notifItems=getNotifCenter(user,data);
-const [notifFocus,setNotifFocus]=useState(null); // {kind:"ot"|"solicitud", id} | null
 const onNotifClick=item=>{
   handleNav(item.page);
   if(item.focusKind&&item.focusId) setNotifFocus({kind:item.focusKind,id:item.focusId});
