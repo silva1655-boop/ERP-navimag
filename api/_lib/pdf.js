@@ -130,7 +130,7 @@ function renderFaenaEnDoc(doc, faena, periodoDesde, periodoHasta, addPage) {
   const footY = doc.page.height - 32;
   doc.fontSize(7).fillColor(GRIS)
     .text(
-      `MANTEK ERP v2.0  ·  Informe generado automáticamente  ·  ${new Date().toLocaleDateString("es-CL")}`,
+      `SGN Navimag v2.0  ·  Informe generado automáticamente  ·  ${new Date().toLocaleDateString("es-CL")}`,
       40, footY, { align: "center", width: W }
     );
 }
@@ -263,7 +263,7 @@ export function generarPDFFaenaCurso(faena, detenciones, equipMap) {
     // ── FOOTER ──────────────────────────────────────────────────────────────
     const footY = doc.page.height - 32;
     doc.fontSize(7).fillColor(GRIS)
-      .text(`MANTEK ERP · Informe de Faena — Disponibilidad y Utilización de Tractos · ${new Date().toLocaleDateString("es-CL")}`,
+      .text(`SGN Navimag · Informe de Faena — Disponibilidad y Utilización de Tractos · ${new Date().toLocaleDateString("es-CL")}`,
         40, footY, { align: "center", width: W });
 
     doc.end();

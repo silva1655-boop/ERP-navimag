@@ -26,7 +26,7 @@ export async function enviarReporteFaena(destinatarios, faena, pdfBuffer, period
 
   const transport = createTransport();
   const fmtFecha = s => s.split("-").reverse().join("/");
-  const subject = `[MANTEK] Informe Semanal – ${faena.nave} / ${faena.puerto} | ${fmtFecha(periodoDesde)}–${fmtFecha(periodoHasta)}`;
+  const subject = `[SGN Navimag] Informe Semanal – ${faena.nave} / ${faena.puerto} | ${fmtFecha(periodoDesde)}–${fmtFecha(periodoHasta)}`;
   const cumpColor = faena.pct >= 90 ? "#16a34a" : faena.pct >= 70 ? "#d97706" : "#8B0000";
   const filename = `Informe_${faena.nave}_${faena.puerto}_${periodoHasta}.pdf`;
 
@@ -69,14 +69,14 @@ export async function enviarReporteFaena(destinatarios, faena, pdfBuffer, period
       </p>
     </div>
     <div style="background:#f1f5f9;padding:12px 32px;text-align:center">
-      <p style="font-size:11px;color:#94a3b8;margin:0">MANTEK ERP v2.0 · Informe generado automáticamente</p>
+      <p style="font-size:11px;color:#94a3b8;margin:0">SGN Navimag v2.0 · Informe generado automáticamente</p>
     </div>
   </div>
 </body>
 </html>`;
 
   await transport.sendMail({
-    from: `"MANTEK ERP" <${process.env.GMAIL_USER}>`,
+    from: `"SGN Navimag" <${process.env.GMAIL_USER}>`,
     to: destinatarios.join(", "),
     subject,
     html,
@@ -105,7 +105,7 @@ export async function enviarInformeFaenaCurso(destinatario, faena, pdfBuffer) {
   const pct = v => Math.round((v || 0) * 100);
   const cumpColor = p => p >= 90 ? "#16a34a" : p >= 70 ? "#d97706" : "#8B0000";
   const disp = pct(faena.disponibilidadTecnica);
-  const subject = `[MANTEK] Informe de Faena ${faena.numeroFaena} — ${faena.buque} / ${faena.terminal}`;
+  const subject = `[SGN Navimag] Informe de Faena ${faena.numeroFaena} — ${faena.buque} / ${faena.terminal}`;
   const filename = `Informe_Faena_${faena.numeroFaena}_${faena.buque}.pdf`.replace(/\s+/g, "_");
 
   const html = `
@@ -140,14 +140,14 @@ export async function enviarInformeFaenaCurso(destinatario, faena, pdfBuffer) {
       </p>
     </div>
     <div style="background:#f1f5f9;padding:12px 32px;text-align:center">
-      <p style="font-size:11px;color:#94a3b8;margin:0">MANTEK ERP · Informe generado desde Faena en Curso</p>
+      <p style="font-size:11px;color:#94a3b8;margin:0">SGN Navimag · Informe generado desde Faena en Curso</p>
     </div>
   </div>
 </body>
 </html>`;
 
   await transport.sendMail({
-    from: `"MANTEK ERP" <${process.env.GMAIL_USER}>`,
+    from: `"SGN Navimag" <${process.env.GMAIL_USER}>`,
     to: destinatario,
     subject,
     html,

@@ -23,7 +23,7 @@ self.addEventListener("push", e => {
   if(!e.data) return;
   let payload;
   try{ payload=e.data.json(); }
-  catch{ payload={title:"MANTEK ERP",body:e.data.text()}; }
+  catch{ payload={title:"SGN Navimag",body:e.data.text()}; }
   e.waitUntil(
     self.registration.showNotification(payload.title,{
       body:payload.body||"",

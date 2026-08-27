@@ -932,10 +932,10 @@ function downloadPlanTemplate() {
   ];
   const headers = ["Sistema","Tarea_de_mantenimiento","Intervalo_servicio_h","Nota","Referencia_manual","codigo_equipo","ultimo_horometro","horas_estimadas"];
   const rows = [
-    ["## PLANTILLA PLAN DE MANTENIMIENTO — MANTEK ERP"],
+    ["## PLANTILLA PLAN DE MANTENIMIENTO — SGN Navimag"],
     ["## INSTRUCCIONES:"],
     ["## 1. Las tareas pre-cargadas en esta plantilla son estándar Navimag — modifícalas si es necesario"],
-    ["## 2. Modo PLANTILLA (recomendado): deja la columna codigo_equipo VACÍA → en MANTEK podrás asignar a los equipos que quieras"],
+    ["## 2. Modo PLANTILLA (recomendado): deja la columna codigo_equipo VACÍA → en SGN Navimag podrás asignar a los equipos que quieras"],
     ["## 3. Modo DIRECTO: completa codigo_equipo con el código exacto del equipo (ej: MOL-01) → se asigna automáticamente"],
     ["## 4. ultimo_horometro = horómetro cuando se realizó por última vez (0 si nunca)"],
     ["## 5. horas_estimadas = duración estimada de la tarea en horas (por defecto 2)"],
@@ -2404,7 +2404,8 @@ function ModuleSelector({onSelect}){
           <div className="w-16 h-16 bg-white/15 backdrop-blur-sm rounded-2xl flex items-center justify-center border border-white/30 shadow-xl mx-auto mb-4">
             <Wrench size={32} className="text-white"/>
           </div>
-          <p className="text-white font-bold text-3xl tracking-wide">MANTEK ERP</p>
+          <p className="text-white font-bold text-3xl tracking-wide">SGN Navimag</p>
+          <p className="text-blue-200/50 text-[10px] tracking-widest -mt-0.5">by Axentis</p>
           <p className="text-blue-200 text-sm mt-2 tracking-widest">NAVIMAG CARGA · SELECCIONA TU MÓDULO</p>
         </div>
 
@@ -2477,7 +2478,7 @@ function ModuleSelector({onSelect}){
 
         </div>
         <p className="text-center text-blue-300/50 text-xs mt-8">
-          MANTEK ERP v2.0 · NAVIMAG CARGA · Departamento de Mantenimiento
+          SGN Navimag v2.0 · NAVIMAG CARGA · Departamento de Mantenimiento
         </p>
       </div>
     </div>
@@ -2495,7 +2496,8 @@ function BarcoSelector({onSelect,onBack}){
           <div className="w-16 h-16 bg-white/15 backdrop-blur-sm rounded-2xl flex items-center justify-center border border-white/30 shadow-xl mx-auto mb-4">
             <Wrench size={32} className="text-white"/>
           </div>
-          <p className="text-white font-bold text-3xl tracking-wide">MANTEK ERP</p>
+          <p className="text-white font-bold text-3xl tracking-wide">SGN Navimag</p>
+          <p className="text-blue-200/50 text-[10px] tracking-widest -mt-0.5">by Axentis</p>
           <p className="text-blue-200 text-sm mt-2 tracking-widest">NAVIMAG CARGA · MÓDULO MARÍTIMO · SELECCIONA EL BUQUE</p>
         </div>
 
@@ -2568,7 +2570,7 @@ function BarcoSelector({onSelect,onBack}){
           </button>
         </div>
         <p className="text-center text-blue-300/50 text-xs mt-4">
-          MANTEK ERP v2.0 · NAVIMAG CARGA · Departamento de Mantenimiento
+          SGN Navimag v2.0 · NAVIMAG CARGA · Departamento de Mantenimiento
         </p>
       </div>
     </div>
@@ -2773,7 +2775,8 @@ return(
       <div className="w-16 h-16 mx-auto mb-3 bg-white/15 backdrop-blur-sm rounded-2xl flex items-center justify-center border border-white/30 shadow-xl">
         <Wrench size={28} className="text-white"/>
       </div>
-      <p className="text-white font-bold text-3xl tracking-wide">MANTEK ERP</p>
+      <p className="text-white font-bold text-3xl tracking-wide">SGN Navimag</p>
+      <p className="text-blue-100/50 text-[10px] tracking-widest -mt-0.5">by Axentis</p>
       <p className="text-blue-100 text-xs tracking-widest font-medium mt-1">NAVIMAG CARGA · PLATAFORMA DE GESTIÓN Y MANTENIMIENTO</p>
       <div className="w-12 h-0.5 mx-auto mt-3 rounded-full" style={{background:accentColor}}/>
     </div>
@@ -2909,7 +2912,7 @@ return(
       <button className="lg:hidden p-2 rounded-lg border border-gray-200 hover:bg-gray-50" onClick={onToggleSidebar}>
         <Menu size={16} className="text-gray-600"/>
       </button>
-      <span className="font-bold text-gray-900 text-sm">MANTEK ERP</span>
+      <span className="font-bold text-gray-900 text-sm">SGN Navimag</span>
     </div>
     <div className="flex-1 max-w-md relative hidden sm:block">
       <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
@@ -3067,7 +3070,8 @@ return(
 <Wrench size={15} className="text-white"/>
 </div>
 <div>
-<p className="text-white font-bold text-sm">MANTEK ERP</p>
+<p className="text-white font-bold text-sm">SGN Navimag</p>
+<p className="text-white/30 text-[9px] tracking-wide -mt-0.5">by Axentis</p>
 {moduleLabel&&<p className="text-xs font-semibold mt-0.5" style={{color:(moduleLabel.includes("Esperanza")||moduleLabel.includes("Dalka"))?"#93C5FD":moduleLabel.includes("SGN")?"#86efac":"#FCA5A5"}}>{moduleLabel}</p>}
 <div className="flex items-center gap-1">
 {online
@@ -15025,7 +15029,7 @@ function printMonthlyReport(data, equipList, usersList, month) {
       ${byEquip.filter(e=>e.cls>0).length===0?`<tr><td colspan="3" style="text-align:center;color:#9ca3af;">Sin checklists este mes</td></tr>`:""}
       <tr><td><strong>Total</strong></td><td><strong>${monthCL.length}</strong></td><td><strong>${monthCL.filter(c=>c.hasIssues).length}</strong></td></tr>
     </table>
-    <div class="footer">Informe generado automáticamente por MANTEK ERP · NAVIMAG CARGA · ${new Date().toLocaleString("es-CL")}</div>
+    <div class="footer">Informe generado automáticamente por SGN Navimag · NAVIMAG CARGA · ${new Date().toLocaleString("es-CL")}</div>
   </div>
   </body></html>`);
   w.document.close();
@@ -23791,7 +23795,7 @@ function exportChecklistPDF(checklists, equip, users, dateFrom, dateTo, operator
     <div style="font-size:10px;opacity:0.7;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;">🚢 NAVIMAG CARGA · Checklist Pre-Operacional</div>
     <h1>📋 Registro de Checklists</h1>
     <p>Período: <strong>${esc(dateLabel)}</strong> · ${checklists.length} registro(s)</p>
-    <div class="cover-foot"><span>MANTEK ERP v2.0</span><span>Generado: ${new Date().toLocaleString("es-CL")}</span></div>
+    <div class="cover-foot"><span>SGN Navimag v2.0</span><span>Generado: ${new Date().toLocaleString("es-CL")}</span></div>
   </div>`;
   [...checklists].forEach(c=>{
     const eq=equip.find(e=>e.id===c.equipId);
@@ -23825,7 +23829,7 @@ function exportChecklistPDF(checklists, equip, users, dateFrom, dateTo, operator
     }
     html+=`</div>`;
   });
-  html+=`<div class="footer"><span>MANTEK ERP v2.0 · NAVIMAG CARGA</span><span>Generado: ${new Date().toLocaleString("es-CL")}</span></div></body></html>`;
+  html+=`<div class="footer"><span>SGN Navimag v2.0 · NAVIMAG CARGA</span><span>Generado: ${new Date().toLocaleString("es-CL")}</span></div></body></html>`;
   const w=window.open("","_blank","width=900,height=700");
   w.document.write(html);w.document.close();w.focus();
   setTimeout(()=>w.print(),800);
@@ -24097,7 +24101,7 @@ body{
 <div class="cl-header">
   <div class="cl-header-left">
     <h1>🚢 NAVIMAG CARGA — Checklist Pre-operacional</h1>
-    <p>${esc(tplLabel)} · MANTEK ERP v2.0 · ${new Date(c.createdAt).toLocaleDateString("es-CL",{weekday:"long",day:"2-digit",month:"long",year:"numeric"})}</p>
+    <p>${esc(tplLabel)} · SGN Navimag v2.0 · ${new Date(c.createdAt).toLocaleDateString("es-CL",{weekday:"long",day:"2-digit",month:"long",year:"numeric"})}</p>
   </div>
   <div class="cl-header-right">
     <div class="cl-eq-code">${esc(eq?.code||"—")}</div>
@@ -24243,7 +24247,7 @@ ${c.operatorSignature?`
 
 <!-- FOOTER -->
 <div class="cl-footer">
-  <span>MANTEK ERP v2.0 · NAVIMAG CARGA · Departamento de Mantenimiento</span>
+  <span>SGN Navimag v2.0 · NAVIMAG CARGA · Departamento de Mantenimiento</span>
   <span>Generado: ${new Date().toLocaleString("es-CL")}</span>
 </div>
 
@@ -24314,7 +24318,7 @@ function exportRankingPDF(ranking, allChecklists, dateFrom, dateTo) {
     <div style="font-size:10px;opacity:0.7;letter-spacing:2px;text-transform:uppercase;margin-bottom:12px;">🚢 NAVIMAG CARGA · Departamento de Mantenimiento</div>
     <h1>🏆 Ranking de Operadores</h1>
     <p>Período: <strong>${esc(dateLabel)}</strong></p>
-    <div class="cover-foot"><span>MANTEK ERP v2.0</span><span>Generado: ${new Date().toLocaleString("es-CL")}</span></div>
+    <div class="cover-foot"><span>SGN Navimag v2.0</span><span>Generado: ${new Date().toLocaleString("es-CL")}</span></div>
   </div>`;
 
   const totalObs=allChecklists.filter(c=>c.hasIssues).length;
@@ -24359,7 +24363,7 @@ function exportRankingPDF(ranking, allChecklists, dateFrom, dateTo) {
     </div>`;
   });
 
-  html+=`<div class="footer"><span>MANTEK ERP v2.0 · NAVIMAG CARGA · Departamento de Mantenimiento</span><span>Generado: ${new Date().toLocaleString("es-CL")}</span></div></body></html>`;
+  html+=`<div class="footer"><span>SGN Navimag v2.0 · NAVIMAG CARGA · Departamento de Mantenimiento</span><span>Generado: ${new Date().toLocaleString("es-CL")}</span></div></body></html>`;
 
   const w=window.open("","_blank","width=900,height=700");
   w.document.write(html);w.document.close();w.focus();
@@ -32250,10 +32254,10 @@ function DashboardChecklist({data,activeModule}){
   @media print{*{-webkit-print-color-adjust:exact;print-color-adjust:exact;}h2{page-break-before:auto;}tr{page-break-inside:avoid;}}
 </style></head><body>
 <div class="cover">
-  <div style="font-size:10px;opacity:0.7;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;">🚢 NAVIMAG CARGA · MANTEK ERP</div>
+  <div style="font-size:10px;opacity:0.7;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;">🚢 NAVIMAG CARGA · SGN Navimag</div>
   <h1>📊 Informe de Cumplimiento de Checklist</h1>
   <p>Período: <strong>${esc(fromStr)} – ${esc(toStr)}</strong> · ${filtered.length} checklist(s) analizados</p>
-  <div class="cover-foot"><span>MANTEK ERP v2.0</span><span>Generado: ${new Date().toLocaleString("es-CL")}</span></div>
+  <div class="cover-foot"><span>SGN Navimag v2.0</span><span>Generado: ${new Date().toLocaleString("es-CL")}</span></div>
 </div>
 <div class="body">
   <!-- KPIs -->
@@ -32298,7 +32302,7 @@ function DashboardChecklist({data,activeModule}){
     </table>`}
 </div>
 <div class="footer">
-  <span>MANTEK ERP v2.0 · NAVIMAG CARGA</span>
+  <span>SGN Navimag v2.0 · NAVIMAG CARGA</span>
   <span>Generado: ${new Date().toLocaleString("es-CL")}</span>
 </div>
 </body></html>`;
@@ -33036,7 +33040,7 @@ const logoCell=logoB64
 return`<table class="header-table"><tbody><tr><td class="logo-cell" rowspan="2" style="width:80px;height:60px;text-align:center;vertical-align:middle;background:#1a1a1a;">${logoCell}</td><td colspan="3" class="title-main">SISTEMA DE GESTIÓN DE NAVIMAG</td></tr><tr><td colspan="3" class="title-proc">${proc}</td></tr><tr><td class="meta-cell" style="width:34%">Modificación N° ${mod}</td><td class="meta-cell" style="width:34%">Fecha Emisión: ${fecha}</td><td class="meta-cell" style="width:32%">Página 1</td></tr></tbody></table>`;
 };
 const _sgnOpen=(title,body)=>{const w=window.open("","_blank","width=1000,height=750");w.document.write(`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"/><title>${title}</title>${_sgnCss}</head><body>${body}</body></html>`);w.document.close();w.focus();setTimeout(()=>w.print(),1200);};
-const _footer=()=>`<div class="footer"><span>SISTEMA DE GESTIÓN DE NAVIMAG — MANTEK ERP</span><span>Generado: ${new Date().toLocaleString("es-CL")}</span></div>`;
+const _footer=()=>`<div class="footer"><span>SISTEMA DE GESTIÓN DE NAVIMAG — SGN Navimag</span><span>Generado: ${new Date().toLocaleString("es-CL")}</span></div>`;
 
 const getLogoBase64=async()=>{try{const res=await fetch(LogoNavimag);if(!res.ok)return null;const blob=await res.blob();return await new Promise(resolve=>{const r=new FileReader();r.onloadend=()=>resolve(r.result);r.readAsDataURL(blob);});}catch{return null;}};
 
@@ -36989,7 +36993,8 @@ if(loading) return(
 <div className="min-h-screen flex items-center justify-center" style={{background:`linear-gradient(160deg,${NV.navy},${NV.blue})`}}>
 <div className="text-center">
 <div className="w-16 h-16 bg-white/20 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-white/30"><Wrench size={32} className="text-white animate-pulse"/></div>
-<p className="text-white font-bold text-lg">MANTEK ERP</p>
+<p className="text-white font-bold text-lg">SGN Navimag</p>
+<p className="text-blue-200/50 text-[10px] tracking-widest -mt-0.5">by Axentis</p>
 <p className="text-blue-200 text-sm mt-1">Conectando con la base de datos...</p>
 </div>
 </div>

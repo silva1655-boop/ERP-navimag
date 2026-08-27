@@ -1,6 +1,6 @@
 {
-  "name": "MANTEK ERP — Navimag Carga",
-  "short_name": "MANTEK",
+  "name": "SGN Navimag — by Axentis",
+  "short_name": "SGN Navimag",
   "description": "Sistema de gestión de mantenimiento Navimag Carga",
   "start_url": "/",
   "display": "standalone",

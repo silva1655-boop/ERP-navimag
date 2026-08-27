@@ -253,7 +253,7 @@ exports.sendManualPush = onRequest(
     const{title,body,roles,secret}=req.body;
     if(secret!==PUSH_SECRET){res.status(401).json({error:"No autorizado"});return;}
     const tokens=await getTokens(roles||null);
-    await sendPush(tokens,{title:title||"MANTEK ERP",body:body||"",icon:"/icon-192.png",badge:"/icon-192.png",tag:`manual-${Date.now()}`});
+    await sendPush(tokens,{title:title||"SGN Navimag",body:body||"",icon:"/icon-192.png",badge:"/icon-192.png",tag:`manual-${Date.now()}`});
     res.status(200).json({ok:true,sent:tokens.length});
   }
 );
