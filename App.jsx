@@ -3645,6 +3645,13 @@ const tractosDetalleDB=useMemo(()=>{
 const faenasCerradasRecientesDB=useMemo(()=>
   faenasRecientesDB.filter(f=>f.estado==="cerrada").sort((a,b)=>new Date(b.cerradoEn||0)-new Date(a.cerradoEn||0)).slice(0,5)
 ,[faenasRecientesDB]);
+// Faenas que quedaron abiertas (sin cerrar) hace 12+ horas — aviso de que
+// probablemente se olvidaron de cerrarla. Se recalcula en cada render (no
+// useMemo con dependencia fija) para que el aviso aparezca solo con el
+// paso del tiempo, no solo cuando cambian los datos de la faena.
+const faenasAbiertasLargasDB=faenasRecientesDB.filter(f=>
+  f.estado==="activa"&&f.inicioOp&&(Date.now()-new Date(f.inicioOp).getTime())/3600000>=12
+);
 
 // Widget de Disponibilidad y Utilización del Dashboard Operaciones — mismo
 // allowlist que el módulo completo (canAccessDisponibilidad), así que solo
@@ -3705,6 +3712,22 @@ const widgetTractosFaenas=(
       {onNav&&<button onClick={()=>onNav("estado_tractos")} className="text-xs text-blue-600 hover:underline">Ver / actualizar →</button>}
     </div>
     <div className="p-4">
+      {faenasAbiertasLargasDB.length>0&&(
+        <div className="mb-3 bg-red-50 border border-red-300 rounded-xl px-3 py-2.5 flex items-start gap-2">
+          <span className="text-red-600 text-sm flex-shrink-0">🚨</span>
+          <div className="min-w-0">
+            <p className="text-xs font-bold text-red-700">
+              {faenasAbiertasLargasDB.length===1?"1 faena lleva":`${faenasAbiertasLargasDB.length} faenas llevan`} 12+ horas abierta{faenasAbiertasLargasDB.length===1?"":"s"} sin cerrar
+            </p>
+            {faenasAbiertasLargasDB.map(f=>(
+              <p key={f.id} className="text-[11px] text-red-600 mt-0.5">
+                · {f.buque} · Faena {f.numeroFaena} — abierta desde {new Date(f.inicioOp).toLocaleString("es-CL",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}
+              </p>
+            ))}
+            {onNav&&<button onClick={()=>onNav("faena_activa")} className="text-[11px] text-red-700 font-semibold hover:underline mt-1">Revisar y cerrar →</button>}
+          </div>
+        </div>
+      )}
       <div className="grid grid-cols-4 gap-2 text-center mb-3">
         {[
           {l:"Disponibles",v:tractosResumenDB.disponible,c:"text-emerald-600"},
@@ -19147,12 +19170,24 @@ function FaenaActivaPage({user,data}){
     return()=>{u1();u2();u3();u4();};
   },[]);
 
+  // Reloj propio para el aviso de "12+ horas abierta" — sin esto, si el
+  // usuario deja la pestaña abierta sin tocar nada, el aviso no aparecería
+  // hasta el próximo cambio de datos (un re-render "gratis"). Cada 5 min
+  // alcanza sobra para un umbral de horas.
+  const [nowTick,setNowTick]=useState(()=>Date.now());
+  useEffect(()=>{
+    const iv=setInterval(()=>setNowTick(Date.now()),5*60*1000);
+    return()=>clearInterval(iv);
+  },[]);
+
   const hoy=new Date().toISOString().slice(0,10);
   // La faena activa del usuario NO se acota a "hoy" — si quedó abierta de un
   // turno anterior (ej. faena nocturna sin cerrar), tiene que seguir
   // apareciendo acá para poder cerrarla, no esconderse al pasar la medianoche.
   const esSup=user.role==="supervisor"||user.role==="admin"||user.role==="jefe_operaciones"||user.role==="sup_operaciones"||user.authRole==="ADMIN";
 const faenaActiva=faenas.find(f=>f.estado==="activa"&&(esSup||f.creadoPor===quien));
+  const horasFaenaAbierta=faenaActiva?.inicioOp?(nowTick-new Date(faenaActiva.inicioOp).getTime())/3600000:0;
+  const faenaAbiertaLarga=horasFaenaAbierta>=12;
 
   const [vista,setVista]=useState("inicio");
   const [form,setForm]=useState({
@@ -19241,6 +19276,11 @@ const faenaActiva=faenas.find(f=>f.estado==="activa"&&(esSup||f.creadoPor===quie
   const cerrarFaena=async()=>{
     if(!horaFin){alert("Ingresa la hora de término.");return;}
     if(detencionesActiva.some(d=>!d.fin)){alert("Completa la hora de reposición de todos los tractos detenidos antes de cerrar.");return;}
+    // Aviso extra si el cierre implica una faena de 12+ horas — suele ser
+    // señal de que se olvidaron de cerrarla antes, no una faena real de esa
+    // duración. No bloquea, solo pide confirmar con el dato a la vista.
+    const horasCierre=(new Date(horaFin)-new Date(faenaActiva.inicioOp))/3600000;
+    if(horasCierre>=12&&!window.confirm(`Esta faena quedaría registrada con ${horasCierre.toFixed(1)} horas de duración (inicio → término). Si es un error de hora, corrígela antes de continuar.\n\n¿Cerrar la faena con estos datos?`)) return;
     const terminoOp=new Date(horaFin).toISOString();
     const indisp=detencionesActiva.reduce((s,d)=>s+(d.horasReparacion||0),0);
     // capacidadOperadores final = máximo visto entre todos los turnos
@@ -19462,7 +19502,12 @@ const faenaActiva=faenas.find(f=>f.estado==="activa"&&(esSup||f.creadoPor===quie
                 <div key={f.id} className="flex items-center gap-3 px-4 py-3">
                   <div className={`w-2 h-2 rounded-full flex-shrink-0 ${f.estado==="activa"?"bg-emerald-500":"bg-gray-300"}`}/>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-gray-800">Faena {f.numeroFaena}</p>
+                    <p className="text-sm font-semibold text-gray-800 flex items-center gap-1.5">
+                      Faena {f.numeroFaena}
+                      {f.estado==="activa"&&f.inicioOp&&(nowTick-new Date(f.inicioOp).getTime())/3600000>=12&&(
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-red-100 text-red-700">🚨 12h+</span>
+                      )}
+                    </p>
                     <p className="text-xs text-gray-400">{f.buque} · {f.terminal} · {f.estado==="activa"?"En curso":"Cerrada"}{f.creadoPor?` · ${f.creadoPor}`:""}</p>
                   </div>
                   {f.estado==="activa"&&(esSup||f.creadoPor===quien)&&(
@@ -19535,6 +19580,12 @@ const faenaActiva=faenas.find(f=>f.estado==="activa"&&(esSup||f.creadoPor===quie
             {faenaActiva.tractosDisponiblesSnapshot!=null&&<p className="text-xs text-gray-400">Disponibles al iniciar: {faenaActiva.tractosDisponiblesSnapshot}</p>}
           </div>
         </div>
+        {faenaAbiertaLarga&&(
+          <div className="mt-2 flex items-center gap-3 bg-red-50 border border-red-300 rounded-xl px-3 py-2">
+            <span className="text-red-600 text-sm">🚨</span>
+            <p className="text-xs text-red-700 font-semibold">Esta faena lleva {horasFaenaAbierta.toFixed(1)} horas abierta — si ya terminó, ciérrala para que no quede pendiente.</p>
+          </div>
+        )}
         {detencionesActiva.length>0&&(
           <div className="mt-2 flex items-center gap-3 bg-red-50 border border-red-200 rounded-xl px-3 py-2">
             <span className="text-red-500 text-sm">⚠️</span>

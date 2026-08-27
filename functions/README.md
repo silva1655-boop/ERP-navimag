@@ -1,8 +1,9 @@
 # mantek-functions — Web Push para MANTEK ERP
 
 Cloud Functions que detectan eventos en Firestore (checklist con falla
-crítica, equipo fuera de servicio, nueva solicitud, OT asignada) y mandan
-notificaciones push a los tokens registrados en `mantek_v2/pushTokens`.
+crítica, equipo fuera de servicio, nueva solicitud, OT asignada, OT
+completada, faena en curso abierta 12+ horas) y mandan notificaciones push
+a los tokens registrados en `mantek_v2/pushTokens`.
 
 **Cobertura actual: solo Taller (`mantek_v2`).** Marítimo/Dalka/SGN no
 disparan push todavía — habría que agregar triggers equivalentes apuntando
@@ -97,6 +98,13 @@ curl -X POST https://us-central1-<PROJECT_ID>.cloudfunctions.net/sendManualPush 
   TODOS los tokens registrados, con el `data` necesario para que el
   cliente arme un preview (`equipCode`, `observations`, `mec`) cuando quien
   recibe la notificación no tiene acceso a la página de OTs.
+- Faena en curso (`mantek_faena/faenas`) sigue con `estado:"activa"` 12+
+  horas después de `inicioOp` → notifica a supervisor/admin/operaciones.
+  A diferencia de los demás triggers (reaccionan a una escritura), este es
+  un `onSchedule` que corre cada hora — el problema acá es el paso del
+  tiempo, no un cambio de dato. Avisa UNA sola vez por faena (marca
+  `avisoAbiertaEnviado:true` en el doc) mientras siga abierta, para no
+  repetir el aviso en cada corrida.
 - Tokens que devuelven 410/404 al enviar se borran de `pushTokens`
   automáticamente en la misma llamada.
 - Un mismo usuario puede tener un token por dispositivo (`userId+device`),

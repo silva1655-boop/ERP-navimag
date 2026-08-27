@@ -1,6 +1,7 @@
 "use strict";
 const {onDocumentCreated, onDocumentWritten} = require("firebase-functions/v2/firestore");
 const {onRequest} = require("firebase-functions/v2/https");
+const {onSchedule} = require("firebase-functions/v2/scheduler");
 const admin   = require("firebase-admin");
 const webpush = require("web-push");
 
@@ -8,6 +9,9 @@ admin.initializeApp();
 const db = admin.firestore();
 
 const COLL = "mantek_v2";
+// Faena en Curso vive en una colección propia, aparte de mantek_v2 — mismo
+// nombre que COLL_FAENA en App.jsx.
+const COLL_FAENA = "mantek_faena";
 
 // VAPID desde .env
 const VAPID_PUBLIC  = process.env.VAPID_PUBLIC;
@@ -179,6 +183,45 @@ exports.onOTCompletada = onDocumentWritten(
       };
       await sendPush(tokens,payload);
     }
+  }
+);
+
+// TRIGGER 6 — Faena en curso abierta 12+ horas sin cerrar (Faena en Curso,
+// Taller). A diferencia de los triggers anteriores, que reaccionan a una
+// escritura, acá el problema es el paso del tiempo SIN que nadie escriba
+// nada — por eso es la única onSchedule del proyecto (corre cada hora).
+// Marca avisoAbiertaEnviado en la faena para avisar UNA sola vez por
+// faena mientras siga abierta, no en cada corrida.
+exports.onFaenaAbiertaLarga = onSchedule(
+  {schedule:"every 60 minutes", region:"southamerica-west1", timeZone:"America/Santiago"},
+  async () => {
+    const ref=db.collection(COLL_FAENA).doc("faenas");
+    const snap=await ref.get();
+    if(!snap.exists) return;
+    const faenas=snap.data().data||[];
+    const ahora=Date.now();
+    const avisos=[];
+    const actualizadas=faenas.map(f=>{
+      if(f.estado!=="activa"||!f.inicioOp||f.avisoAbiertaEnviado) return f;
+      const horas=(ahora-new Date(f.inicioOp).getTime())/3600000;
+      if(horas<12) return f;
+      avisos.push(f);
+      return {...f,avisoAbiertaEnviado:true};
+    });
+    if(!avisos.length) return;
+
+    const tokens=await getTokens(["supervisor","admin","operaciones","jefe_operaciones","sup_operaciones"]);
+    for(const f of avisos){
+      const horas=((ahora-new Date(f.inicioOp).getTime())/3600000).toFixed(1);
+      await sendPush(tokens,{
+        title:"⏱️ Faena abierta hace "+horas+" horas",
+        body:`${f.buque} — Faena ${f.numeroFaena} sigue sin cerrarse. Revisa si quedó pendiente.`,
+        icon:"/icon-192.png",badge:"/icon-192.png",
+        tag:`faena-abierta-${f.id}`,requireInteraction:true,
+        data:{url:"/",page:"faena_activa",type:"faena_abierta_larga",faenaId:f.id},
+      });
+    }
+    await ref.set({data:actualizadas});
   }
 );
 
