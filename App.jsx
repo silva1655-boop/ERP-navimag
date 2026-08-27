@@ -2401,9 +2401,7 @@ function ModuleSelector({onSelect}){
       <div className="w-full max-w-4xl mx-auto">
         {/* Header */}
         <div className="text-center mb-10">
-          <div className="w-16 h-16 bg-white/15 backdrop-blur-sm rounded-2xl flex items-center justify-center border border-white/30 shadow-xl mx-auto mb-4">
-            <Wrench size={32} className="text-white"/>
-          </div>
+          <img src={LogoNavimag} alt="Navimag" className="w-16 h-16 rounded-2xl shadow-xl mx-auto mb-4"/>
           <p className="text-white font-bold text-3xl tracking-wide">SGN Navimag</p>
           <p className="text-blue-200/50 text-[10px] tracking-widest -mt-0.5">by Axentis</p>
           <p className="text-blue-200 text-sm mt-2 tracking-widest">NAVIMAG CARGA · SELECCIONA TU MÓDULO</p>
@@ -2493,9 +2491,7 @@ function BarcoSelector({onSelect,onBack}){
       <div className="w-full max-w-2xl">
         {/* Header */}
         <div className="text-center mb-10">
-          <div className="w-16 h-16 bg-white/15 backdrop-blur-sm rounded-2xl flex items-center justify-center border border-white/30 shadow-xl mx-auto mb-4">
-            <Wrench size={32} className="text-white"/>
-          </div>
+          <img src={LogoNavimag} alt="Navimag" className="w-16 h-16 rounded-2xl shadow-xl mx-auto mb-4"/>
           <p className="text-white font-bold text-3xl tracking-wide">SGN Navimag</p>
           <p className="text-blue-200/50 text-[10px] tracking-widest -mt-0.5">by Axentis</p>
           <p className="text-blue-200 text-sm mt-2 tracking-widest">NAVIMAG CARGA · MÓDULO MARÍTIMO · SELECCIONA EL BUQUE</p>
@@ -2772,9 +2768,7 @@ return(
   <div className="flex-1 flex flex-col items-center justify-center relative z-10 px-4 py-8">
 
     <div className="text-center mb-8">
-      <div className="w-16 h-16 mx-auto mb-3 bg-white/15 backdrop-blur-sm rounded-2xl flex items-center justify-center border border-white/30 shadow-xl">
-        <Wrench size={28} className="text-white"/>
-      </div>
+      <img src={LogoNavimag} alt="Navimag" className="w-16 h-16 mx-auto mb-3 rounded-2xl shadow-xl"/>
       <p className="text-white font-bold text-3xl tracking-wide">SGN Navimag</p>
       <p className="text-blue-100/50 text-[10px] tracking-widest -mt-0.5">by Axentis</p>
       <p className="text-blue-100 text-xs tracking-widest font-medium mt-1">NAVIMAG CARGA · PLATAFORMA DE GESTIÓN Y MANTENIMIENTO</p>
@@ -3066,9 +3060,7 @@ return(
 {/* Logo */}
 <div className="p-4 border-b border-white/5 flex-shrink-0" style={{background:"#0F172A"}}>
 <div className="flex items-center gap-2.5">
-<div className="w-8 h-8 bg-white/15 rounded-lg flex items-center justify-center flex-shrink-0 border border-white/20">
-<Wrench size={15} className="text-white"/>
-</div>
+<img src={LogoNavimag} alt="Navimag" className="w-8 h-8 rounded-lg flex-shrink-0"/>
 <div>
 <p className="text-white font-bold text-sm">SGN Navimag</p>
 <p className="text-white/30 text-[9px] tracking-wide -mt-0.5">by Axentis</p>
@@ -36992,7 +36984,7 @@ if(activeModule==="maritimo"&&!activeBarco) return <BarcoSelector onSelect={b=>{
 if(loading) return(
 <div className="min-h-screen flex items-center justify-center" style={{background:`linear-gradient(160deg,${NV.navy},${NV.blue})`}}>
 <div className="text-center">
-<div className="w-16 h-16 bg-white/20 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-white/30"><Wrench size={32} className="text-white animate-pulse"/></div>
+<img src={LogoNavimag} alt="Navimag" className="w-16 h-16 rounded-2xl mx-auto mb-4 animate-pulse"/>
 <p className="text-white font-bold text-lg">SGN Navimag</p>
 <p className="text-blue-200/50 text-[10px] tracking-widest -mt-0.5">by Axentis</p>
 <p className="text-blue-200 text-sm mt-1">Conectando con la base de datos...</p>
