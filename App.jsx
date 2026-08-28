@@ -2733,11 +2733,7 @@ return(
     style={{background:"linear-gradient(180deg, rgba(0,32,96,0.55) 0%, rgba(0,32,96,0.35) 100%)",backdropFilter:"blur(6px)"}}>
 
     <div className="flex items-center gap-2.5 mb-10">
-      <svg viewBox="0 0 40 40" className="w-9 h-9">
-        <circle cx="20" cy="20" r="18" fill="none" stroke="white" strokeWidth="1.5"/>
-        <path d="M12 26 Q20 14 28 26" stroke="white" strokeWidth="1.5" fill="none"/>
-        <line x1="20" y1="10" x2="20" y2="20" stroke="white" strokeWidth="1.5"/>
-      </svg>
+      <img src={LogoNavimag} alt="Navimag" className="w-9 h-9 rounded-lg flex-shrink-0"/>
       <p className="text-white font-bold text-sm tracking-wide">NAVIMAG</p>
     </div>
 
