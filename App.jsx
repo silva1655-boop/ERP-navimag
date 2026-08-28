@@ -15156,12 +15156,21 @@ function ResumenMensual({data,activeModule}){
 
   const enMes=item=>{
     if(mesSel===MES_TODOS) return true;
+    // OJO con el orden: closedAt va PRIMERO. Las OTs de Plan Preventivo se
+    // auto-generan con anticipación (pctAnticipacion) — es normal que una
+    // OT programada para agosto se haya CREADO en julio. Si el filtro
+    // priorizaba createdAt, esa OT quedaba clasificada en julio aunque se
+    // haya completado en agosto: aparecía "0 completados" en Plan
+    // Preventivo (y en OTs en general) pese a haber trabajo real ese mes.
+    // Con closedAt primero: una OT ya cerrada se cuenta en el mes en que
+    // se cerró (lo que a la gente le importa ver en "Completadas"); una
+    // OT todavía abierta (sin closedAt) sigue cayendo en su mes de
+    // creación, como antes.
     // Las solicitudes (incluidas las de Fuera de Programa) se crean con
-    // "requestedAt", NUNCA con "createdAt" — sin este candidato quedaban
+    // "requestedAt", NUNCA con "createdAt" — sin ese candidato quedaban
     // siempre afuera del filtro por mes y el tab mostraba 0 solicitudes
-    // aunque existieran (el conteo "Pendientes" del sidebar sí las veía
-    // porque ese cuenta el total histórico, sin filtrar por mes).
-    const fecha=item.createdAt||item.requestedAt||item.closedAt||item.updatedAt||"";
+    // aunque existieran.
+    const fecha=item.closedAt||item.createdAt||item.requestedAt||item.updatedAt||"";
     return fecha.startsWith(mesSel);
   };
   const mesesDisp=Array.from({length:6},(_,i)=>{
