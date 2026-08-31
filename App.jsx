@@ -19222,6 +19222,12 @@ const faenaActiva=faenas.find(f=>f.estado==="activa"&&(esSup||f.creadoPor===quie
   const detencionesActiva=detenciones.filter(d=>faenaActiva&&d.faenaId===faenaActiva.id);
   const totalHorasDet=detencionesActiva.reduce((s,d)=>s+(d.horasReparacion||0),0);
   const targetActual=targets.find(t=>t.buque===form.buque&&t.terminal===form.terminal);
+  // Target de la faena ABIERTA (distinto de targetActual, que es del
+  // formulario de "Iniciar Faena") — si no existe, cerrarFaena() va a
+  // fallar sin importar qué hora se ingrese. Se muestra ANTES de que la
+  // persona intente cerrar, no recién cuando ya llenó todo y le salta un
+  // alert genérico.
+  const targetFaenaActiva=faenaActiva&&targets.find(t=>t.buque===faenaActiva.buque&&t.terminal===faenaActiva.terminal);
 
   const guardarFaenas=async(actualizadas)=>{setFaenas(actualizadas);await setDoc(doc(db,COLL_FAENA,"faenas"),{data:actualizadas});};
   const guardarDetenciones=async(actualizadas)=>{setDetenciones(actualizadas);await setDoc(doc(db,COLL_DETENCIONES,"detenciones"),{data:actualizadas});};
@@ -19283,12 +19289,24 @@ const faenaActiva=faenas.find(f=>f.estado==="activa"&&(esSup||f.creadoPor===quie
     const horasCierre=(new Date(horaFin)-new Date(faenaActiva.inicioOp))/3600000;
     if(horasCierre>=12&&!window.confirm(`Esta faena quedaría registrada con ${horasCierre.toFixed(1)} horas de duración (inicio → término). Si es un error de hora, corrígela antes de continuar.\n\n¿Cerrar la faena con estos datos?`)) return;
     const terminoOp=new Date(horaFin).toISOString();
+    // Mismos 2 casos que calcularFaenaDerivados puede rechazar, chequeados
+    // ANTES de llamarla para poder avisar cuál de los dos es — el alert
+    // genérico de antes no distinguía "falta el target" de "la hora está
+    // mal", y la persona no sabía qué corregir.
+    if(!targetFaenaActiva){
+      alert(`No hay un target configurado para ${faenaActiva.buque} · ${faenaActiva.terminal} — sin eso no se puede calcular disponibilidad/utilización. Pídele a un supervisor que lo agregue en Disponibilidad y Utilización antes de cerrar.`);
+      return;
+    }
+    if(new Date(terminoOp)<=new Date(faenaActiva.inicioOp)){
+      alert("La hora de término tiene que ser posterior a la hora de inicio de la faena — revisa la hora ingresada.");
+      return;
+    }
     const indisp=detencionesActiva.reduce((s,d)=>s+(d.horasReparacion||0),0);
     // capacidadOperadores final = máximo visto entre todos los turnos
     // registrados durante la faena (no solo el del turno inicial).
     const faenaConDotacionFinal={...faenaActiva,capacidadOperadores:dotacionMax,terminoOp};
     const derivados=calcularFaenaDerivados(faenaConDotacionFinal,targets,indisp);
-    if(!derivados){alert("No se pudo calcular la faena — revisa que el horario de término sea posterior al de inicio y que exista un target configurado.");return;}
+    if(!derivados){alert("No se pudo calcular la faena por un motivo inesperado — avisa a soporte con la hora de inicio/término que estabas usando.");return;}
     const cerrada={...faenaConDotacionFinal,estado:"cerrada",indisponibilidadHH:indisp,...derivados,cerradoPor:quien,cerradoEn:new Date().toISOString()};
     await guardarFaenas(faenas.map(f=>f.id===faenaActiva.id?cerrada:f));
     setHoraFin("");
@@ -19684,6 +19702,11 @@ const faenaActiva=faenas.find(f=>f.estado==="activa"&&(esSup||f.creadoPor===quie
 
         <div className="bg-white rounded-2xl border border-gray-200 p-4 space-y-3">
           <p className="font-semibold text-gray-800 text-sm">Cerrar faena</p>
+          {!targetFaenaActiva&&(
+            <div className="bg-red-50 border border-red-200 rounded-xl px-3 py-2">
+              <p className="text-xs text-red-700 font-semibold">🚫 No hay un target configurado para {faenaActiva.buque} · {faenaActiva.terminal} — no vas a poder cerrar esta faena hasta que un supervisor lo agregue en Disponibilidad y Utilización.</p>
+            </div>
+          )}
           <div>
             <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1.5">Hora de término *</label>
             <input type="datetime-local" value={horaFin} onChange={e=>setHoraFin(e.target.value)} min={faenaActiva.inicioOp?.slice(0,16)} className={iCls}/>
@@ -19694,7 +19717,7 @@ const faenaActiva=faenas.find(f=>f.estado==="activa"&&(esSup||f.creadoPor===quie
             </div>
           )}
           <p className="text-gray-400 text-[11px]">Se guardará con <strong>{dotacionMax} operadores</strong> (máximo registrado entre todos los turnos) y <strong>{faenaActiva.tractosUtilizados} tractos</strong> en servicio.</p>
-          <button onClick={cerrarFaena} disabled={!horaFin||detencionesActiva.some(d=>!d.fin)}
+          <button onClick={cerrarFaena} disabled={!horaFin||detencionesActiva.some(d=>!d.fin)||!targetFaenaActiva}
             className="w-full py-3.5 rounded-2xl text-white font-bold text-sm transition disabled:opacity-40 disabled:cursor-not-allowed"
             style={{background:"#CC0000"}}>
             🔒 Cerrar y guardar faena
