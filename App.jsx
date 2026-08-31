@@ -10369,6 +10369,11 @@ if(isMaritimo){
       📋 Planes
       {allPlanesUnificados.length>0&&<span className={`ml-1.5 text-xs rounded-full px-1.5 py-0.5 ${marTab==="planes"?"bg-white/30":"bg-blue-100 text-blue-700"}`}>{allPlanesUnificados.length}</span>}
     </button>
+    <button onClick={()=>setMarTab("ip10")}
+      className={`px-4 py-2 rounded-lg text-sm font-medium transition ${marTab==="ip10"?"text-white shadow-sm":"text-gray-600 hover:text-gray-800"}`}
+      style={marTab==="ip10"?{background:NV.blue}:{}}>
+      🗓️ Programación PM
+    </button>
   </div>
 
   {/* ── PLANES TAB ── */}
@@ -10531,6 +10536,142 @@ if(isMaritimo){
       )}
     </div>}
 
+  {/* ── PROGRAMACIÓN PM (estilo IP10 de SAP) ── */}
+  {marTab==="ip10"&&(()=>{
+    // Toda la flota del buque activo junta en una tabla, con la fecha
+    // estimada de cada plan — mismo cálculo que ya usa la pestaña
+    // "Proyección" del detalle de equipo, en Equipos, pero recorriendo
+    // TODOS los equipos de una vez en vez de uno a la vez.
+    const hoy=new Date();
+    const fmtDia=d=>d?d.toLocaleDateString("es-CL",{day:"2-digit",month:"short",year:"numeric"}):"—";
+
+    // allPlanesUnificados ya junta planAssignments + plans (legado,
+    // adaptado con _isLegacy:true) — es la MISMA fuente que usa la
+    // pestaña "📋 Planes" de al lado, para que las dos vistas coincidan
+    // siempre en qué planes existen.
+    const filasAssign=allPlanesUnificados.filter(a=>a.activo).map(a=>{
+      const eq=equip.find(e=>e.id===a.equipId);
+      const tpl=a._isLegacy?null:planTemplates.find(t=>t.id===a.templateId);
+      const avgH=getAvgActivo(eq);
+      const tipoA=(tpl?.tipoPlan||tpl?.tipo||a.tipoPlan||"horometro").toLowerCase();
+      let fecha=null,horasRestantes=null;
+      if(tipoA==="calendario"){
+        if(a.nextDueDate) fecha=new Date(a.nextDueDate);
+      }else if(avgH>0){
+        const currentH=eq?.hours||0;
+        const nextDue=parseFloat(a.nextDueHours)||0;
+        if(nextDue>0){
+          const dr=(nextDue-currentH)/avgH;
+          fecha=new Date(hoy.getFullYear(),hoy.getMonth(),hoy.getDate()+Math.round(dr));
+          horasRestantes=nextDue-currentH;
+        }
+      }
+      const freq=tpl?.frequency||a.frequency||0;
+      const unidadFreq=tpl?.unidad||a._planRef?.unidad||(tipoA==="calendario"?"días":"h");
+      return{id:"a_"+a.id,equipo:a.eqmCode||eq?.code||"—",equipoNombre:eq?.name||"",plan:a._isLegacy?a._nombre:(tpl?.name||a.templateCode||"PM"),
+        area:a.area||"",responsable:a.responsable||"",
+        tipo:tipoA==="calendario"?"Calendario":"Horómetro",
+        frecuencia:freq?`${freq} ${unidadFreq}`:"—",
+        ultimaEjecucion:a.lastClosedAt?new Date(a.lastClosedAt).toLocaleDateString("es-CL"):(a.lastBaseHours?`${a.lastBaseHours} h`:"—"),
+        fecha,horasRestantes};
+    });
+
+    // Estado tipo semáforo — vencido / próximo (30 días) / OK / sin datos
+    // (plan sin promedio de horas definido, no se puede proyectar).
+    const todas=filasAssign.map(f=>{
+      let estado="sin_datos",dias=null;
+      if(f.fecha){
+        dias=Math.round((f.fecha-hoy)/86400000);
+        estado=dias<0?"vencido":dias<=30?"proximo":"ok";
+      }
+      return{...f,estado,dias};
+    }).sort((a,b)=>(a.fecha?a.fecha.getTime():Infinity)-(b.fecha?b.fecha.getTime():Infinity));
+
+    const conteo={vencido:0,proximo:0,ok:0,sin_datos:0};
+    todas.forEach(f=>conteo[f.estado]++);
+
+    const ESTADO_CFG={
+      vencido:{label:"Vencido",cls:"bg-red-100 text-red-700"},
+      proximo:{label:"Próximo (≤30d)",cls:"bg-amber-100 text-amber-700"},
+      ok:{label:"OK",cls:"bg-emerald-100 text-emerald-700"},
+      sin_datos:{label:"Sin datos",cls:"bg-gray-100 text-gray-500"},
+    };
+
+    const visibles=todas.filter(f=>{
+      if(ip10Estado&&f.estado!==ip10Estado) return false;
+      if(ip10Search&&!(`${f.equipo} ${f.equipoNombre} ${f.plan} ${f.responsable}`.toLowerCase().includes(ip10Search.toLowerCase()))) return false;
+      return true;
+    });
+
+    const exportar=()=>{
+      const headers=["Equipo","Nombre equipo","Plan","Área","Tipo","Frecuencia","Responsable","Última ejecución","Próxima fecha estimada","Estado"];
+      const rows=visibles.map(f=>[f.equipo,f.equipoNombre,f.plan,f.area,f.tipo,f.frecuencia,f.responsable,f.ultimaEjecucion,f.fecha?fmtDia(f.fecha):"—",ESTADO_CFG[f.estado].label]);
+      exportarFilasComoExcel("Programación PM",headers,rows,`programacion-pm-${activeBarco||"maritimo"}-${new Date().toISOString().slice(0,10)}`);
+    };
+
+    return(
+    <div className="space-y-4">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex gap-2 flex-wrap">
+          {Object.entries(ESTADO_CFG).map(([k,cfg])=>(
+            <button key={k} onClick={()=>setIp10Estado(ip10Estado===k?"":k)}
+              className={`text-xs font-semibold px-3 py-1.5 rounded-full border transition ${ip10Estado===k?cfg.cls+" border-transparent":"bg-white text-gray-500 border-gray-200 hover:border-gray-400"}`}>
+              {cfg.label} · {conteo[k]}
+            </button>
+          ))}
+        </div>
+        <div className="flex gap-2 items-center">
+          <input value={ip10Search} onChange={e=>setIp10Search(e.target.value)} placeholder="Buscar equipo, plan, responsable..."
+            className="px-3 py-1.5 rounded-lg border border-gray-200 text-sm w-64"/>
+          <button onClick={exportar} className={btnSecondary} style={{borderColor:"#16a34a",color:"#16a34a",background:"white"}}>
+            <Download size={15}/>Exportar Excel
+          </button>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-gray-50 border-b border-gray-200 text-left text-gray-500 text-xs uppercase tracking-wide">
+                <th className="px-4 py-2.5">Equipo</th>
+                <th className="px-4 py-2.5">Plan</th>
+                <th className="px-4 py-2.5">Área</th>
+                <th className="px-4 py-2.5">Tipo</th>
+                <th className="px-4 py-2.5">Frecuencia</th>
+                <th className="px-4 py-2.5">Responsable</th>
+                <th className="px-4 py-2.5">Última ejecución</th>
+                <th className="px-4 py-2.5">Próxima fecha estimada</th>
+                <th className="px-4 py-2.5">Estado</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {visibles.map(f=>(
+                <tr key={f.id} className="hover:bg-gray-50 transition">
+                  <td className="px-4 py-2.5 font-semibold text-gray-800">{f.equipo}<p className="text-gray-400 text-xs font-normal">{f.equipoNombre}</p></td>
+                  <td className="px-4 py-2.5 text-gray-700">{f.plan}</td>
+                  <td className="px-4 py-2.5 text-gray-500">{f.area||"—"}</td>
+                  <td className="px-4 py-2.5 text-gray-500">{f.tipo}</td>
+                  <td className="px-4 py-2.5 text-gray-500">{f.frecuencia}</td>
+                  <td className="px-4 py-2.5 text-gray-500">{f.responsable||"—"}</td>
+                  <td className="px-4 py-2.5 text-gray-500">{f.ultimaEjecucion}</td>
+                  <td className="px-4 py-2.5 font-semibold text-gray-800">
+                    {f.fecha?fmtDia(f.fecha):"—"}
+                    {f.dias!=null&&<span className="block text-xs font-normal text-gray-400">{f.dias<0?`vencido hace ${Math.abs(f.dias)}d`:`en ${f.dias}d`}{f.horasRestantes!=null?` · ${Math.round(f.horasRestantes)}h`:""}</span>}
+                  </td>
+                  <td className="px-4 py-2.5"><span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${ESTADO_CFG[f.estado].cls}`}>{ESTADO_CFG[f.estado].label}</span></td>
+                </tr>
+              ))}
+              {visibles.length===0&&(
+                <tr><td colSpan={9} className="px-4 py-10 text-center text-gray-400 text-sm">Sin planes que coincidan con el filtro.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    );
+  })()}
 
   {/* ── MODAL: Editar plan ── */}
   {showEditPlanAssign&&editPlanAssign&&editPlanAssignForm&&(
@@ -11366,166 +11507,10 @@ return(
 
 {/* Tabs */}
 <div className="flex gap-1 mb-5 bg-gray-100 p-1 rounded-lg w-fit">
-{[["vista","Vista General"],["planes","Por Equipo"],["tareas","Por Tarea"],["plantillas","Plantillas"],
-  ...(activeModule==="maritimo"?[["ip10","Programación PM"]]:[])].map(([t,l])=>(
+{[["vista","Vista General"],["planes","Por Equipo"],["tareas","Por Tarea"],["plantillas","Plantillas"]].map(([t,l])=>(
 <button key={t} onClick={()=>setTab(t)} className={`px-4 py-1.5 rounded-md text-sm font-medium transition ${tab===t?"bg-white text-gray-900 shadow-sm":"text-gray-500 hover:text-gray-700"}`}>{l}</button>
 ))}
 </div>
-
-{tab==="ip10"&&(()=>{
-  // "Programación PM", estilo IP10 de SAP — toda la flota del buque activo
-  // junta en una tabla, con la fecha estimada de cada plan (mismo cálculo
-  // que ya usa la pestaña "Proyección" del detalle de equipo, en Equipos,
-  // pero recorriendo TODOS los equipos de una vez en vez de uno a la vez).
-  const hoy=new Date();
-  const fmtDia=d=>d?d.toLocaleDateString("es-CL",{day:"2-digit",month:"short",year:"numeric"}):"—";
-
-  const filasLegacy=(plans||[]).filter(p=>p.activo!==false).map(p=>{
-    const eq=equip.find(e=>e.id===p.equipId);
-    const avgH=getAvgActivo(eq);
-    const tipo=(p.tipoPlan||"horometro").toLowerCase();
-    let fecha=null,horasRestantes=null;
-    if(tipo==="calendario"){
-      const nd=p.nextDueDate||p.proximaFecha;
-      if(nd) fecha=new Date(nd);
-    }else if(avgH>0){
-      const currentH=eq?.hours||0;
-      const target=parseFloat(p.horometroTarget)||0;
-      if(target>0){
-        const dr=(target-currentH)/avgH;
-        fecha=new Date(hoy.getFullYear(),hoy.getMonth(),hoy.getDate()+Math.round(dr));
-        horasRestantes=target-currentH;
-      }
-    }
-    return{id:"p_"+p.id,equipo:eq?.code||"—",equipoNombre:eq?.name||"",plan:p.name||"PM",
-      area:p.area||"",responsable:p.responsable||"",
-      tipo:tipo==="calendario"?"Calendario":"Horómetro",
-      frecuencia:p.frequency?`${p.frequency} ${p.unidad||(tipo==="calendario"?"días":"h")}`:"—",
-      ultimaEjecucion:p.fechaUltima?new Date(p.fechaUltima+"T12:00:00").toLocaleDateString("es-CL"):(p.lastHorometro?`${p.lastHorometro} h`:"—"),
-      fecha,horasRestantes};
-  });
-
-  const filasAssign=(planAssignments||[]).filter(a=>a.activo).map(a=>{
-    const eq=equip.find(e=>e.id===a.equipId);
-    const tpl=(planTemplates||[]).find(t=>t.id===a.templateId);
-    const avgH=getAvgActivo(eq);
-    const tipoA=(tpl?.tipoPlan||tpl?.tipo||a.tipoPlan||"horometro").toLowerCase();
-    let fecha=null,horasRestantes=null;
-    if(tipoA==="calendario"){
-      if(a.nextDueDate) fecha=new Date(a.nextDueDate);
-    }else if(avgH>0){
-      const currentH=eq?.hours||0;
-      const nextDue=parseFloat(a.nextDueHours)||0;
-      if(nextDue>0){
-        const dr=(nextDue-currentH)/avgH;
-        fecha=new Date(hoy.getFullYear(),hoy.getMonth(),hoy.getDate()+Math.round(dr));
-        horasRestantes=nextDue-currentH;
-      }
-    }
-    return{id:"a_"+a.id,equipo:a.eqmCode||eq?.code||"—",equipoNombre:eq?.name||"",plan:tpl?.name||a.templateCode||"PM",
-      area:a.area||"",responsable:a.responsable||"",
-      tipo:tipoA==="calendario"?"Calendario":"Horómetro",
-      frecuencia:tpl?.frequency?`${tpl.frequency} ${tpl.unidad||(tipoA==="calendario"?"días":"h")}`:"—",
-      ultimaEjecucion:a.lastClosedAt?new Date(a.lastClosedAt).toLocaleDateString("es-CL"):(a.lastBaseHours?`${a.lastBaseHours} h`:"—"),
-      fecha,horasRestantes};
-  });
-
-  // Estado tipo semáforo — vencido / próximo (30 días) / OK / sin datos
-  // (plan sin promedio de horas definido, no se puede proyectar).
-  const todas=[...filasLegacy,...filasAssign].map(f=>{
-    let estado="sin_datos",dias=null;
-    if(f.fecha){
-      dias=Math.round((f.fecha-hoy)/86400000);
-      estado=dias<0?"vencido":dias<=30?"proximo":"ok";
-    }
-    return{...f,estado,dias};
-  }).sort((a,b)=>(a.fecha?a.fecha.getTime():Infinity)-(b.fecha?b.fecha.getTime():Infinity));
-
-  const conteo={vencido:0,proximo:0,ok:0,sin_datos:0};
-  todas.forEach(f=>conteo[f.estado]++);
-
-  const ESTADO_CFG={
-    vencido:{label:"Vencido",cls:"bg-red-100 text-red-700"},
-    proximo:{label:"Próximo (≤30d)",cls:"bg-amber-100 text-amber-700"},
-    ok:{label:"OK",cls:"bg-emerald-100 text-emerald-700"},
-    sin_datos:{label:"Sin datos",cls:"bg-gray-100 text-gray-500"},
-  };
-
-  const visibles=todas.filter(f=>{
-    if(ip10Estado&&f.estado!==ip10Estado) return false;
-    if(ip10Search&&!(`${f.equipo} ${f.equipoNombre} ${f.plan} ${f.responsable}`.toLowerCase().includes(ip10Search.toLowerCase()))) return false;
-    return true;
-  });
-
-  const exportar=()=>{
-    const headers=["Equipo","Nombre equipo","Plan","Área","Tipo","Frecuencia","Responsable","Última ejecución","Próxima fecha estimada","Estado"];
-    const rows=visibles.map(f=>[f.equipo,f.equipoNombre,f.plan,f.area,f.tipo,f.frecuencia,f.responsable,f.ultimaEjecucion,f.fecha?fmtDia(f.fecha):"—",ESTADO_CFG[f.estado].label]);
-    exportarFilasComoExcel("Programación PM",headers,rows,`programacion-pm-${activeBarco||"maritimo"}-${new Date().toISOString().slice(0,10)}`);
-  };
-
-  return(
-  <div className="space-y-4">
-    <div className="flex items-center justify-between flex-wrap gap-3">
-      <div className="flex gap-2 flex-wrap">
-        {Object.entries(ESTADO_CFG).map(([k,cfg])=>(
-          <button key={k} onClick={()=>setIp10Estado(ip10Estado===k?"":k)}
-            className={`text-xs font-semibold px-3 py-1.5 rounded-full border transition ${ip10Estado===k?cfg.cls+" border-transparent":"bg-white text-gray-500 border-gray-200 hover:border-gray-400"}`}>
-            {cfg.label} · {conteo[k]}
-          </button>
-        ))}
-      </div>
-      <div className="flex gap-2 items-center">
-        <input value={ip10Search} onChange={e=>setIp10Search(e.target.value)} placeholder="Buscar equipo, plan, responsable..."
-          className="px-3 py-1.5 rounded-lg border border-gray-200 text-sm w-64"/>
-        <button onClick={exportar} className={btnSecondary} style={{borderColor:"#16a34a",color:"#16a34a",background:"white"}}>
-          <Download size={15}/>Exportar Excel
-        </button>
-      </div>
-    </div>
-
-    <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm">
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="bg-gray-50 border-b border-gray-200 text-left text-gray-500 text-xs uppercase tracking-wide">
-              <th className="px-4 py-2.5">Equipo</th>
-              <th className="px-4 py-2.5">Plan</th>
-              <th className="px-4 py-2.5">Área</th>
-              <th className="px-4 py-2.5">Tipo</th>
-              <th className="px-4 py-2.5">Frecuencia</th>
-              <th className="px-4 py-2.5">Responsable</th>
-              <th className="px-4 py-2.5">Última ejecución</th>
-              <th className="px-4 py-2.5">Próxima fecha estimada</th>
-              <th className="px-4 py-2.5">Estado</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-50">
-            {visibles.map(f=>(
-              <tr key={f.id} className="hover:bg-gray-50 transition">
-                <td className="px-4 py-2.5 font-semibold text-gray-800">{f.equipo}<p className="text-gray-400 text-xs font-normal">{f.equipoNombre}</p></td>
-                <td className="px-4 py-2.5 text-gray-700">{f.plan}</td>
-                <td className="px-4 py-2.5 text-gray-500">{f.area||"—"}</td>
-                <td className="px-4 py-2.5 text-gray-500">{f.tipo}</td>
-                <td className="px-4 py-2.5 text-gray-500">{f.frecuencia}</td>
-                <td className="px-4 py-2.5 text-gray-500">{f.responsable||"—"}</td>
-                <td className="px-4 py-2.5 text-gray-500">{f.ultimaEjecucion}</td>
-                <td className="px-4 py-2.5 font-semibold text-gray-800">
-                  {f.fecha?fmtDia(f.fecha):"—"}
-                  {f.dias!=null&&<span className="block text-xs font-normal text-gray-400">{f.dias<0?`vencido hace ${Math.abs(f.dias)}d`:`en ${f.dias}d`}{f.horasRestantes!=null?` · ${Math.round(f.horasRestantes)}h`:""}</span>}
-                </td>
-                <td className="px-4 py-2.5"><span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${ESTADO_CFG[f.estado].cls}`}>{ESTADO_CFG[f.estado].label}</span></td>
-              </tr>
-            ))}
-            {visibles.length===0&&(
-              <tr><td colSpan={9} className="px-4 py-10 text-center text-gray-400 text-sm">Sin planes que coincidan con el filtro.</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-  );
-})()}
 
 {tab==="vista"&&(()=>{
   // Reuse the same overdue/soon calculations as "planes" tab
