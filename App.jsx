@@ -8165,9 +8165,19 @@ function parseEquipMaritimoXLSXRows(rows, existingEquip){
     const fechaHoro=toDate(row[7])||new Date().toISOString().slice(0,10);
     const buque=toStr(row[8]);
     const estrategia=toStr(row[9]);
+    // Promedio_Horas_Mensuales (columna nueva, opcional) — mismo campo y
+    // misma conversión a horas/día (avgOperatingHours) que usa el
+    // formulario manual de Editar equipo, para que getAvgActivo/
+    // estimarFechaDesdeHorometro sigan funcionando igual sin tocarlas.
+    // 0 o celda vacía se trata como "no viene en el archivo" y NO pisa un
+    // promedio ya cargado a mano — nunca vuelve a null/0 un dato bueno
+    // solo porque una fila del Excel lo trae en blanco.
+    const avgMensual=row[10]!=null&&row[10]!==""?parseHours(row[10]):null;
+    const avgDiarioDerivado=avgMensual&&avgMensual>0?Math.round((avgMensual/30.44)*10)/10:null;
+    const avgFields=avgMensual&&avgMensual>0?{avgHorasMensuales:avgMensual,avgOperatingHours:avgDiarioDerivado,avgPreference:"manual"}:{};
     const existing=(existingEquip||[]).find(e=>(e.code||"").toUpperCase()===code.toUpperCase());
     if(existing){
-      toUpdate.push({...existing,name,modelo,tipo,ubicacion,status,hours,lastHourmeterUpdate:fechaHoro,buque,estrategia});
+      toUpdate.push({...existing,name,modelo,tipo,ubicacion,status,hours,lastHourmeterUpdate:fechaHoro,buque,estrategia,...avgFields});
     } else {
       const now=new Date().toISOString();
       toCreate.push({
@@ -8176,6 +8186,7 @@ function parseEquipMaritimoXLSXRows(rows, existingEquip){
         serialNumber:"",criticality:"medio",createdAt:now,
         avgHorasMensuales:null,avgOperatingHours:null,avgOperatingHoursLearned:null,
         avgLearnedSamples:0,avgLearnedAt:"",avgPreference:"manual",
+        ...avgFields,
       });
     }
   });
