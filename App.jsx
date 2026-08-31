@@ -10931,6 +10931,19 @@ if(isMaritimo){
                 {nextDue>0?`${remaining>=0?"+":""}${remaining.toFixed(0)} h`:"—"}
               </span>
             </div>
+            {nextDue>0&&(()=>{
+              // Misma fecha estimada "≈ dd-mm-aaaa" que ya se ve en la
+              // tarjeta de la lista (proyección por promedio de horas/día
+              // del equipo) — acá faltaba, aunque el dato ya se calculaba.
+              const proySel=proyeccionPMHorometro(curH,nextDue,eqSel);
+              if(!proySel||proySel.vencido) return null;
+              return(
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500">Fecha estimada</span>
+                  <span className="font-mono font-bold text-blue-600">≈ {fmt(proySel.fecha)}</span>
+                </div>
+              );
+            })()}
             {nextDue>0&&(
             <div>
               <div className="h-2.5 bg-gray-200 rounded-full overflow-hidden">
