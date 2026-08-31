@@ -9741,6 +9741,8 @@ const [tab,setTab]=useState("vista");
 // flota del buque activo junta, con la fecha estimada de cada plan.
 const [ip10Search,setIp10Search]=useState("");
 const [ip10Estado,setIp10Estado]=useState("");
+const [ip10Equip,setIp10Equip]=useState("");
+const [ip10Horizonte,setIp10Horizonte]=useState("trimestre"); // trimestre|semestre|anio
 const [selectedPlanId,setSelectedPlanId]=useState(null);
 const [detailTab,setDetailTab]=useState("resumen");
 const [vistaCategory,setVistaCategory]=useState("vencidos");
@@ -10536,139 +10538,195 @@ if(isMaritimo){
       )}
     </div>}
 
-  {/* ── PROGRAMACIÓN PM (estilo IP10 de SAP) ── */}
+  {/* ── PROGRAMACIÓN PM (estilo IP10 de SAP — Deadline Monitoring) ── */}
   {marTab==="ip10"&&(()=>{
-    // Toda la flota del buque activo junta en una tabla, con la fecha
-    // estimada de cada plan — mismo cálculo que ya usa la pestaña
-    // "Proyección" del detalle de equipo, en Equipos, pero recorriendo
-    // TODOS los equipos de una vez en vez de uno a la vez.
+    // Un equipo/contador a la vez, igual que IP10 real: elegís el equipo y
+    // se despliega la lista de TODAS las próximas ocurrencias de sus planes
+    // dentro del horizonte elegido (no solo la próxima, como en 📋 Planes) —
+    // cada plan se repite cada tantos días/horas hasta el borde del
+    // horizonte, igual que la columna "FechaPrev." de la captura de SAP.
     const hoy=new Date();
     const fmtDia=d=>d?d.toLocaleDateString("es-CL",{day:"2-digit",month:"short",year:"numeric"}):"—";
+    const eqSelIP=equip.find(e=>e.id===ip10Equip)||null;
 
-    // allPlanesUnificados ya junta planAssignments + plans (legado,
-    // adaptado con _isLegacy:true) — es la MISMA fuente que usa la
-    // pestaña "📋 Planes" de al lado, para que las dos vistas coincidan
-    // siempre en qué planes existen.
-    const filasAssign=allPlanesUnificados.filter(a=>a.activo).map(a=>{
-      const eq=equip.find(e=>e.id===a.equipId);
-      const tpl=a._isLegacy?null:planTemplates.find(t=>t.id===a.templateId);
-      const avgH=getAvgActivo(eq);
+    const HORIZONTES={
+      trimestre:{label:"Trimestre",meses:3},
+      semestre:{label:"Semestre",meses:6},
+      anio:{label:"Año",meses:12},
+    };
+    const horizonEnd=(()=>{
+      const d=new Date(hoy);
+      d.setMonth(d.getMonth()+HORIZONTES[ip10Horizonte].meses);
+      return d;
+    })();
+
+    // Genera la serie de ocurrencias futuras de UN plan, repitiendo su
+    // frecuencia hasta pasar el borde del horizonte. Horómetro necesita el
+    // promedio de horas/día del equipo para poder convertir horas→fecha
+    // (igual que el resto de las proyecciones de la app); sin promedio no
+    // hay forma de proyectar más de una ocurrencia.
+    const generarOcurrencias=(a,tpl)=>{
       const tipoA=(tpl?.tipoPlan||tpl?.tipo||a.tipoPlan||"horometro").toLowerCase();
-      let fecha=null,horasRestantes=null;
+      const freq=tpl?.frequency||a.frequency||0;
+      if(freq<=0) return [];
+      const ocurrencias=[];
       if(tipoA==="calendario"){
-        if(a.nextDueDate) fecha=new Date(a.nextDueDate);
-      }else if(avgH>0){
-        const currentH=eq?.hours||0;
-        const nextDue=parseFloat(a.nextDueHours)||0;
-        if(nextDue>0){
-          const dr=(nextDue-currentH)/avgH;
-          fecha=new Date(hoy.getFullYear(),hoy.getMonth(),hoy.getDate()+Math.round(dr));
-          horasRestantes=nextDue-currentH;
+        if(!a.nextDueDate) return [];
+        let fecha=new Date(a.nextDueDate);
+        let guard=0;
+        while(fecha<=horizonEnd&&guard<200){
+          ocurrencias.push({fecha:new Date(fecha),horas:null});
+          fecha=new Date(fecha);
+          fecha.setDate(fecha.getDate()+freq);
+          guard++;
+        }
+      }else{
+        const avgH=getAvgActivo(eqSelIP);
+        if(avgH<=0) return [];
+        const currentH=eqSelIP?.hours||0;
+        let horas=parseFloat(a.nextDueHours)||0;
+        if(horas<=0) return [];
+        let guard=0;
+        while(guard<200){
+          const dr=(horas-currentH)/avgH;
+          const fecha=new Date(hoy.getFullYear(),hoy.getMonth(),hoy.getDate()+Math.round(dr));
+          if(fecha>horizonEnd) break;
+          ocurrencias.push({fecha,horas});
+          horas+=freq;
+          guard++;
         }
       }
-      const freq=tpl?.frequency||a.frequency||0;
-      const unidadFreq=tpl?.unidad||a._planRef?.unidad||(tipoA==="calendario"?"días":"h");
-      return{id:"a_"+a.id,equipo:a.eqmCode||eq?.code||"—",equipoNombre:eq?.name||"",plan:a._isLegacy?a._nombre:(tpl?.name||a.templateCode||"PM"),
-        area:a.area||"",responsable:a.responsable||"",
-        tipo:tipoA==="calendario"?"Calendario":"Horómetro",
-        frecuencia:freq?`${freq} ${unidadFreq}`:"—",
-        ultimaEjecucion:a.lastClosedAt?new Date(a.lastClosedAt).toLocaleDateString("es-CL"):(a.lastBaseHours?`${a.lastBaseHours} h`:"—"),
-        fecha,horasRestantes};
-    });
-
-    // Estado tipo semáforo — vencido / próximo (30 días) / OK / sin datos
-    // (plan sin promedio de horas definido, no se puede proyectar).
-    const todas=filasAssign.map(f=>{
-      let estado="sin_datos",dias=null;
-      if(f.fecha){
-        dias=Math.round((f.fecha-hoy)/86400000);
-        estado=dias<0?"vencido":dias<=30?"proximo":"ok";
-      }
-      return{...f,estado,dias};
-    }).sort((a,b)=>(a.fecha?a.fecha.getTime():Infinity)-(b.fecha?b.fecha.getTime():Infinity));
-
-    const conteo={vencido:0,proximo:0,ok:0,sin_datos:0};
-    todas.forEach(f=>conteo[f.estado]++);
-
-    const ESTADO_CFG={
-      vencido:{label:"Vencido",cls:"bg-red-100 text-red-700"},
-      proximo:{label:"Próximo (≤30d)",cls:"bg-amber-100 text-amber-700"},
-      ok:{label:"OK",cls:"bg-emerald-100 text-emerald-700"},
-      sin_datos:{label:"Sin datos",cls:"bg-gray-100 text-gray-500"},
+      return ocurrencias;
     };
 
-    const visibles=todas.filter(f=>{
-      if(ip10Estado&&f.estado!==ip10Estado) return false;
-      if(ip10Search&&!(`${f.equipo} ${f.equipoNombre} ${f.plan} ${f.responsable}`.toLowerCase().includes(ip10Search.toLowerCase()))) return false;
+    let filas=[];
+    if(ip10Equip){
+      // allPlanesUnificados ya junta planAssignments + plans (legado,
+      // adaptado con _isLegacy:true) — es la MISMA fuente que usa la
+      // pestaña "📋 Planes" de al lado.
+      const planesEquipo=allPlanesUnificados.filter(a=>a.equipId===ip10Equip&&a.activo);
+      planesEquipo.forEach(a=>{
+        const tpl=a._isLegacy?null:planTemplates.find(t=>t.id===a.templateId);
+        const nombrePlan=a._isLegacy?a._nombre:(tpl?.name||a.templateCode||"PM");
+        const tipoA=(tpl?.tipoPlan||tpl?.tipo||a.tipoPlan||"horometro").toLowerCase();
+        const freq=tpl?.frequency||a.frequency||0;
+        const unidadFreq=tpl?.unidad||a._planRef?.unidad||(tipoA==="calendario"?"días":"h");
+        generarOcurrencias(a,tpl).forEach((o,i)=>{
+          filas.push({
+            id:a.id+"_"+i,code:a.code,plan:nombrePlan,
+            tipo:tipoA==="calendario"?"Calendario":"Horómetro",
+            frecuencia:freq?`${freq} ${unidadFreq}`:"—",
+            fecha:o.fecha,horas:o.horas,
+            vencido:o.fecha<hoy,
+          });
+        });
+      });
+      filas.sort((a,b)=>a.fecha-b.fecha);
+      filas=filas.map((f,i)=>({...f,n:i+1}));
+    }
+
+    const visibles=filas.filter(f=>{
+      if(ip10Estado==="vencido"&&!f.vencido) return false;
+      if(ip10Estado==="programado"&&f.vencido) return false;
+      if(ip10Search&&!(`${f.plan} ${f.code}`.toLowerCase().includes(ip10Search.toLowerCase()))) return false;
       return true;
     });
+    const conteoVencidos=filas.filter(f=>f.vencido).length;
 
     const exportar=()=>{
-      const headers=["Equipo","Nombre equipo","Plan","Área","Tipo","Frecuencia","Responsable","Última ejecución","Próxima fecha estimada","Estado"];
-      const rows=visibles.map(f=>[f.equipo,f.equipoNombre,f.plan,f.area,f.tipo,f.frecuencia,f.responsable,f.ultimaEjecucion,f.fecha?fmtDia(f.fecha):"—",ESTADO_CFG[f.estado].label]);
-      exportarFilasComoExcel("Programación PM",headers,rows,`programacion-pm-${activeBarco||"maritimo"}-${new Date().toISOString().slice(0,10)}`);
+      const headers=["N°","Fecha prevista","Plan","Código","Tipo","Frecuencia","Horómetro estimado","Estado"];
+      const rows=visibles.map(f=>[f.n,fmtDia(f.fecha),f.plan,f.code,f.tipo,f.frecuencia,f.horas!=null?Math.round(f.horas):"—",f.vencido?"Vencido":"Programado"]);
+      exportarFilasComoExcel("Programación PM",headers,rows,`programacion-pm-${eqSelIP?.code||"equipo"}-${new Date().toISOString().slice(0,10)}`);
     };
 
     return(
     <div className="space-y-4">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex gap-2 flex-wrap">
-          {Object.entries(ESTADO_CFG).map(([k,cfg])=>(
-            <button key={k} onClick={()=>setIp10Estado(ip10Estado===k?"":k)}
-              className={`text-xs font-semibold px-3 py-1.5 rounded-full border transition ${ip10Estado===k?cfg.cls+" border-transparent":"bg-white text-gray-500 border-gray-200 hover:border-gray-400"}`}>
-              {cfg.label} · {conteo[k]}
-            </button>
-          ))}
-        </div>
-        <div className="flex gap-2 items-center">
-          <input value={ip10Search} onChange={e=>setIp10Search(e.target.value)} placeholder="Buscar equipo, plan, responsable..."
-            className="px-3 py-1.5 rounded-lg border border-gray-200 text-sm w-64"/>
-          <button onClick={exportar} className={btnSecondary} style={{borderColor:"#16a34a",color:"#16a34a",background:"white"}}>
-            <Download size={15}/>Exportar Excel
-          </button>
-        </div>
+      <div className="flex items-center gap-3 flex-wrap">
+        <select value={ip10Equip} onChange={e=>setIp10Equip(e.target.value)} className={sCls+" !w-72"}>
+          <option value="">— Elegí un equipo/contador —</option>
+          {[...equip].sort((a,b)=>(a.code||"").localeCompare(b.code||"")).map(e=>
+            <option key={e.id} value={e.id}>{e.code} — {e.name}</option>
+          )}
+        </select>
+        {eqSelIP&&(
+          <p className="text-xs text-gray-500">Contador actual: <strong className="font-mono">{(eqSelIP.hours||0).toLocaleString()} h</strong></p>
+        )}
       </div>
 
-      <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-gray-50 border-b border-gray-200 text-left text-gray-500 text-xs uppercase tracking-wide">
-                <th className="px-4 py-2.5">Equipo</th>
-                <th className="px-4 py-2.5">Plan</th>
-                <th className="px-4 py-2.5">Área</th>
-                <th className="px-4 py-2.5">Tipo</th>
-                <th className="px-4 py-2.5">Frecuencia</th>
-                <th className="px-4 py-2.5">Responsable</th>
-                <th className="px-4 py-2.5">Última ejecución</th>
-                <th className="px-4 py-2.5">Próxima fecha estimada</th>
-                <th className="px-4 py-2.5">Estado</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50">
-              {visibles.map(f=>(
-                <tr key={f.id} className="hover:bg-gray-50 transition">
-                  <td className="px-4 py-2.5 font-semibold text-gray-800">{f.equipo}<p className="text-gray-400 text-xs font-normal">{f.equipoNombre}</p></td>
-                  <td className="px-4 py-2.5 text-gray-700">{f.plan}</td>
-                  <td className="px-4 py-2.5 text-gray-500">{f.area||"—"}</td>
-                  <td className="px-4 py-2.5 text-gray-500">{f.tipo}</td>
-                  <td className="px-4 py-2.5 text-gray-500">{f.frecuencia}</td>
-                  <td className="px-4 py-2.5 text-gray-500">{f.responsable||"—"}</td>
-                  <td className="px-4 py-2.5 text-gray-500">{f.ultimaEjecucion}</td>
-                  <td className="px-4 py-2.5 font-semibold text-gray-800">
-                    {f.fecha?fmtDia(f.fecha):"—"}
-                    {f.dias!=null&&<span className="block text-xs font-normal text-gray-400">{f.dias<0?`vencido hace ${Math.abs(f.dias)}d`:`en ${f.dias}d`}{f.horasRestantes!=null?` · ${Math.round(f.horasRestantes)}h`:""}</span>}
-                  </td>
-                  <td className="px-4 py-2.5"><span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${ESTADO_CFG[f.estado].cls}`}>{ESTADO_CFG[f.estado].label}</span></td>
-                </tr>
-              ))}
-              {visibles.length===0&&(
-                <tr><td colSpan={9} className="px-4 py-10 text-center text-gray-400 text-sm">Sin planes que coincidan con el filtro.</td></tr>
-              )}
-            </tbody>
-          </table>
+      {!ip10Equip?(
+        <div className="text-center py-16 text-gray-400 bg-white rounded-2xl border border-gray-200">
+          <Calendar size={36} className="mx-auto mb-3 text-gray-300"/>
+          <p className="font-medium text-sm">Elegí un equipo para ver su programación futura</p>
         </div>
-      </div>
+      ):(
+      <>
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div className="flex gap-1 bg-gray-100 p-1 rounded-lg w-fit">
+            {Object.entries(HORIZONTES).map(([k,h])=>(
+              <button key={k} onClick={()=>setIp10Horizonte(k)}
+                className={`px-3 py-1.5 rounded-md text-xs font-semibold transition ${ip10Horizonte===k?"bg-white text-gray-900 shadow-sm":"text-gray-500 hover:text-gray-700"}`}>
+                {h.label}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-2 flex-wrap">
+            <button onClick={()=>setIp10Estado(ip10Estado==="vencido"?"":"vencido")}
+              className={`text-xs font-semibold px-3 py-1.5 rounded-full border transition ${ip10Estado==="vencido"?"bg-red-100 text-red-700 border-transparent":"bg-white text-gray-500 border-gray-200 hover:border-gray-400"}`}>
+              Vencidas · {conteoVencidos}
+            </button>
+            <button onClick={()=>setIp10Estado(ip10Estado==="programado"?"":"programado")}
+              className={`text-xs font-semibold px-3 py-1.5 rounded-full border transition ${ip10Estado==="programado"?"bg-emerald-100 text-emerald-700 border-transparent":"bg-white text-gray-500 border-gray-200 hover:border-gray-400"}`}>
+              Programadas · {filas.length-conteoVencidos}
+            </button>
+            <input value={ip10Search} onChange={e=>setIp10Search(e.target.value)} placeholder="Buscar plan..."
+              className="px-3 py-1.5 rounded-lg border border-gray-200 text-sm w-40"/>
+            <button onClick={exportar} className={btnSecondary} style={{borderColor:"#16a34a",color:"#16a34a",background:"white"}}>
+              <Download size={15}/>Exportar Excel
+            </button>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-200 text-left text-gray-500 text-xs uppercase tracking-wide">
+                  <th className="px-4 py-2.5">N°</th>
+                  <th className="px-4 py-2.5">Fecha prevista</th>
+                  <th className="px-4 py-2.5">Plan</th>
+                  <th className="px-4 py-2.5">Tipo</th>
+                  <th className="px-4 py-2.5">Frecuencia</th>
+                  <th className="px-4 py-2.5">Horómetro estimado</th>
+                  <th className="px-4 py-2.5">Estado</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {visibles.map(f=>(
+                  <tr key={f.id} className="hover:bg-gray-50 transition">
+                    <td className="px-4 py-2.5 text-gray-400">{f.n}</td>
+                    <td className="px-4 py-2.5 font-semibold text-gray-800">{fmtDia(f.fecha)}</td>
+                    <td className="px-4 py-2.5 text-gray-700">{f.plan}<p className="text-gray-400 text-xs font-mono font-normal">{f.code}</p></td>
+                    <td className="px-4 py-2.5 text-gray-500">{f.tipo}</td>
+                    <td className="px-4 py-2.5 text-gray-500">{f.frecuencia}</td>
+                    <td className="px-4 py-2.5 text-gray-500 font-mono">{f.horas!=null?`${Math.round(f.horas).toLocaleString()} h`:"—"}</td>
+                    <td className="px-4 py-2.5">
+                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${f.vencido?"bg-red-100 text-red-700":"bg-emerald-100 text-emerald-700"}`}>
+                        {f.vencido?"Vencido":"Programado"}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+                {visibles.length===0&&(
+                  <tr><td colSpan={7} className="px-4 py-10 text-center text-gray-400 text-sm">
+                    {filas.length===0?"Este equipo no tiene planes activos que se puedan proyectar (calendario sin próxima fecha, u horómetro sin promedio de horas cargado).":"Sin ocurrencias que coincidan con el filtro."}
+                  </td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </>
+      )}
     </div>
     );
   })()}
