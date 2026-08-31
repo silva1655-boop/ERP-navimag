@@ -4989,7 +4989,7 @@ useEffect(()=>{
 },[focusOTId]);
 const [showFullChecklist,setShowFullChecklist]=useState(false);
 const [saveMsg,setSaveMsg]=useState("");
-const [viewMode,setViewMode]=useState(()=>typeof window!=="undefined"&&window.innerWidth<768?"tarjetas":"tabla");
+const [viewMode,setViewMode]=useState("por_equipo"); // pedido explícito: la vista por defecto al entrar a OTs
 const [sortOrder,setSortOrder]=useState("atraso");
 const [rejectTarget,setRejectTarget]=useState(null);
 const [rejectReason,setRejectReason]=useState("");
