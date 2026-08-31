@@ -5001,6 +5001,10 @@ const [showPasoAPaso,setShowPasoAPaso]=useState(false);
 const [pasoActual,setPasoActual]=useState("");
 const [expandedBL,setExpandedBL]=useState(()=>new Set(Object.keys(BACKLOG_URGENCIA)));
 const [selBLIds,setSelBLIds]=useState(()=>new Set());
+// Vista "Por Equipo" — set vacío = todos los grupos arrancan colapsados
+// (pedido explícito), se van agregando ids de equipo a medida que se
+// despliegan.
+const [expandedEquipoGroups,setExpandedEquipoGroups]=useState(()=>new Set());
 const EMPTY_NEW_OT={equipId:"",sistema:"",sintoma:"",priority:"media",assignedTo:"",horometro:"",observations:"",type:"correctiva_no_programada",urgenciaBacklog:"programable",materialesPlanificados:[]};
 const [newOTForm,setNewOTForm]=useState(EMPTY_NEW_OT);
 const taxonomiaObj=useMemo(()=>getTaxonomiaComoObjeto(data.taxonomiaRepuestos||[]),[data.taxonomiaRepuestos]);
@@ -6650,24 +6654,19 @@ return(
             <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar OT, equipo o descripción..." className={iCls+" pl-9"}/>
           </div>
           <div className="flex items-end gap-3 flex-wrap">
-            {activeModule!=="maritimo"&&(
+            {/* Antes solo aparecía en Taller y con 10 opciones (varias sin
+                uso real, ej. "Espera Ventana Op."/"Lista para prueba") —
+                pedido explícito: recortarlo a los 4 estados que de verdad
+                se usan, y que aparezca también en Marítimo (no existía). */}
             <div className="flex-1 min-w-[120px]">
               <label className="text-gray-400 text-xs font-medium mb-1 block">ESTADO</label>
               <select value={flt.status} onChange={e=>setFlt(f=>({...f,status:e.target.value}))} className={sCls+" text-xs"}>
                 <option value="">Todos</option>
                 <option value="asignada">Asignada</option>
                 <option value="en_proceso">En Ejecución</option>
-                <option value="espera_repuestos">Espera repuestos</option>
-                <option value="espera_proveedor">Espera Proveedor</option>
-                <option value="espera_ventana_operacional">Espera Ventana Op.</option>
-                <option value="lista_prueba">Lista para prueba</option>
                 <option value="completada">Cerrada</option>
-                <option value="planificada">Planificada</option>
-                <option value="pendiente_aprobacion">Pend. Aprobación</option>
-                <option value="cancelada">Cancelada</option>
               </select>
             </div>
-            )}
             <div className="flex-1 min-w-[110px]">
               <label className="text-gray-400 text-xs font-medium mb-1 block">PRIORIDAD</label>
               <select value={flt.priority||""} onChange={e=>setFlt(f=>({...f,priority:e.target.value}))} className={sCls+" text-xs"}>
@@ -6704,9 +6703,10 @@ return(
             )}
             <div>
               <label className="text-gray-400 text-xs font-medium mb-1 block">VISTA</label>
-              <select value={viewMode} onChange={e=>setViewMode(e.target.value)} className={sCls+" text-xs w-28"}>
+              <select value={viewMode} onChange={e=>setViewMode(e.target.value)} className={sCls+" text-xs w-32"}>
                 <option value="tabla">Tabla</option>
                 <option value="tarjetas">Tarjetas</option>
+                <option value="por_equipo">Por Equipo</option>
                 <option value="backlog">Backlog</option>
               </select>
             </div>
@@ -7078,6 +7078,85 @@ style={sel?.id===w.id?{borderColor:NV.blue,background:"#EBF4FF"}:sem?{borderColo
 })}
 {visible.length===0&&<div className="text-center py-12 text-gray-400 text-sm">No se encontraron órdenes</div>}
 </div>
+):viewMode==="por_equipo"?(
+/* ── VISTA POR EQUIPO ── */
+/* Misma tarjeta que la vista "Tarjetas", pero agrupada en secciones
+   colapsables por equipo (mismo mecanismo que Backlog, agrupando por
+   equipo en vez de urgencia). Todos los grupos arrancan colapsados
+   (pedido explícito); los que tienen algo vencido/crítico se ordenan
+   primero, así lo urgente queda arriba sin tener que desplegar todo. */
+(()=>{
+  const porEquipo=new Map();
+  visible.forEach(w=>{
+    const key=w.equipId||"__sin_equipo__";
+    if(!porEquipo.has(key)) porEquipo.set(key,[]);
+    porEquipo.get(key).push(w);
+  });
+  const grupos=[...porEquipo.entries()].map(([equipId,items])=>{
+    const eq=equip.find(e=>e.id===equipId);
+    const tieneUrgente=items.some(w=>getSemaforo(w));
+    return{equipId,eq,items,tieneUrgente};
+  }).sort((a,b)=>{
+    if(a.tieneUrgente!==b.tieneUrgente) return a.tieneUrgente?-1:1;
+    if(b.items.length!==a.items.length) return b.items.length-a.items.length;
+    return (a.eq?.code||"").localeCompare(b.eq?.code||"");
+  });
+  return(
+    <div className="space-y-2">
+      {grupos.length===0&&<div className="text-center py-12 text-gray-400 text-sm">No se encontraron órdenes</div>}
+      {grupos.map(({equipId,eq,items,tieneUrgente})=>{
+        const isExpanded=expandedEquipoGroups.has(equipId);
+        return(
+          <div key={equipId} className={`${card} overflow-hidden`}>
+            <button onClick={()=>setExpandedEquipoGroups(s=>{const n=new Set(s);n.has(equipId)?n.delete(equipId):n.add(equipId);return n;})}
+              className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition text-left">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <ChevronRight size={14} className={`text-gray-400 flex-shrink-0 transition-transform ${isExpanded?"rotate-90":""}`}/>
+                <div className="min-w-0">
+                  <p className="text-sm font-bold text-gray-800 truncate">{eq?.code||"Sin equipo asignado"}{eq?.name&&<span className="text-gray-400 font-normal"> — {eq.name}</span>}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                {tieneUrgente&&<span className="w-2 h-2 rounded-full bg-red-500"/>}
+                <span className="text-xs text-gray-500 font-medium">{items.length} OT{items.length!==1?"s":""}</span>
+              </div>
+            </button>
+            {isExpanded&&(
+              <div className="px-3 pb-3 space-y-2 border-t border-gray-100 pt-3">
+                {items.map(w=>{
+                  const asn=users.find(u=>u.id===w.assignedTo);
+                  const sem=getSemaforo(w);
+                  return(
+                    <div key={w.id} onClick={()=>setSel(w)}
+                      className={`bg-white border rounded-xl p-4 cursor-pointer transition-all ${sel?.id===w.id?"shadow-sm":sem?"hover:shadow-sm":"border-gray-200 hover:border-blue-300 hover:shadow-sm"}`}
+                      style={sel?.id===w.id?{borderColor:NV.blue,background:"#EBF4FF"}:sem?{borderColor:sem.color,background:sem.bg}:{}}>
+                      {sem&&<div className="flex items-center gap-1.5 mb-2"><span className={`inline-block w-2 h-2 rounded-full ${sem.dot}`}></span><span className="text-xs font-semibold" style={{color:sem.color}}>{sem.label}</span></div>}
+                      <div className="flex items-start gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1 flex-wrap">
+                            <span className="text-xs font-mono font-bold" style={{color:NV.blue}}>{w.code}</span>
+                            <Badge s={resolveOTType(w)==="preventiva"?"asignada":"en_proceso"} label={resolveOTType(w)==="preventiva"?"Preventivo":"Correctivo"}/>
+                            <Badge s={w.status} {...marBadge(w.status)}/>
+                          </div>
+                          <p className="text-gray-800 text-sm font-semibold truncate">{w.title}</p>
+                          <div className="flex items-center gap-3 mt-1 flex-wrap">
+                            <span className="text-gray-400 text-xs flex items-center gap-1"><Calendar size={10}/>{fmt(w.scheduledDate)}</span>
+                            {asn&&<span className="text-gray-400 text-xs flex items-center gap-1"><Users size={10}/>{asn.name}</span>}
+                          </div>
+                        </div>
+                        <span className={`px-2 py-0.5 rounded-full border text-xs font-bold flex-shrink-0 ${PRI_CLS[w.priority||"media"]}`}>{String(w.priority||"media").toUpperCase()}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+})()
 ):(
 /* ── VISTA BACKLOG ── */
 (()=>{
