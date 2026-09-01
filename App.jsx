@@ -15331,10 +15331,287 @@ function printMonthlyReport(data, equipList, usersList, month) {
   w.print();
 }
 
+// ─── ANÁLISIS DE CAUSA RAÍZ (metodología: 5 Por Qués) ────────────────────────
+// Reutiliza los campos causaRaiz/causaRaizCategoria que ya existían en el
+// wizard de cierre de OT (App.jsx: wz) — estaban en el estado desde antes
+// pero NUNCA se conectaron a ningún campo de formulario, así que quedaban
+// siempre vacíos. También reutiliza CAUSA_RAIZ_OPTIONS, la lista de
+// categorías ya armada a medida para fallas de equipos marítimos/
+// mecánicos (nunca wireada a un <select> hasta ahora).
+//
+// Se eligió 5 Por Qués (no Ishikawa/FMEA/8D) por pedido explícito de que
+// sea simple — es solo preguntas encadenadas, sin necesidad de
+// entrenamiento ni sesión de grupo, y se completa en un par de minutos
+// desde Reportes. La categorización final (CAUSA_RAIZ_OPTIONS) es lo que
+// permite después ver patrones (qué categoría se repite más, por equipo).
+function CausaRaizWizard({ot,eq,user,onClose,onSave}){
+  const cadenaInicial=ot.causaRaizCadena&&ot.causaRaizCadena.length?ot.causaRaizCadena:[""];
+  const [cadena,setCadena]=useState(cadenaInicial);
+  const [categoria,setCategoria]=useState(ot.causaRaizCategoria||"");
+  const [accion,setAccion]=useState(ot.causaRaizAccionCorrectiva||"");
+  const [paso,setPaso]=useState("porques"); // porques | cierre
+  const [saving,setSaving]=useState(false);
+
+  const problema=ot.title||"Falla sin título";
+
+  const actualizarRespuesta=(i,val)=>setCadena(c=>c.map((x,idx)=>idx===i?val:x));
+  const agregarPorque=()=>{ if(cadena.length<5) setCadena(c=>[...c,""]); };
+  const quitarUltimo=()=>{ if(cadena.length>1) setCadena(c=>c.slice(0,-1)); };
+
+  const ultimaRespuestaLlena=cadena[cadena.length-1].trim().length>0;
+  const hayAlgunaRespuesta=cadena.some(c=>c.trim());
+
+  const guardar=async()=>{
+    setSaving(true);
+    const cadenaLimpia=cadena.map(c=>c.trim()).filter(Boolean);
+    await onSave(ot.id,{
+      causaRaiz:cadenaLimpia[cadenaLimpia.length-1]||"",
+      causaRaizCadena:cadenaLimpia,
+      causaRaizCategoria:categoria,
+      causaRaizAccionCorrectiva:accion.trim(),
+      causaRaizFecha:new Date().toISOString(),
+      causaRaizPor:user.name||user.username||"",
+    });
+    setSaving(false);
+  };
+
+  return(
+    <Modal title={`Análisis de causa raíz — ${ot.code}`} onClose={onClose} wide>
+      <div className="mb-4 bg-gray-50 rounded-xl p-3 border border-gray-200">
+        <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wide mb-1">Problema (desde la OT)</p>
+        <p className="text-sm text-gray-800 font-semibold">{eq?.code||"—"} — {problema}</p>
+        {ot.observations&&<p className="text-xs text-gray-500 mt-1 italic">💬 "{ot.observations}"</p>}
+      </div>
+
+      {paso==="porques"?(
+        <div className="space-y-4">
+          {cadena.map((respuesta,i)=>(
+            <div key={i}>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1.5">
+                ¿Por qué #{i+1}? — {i===0
+                  ?`¿Por qué pasó "${problema.slice(0,50)}"?`
+                  :`¿Por qué "${(cadena[i-1]||"—").slice(0,55)}"?`}
+              </label>
+              <textarea value={respuesta} onChange={e=>actualizarRespuesta(i,e.target.value)} rows={2}
+                className={iCls} placeholder="Escribí la respuesta..." autoFocus={i===cadena.length-1}/>
+            </div>
+          ))}
+          <div className="flex items-center gap-2 flex-wrap">
+            {cadena.length<5&&(
+              <button onClick={agregarPorque} disabled={!ultimaRespuestaLlena}
+                className="text-xs font-semibold px-3 py-2 rounded-lg border border-gray-200 text-gray-600 hover:border-gray-400 disabled:opacity-40 disabled:cursor-not-allowed transition">
+                + Otro "por qué"
+              </button>
+            )}
+            {cadena.length>1&&(
+              <button onClick={quitarUltimo} className="text-xs text-gray-400 hover:text-red-500 transition">Quitar el último</button>
+            )}
+            <button onClick={()=>setPaso("cierre")} disabled={!hayAlgunaRespuesta}
+              className="ml-auto text-sm font-semibold px-4 py-2 rounded-xl text-white disabled:opacity-40 disabled:cursor-not-allowed transition"
+              style={{background:NV.blue}}>
+              Ya llegué a la causa raíz →
+            </button>
+          </div>
+          <p className="text-gray-400 text-[11px]">No hace falta llegar a 5 — parás apenas la respuesta ya no explique nada nuevo (esa es la causa raíz).</p>
+        </div>
+      ):(
+        <div className="space-y-4">
+          <div className="bg-purple-50 border border-purple-200 rounded-xl p-3">
+            <p className="text-[10px] text-purple-500 font-bold uppercase tracking-wide mb-1">Causa raíz identificada</p>
+            <p className="text-sm text-purple-800 italic">"{cadena.filter(c=>c.trim()).slice(-1)[0]}"</p>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1.5">Categoría</label>
+            <select value={categoria} onChange={e=>setCategoria(e.target.value)} className={sCls}>
+              {CAUSA_RAIZ_OPTIONS.map(o=><option key={o.v} value={o.v}>{o.label}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1.5">Acción correctiva propuesta (opcional)</label>
+            <textarea value={accion} onChange={e=>setAccion(e.target.value)} rows={3} className={iCls}
+              placeholder="Ej: agregar el punto al plan preventivo, cambiar procedimiento, capacitar al equipo..."/>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={()=>setPaso("porques")} className="text-sm font-semibold px-4 py-2 rounded-xl border border-gray-200 text-gray-600 hover:border-gray-400 transition">← Volver</button>
+            <button onClick={guardar} disabled={saving}
+              className="ml-auto text-sm font-semibold px-5 py-2 rounded-xl text-white disabled:opacity-50 transition hover:opacity-90"
+              style={{background:"#7C3AED"}}>
+              {saving?"Guardando...":"💾 Guardar análisis"}
+            </button>
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+function CausaRaizPage({data,setData,saveData,user}){
+  const {wos=[],equip=[],users=[]}=data;
+  const [vista,setVista]=useState("pendientes"); // pendientes | analizadas
+  const [buscar,setBuscar]=useState("");
+  const [filtroEquip,setFiltroEquip]=useState("");
+  const [filtroCategoria,setFiltroCategoria]=useState("");
+  const [wizardOT,setWizardOT]=useState(null);
+  const [expandido,setExpandido]=useState(null);
+
+  const completadas=wos.filter(w=>w.status==="completada");
+  const pendientes=completadas.filter(w=>!(w.causaRaizCadena&&w.causaRaizCadena.length));
+  const analizadas=completadas.filter(w=>w.causaRaizCadena&&w.causaRaizCadena.length);
+
+  const aplicaFiltro=w=>{
+    const eq=equip.find(e=>e.id===w.equipId);
+    if(filtroEquip&&w.equipId!==filtroEquip) return false;
+    if(buscar&&!(`${w.code} ${w.title} ${eq?.code||""} ${eq?.name||""}`.toLowerCase().includes(buscar.toLowerCase()))) return false;
+    return true;
+  };
+  const pendientesF=pendientes.filter(aplicaFiltro).sort((a,b)=>(b.closedAt||b.updatedAt||"").localeCompare(a.closedAt||a.updatedAt||""));
+  let analizadasF=analizadas.filter(aplicaFiltro);
+  if(filtroCategoria) analizadasF=analizadasF.filter(w=>w.causaRaizCategoria===filtroCategoria);
+  analizadasF=analizadasF.sort((a,b)=>(b.causaRaizFecha||"").localeCompare(a.causaRaizFecha||""));
+
+  // Conteo por categoría — el valor real de esto es ver qué causa se
+  // repite más (por flota entera o filtrando por equipo arriba).
+  const conteoCategorias={};
+  analizadas.forEach(w=>{
+    const cat=w.causaRaizCategoria||"";
+    conteoCategorias[cat]=(conteoCategorias[cat]||0)+1;
+  });
+  const topCategorias=Object.entries(conteoCategorias)
+    .filter(([cat])=>cat)
+    .sort((a,b)=>b[1]-a[1]);
+
+  const guardarAnalisis=async(otId,payload)=>{
+    const upd=wos.map(w=>w.id===otId?{...w,...payload}:w);
+    setData(d=>({...d,wos:upd}));
+    await saveData("workOrders",upd);
+    setWizardOT(null);
+  };
+
+  const catLabel=v=>CAUSA_RAIZ_OPTIONS.find(o=>o.v===v)?.label||v||"Sin categorizar";
+
+  return(
+    <div className="space-y-5">
+      <div>
+        <p className="text-gray-500 text-sm">
+          Metodología de <strong>5 Por Qués</strong>: elegí una OT completada, respondé por qué pasó, y por qué pasó eso,
+          hasta llegar a la causa real (no solo el síntoma). Opcional — analizá las que valgan la pena, no hace falta hacerlas todas.
+        </p>
+      </div>
+
+      {topCategorias.length>0&&(
+        <div className={`${card} p-4`}>
+          <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Categorías más frecuentes ({analizadas.length} análisis hechos)</p>
+          <div className="flex flex-wrap gap-2">
+            {topCategorias.map(([cat,n])=>(
+              <button key={cat} onClick={()=>{setVista("analizadas");setFiltroCategoria(filtroCategoria===cat?"":cat);}}
+                className={`text-xs font-semibold px-3 py-1.5 rounded-full border transition ${filtroCategoria===cat?"bg-purple-100 text-purple-700 border-transparent":"bg-white text-gray-600 border-gray-200 hover:border-purple-300"}`}>
+                {catLabel(cat)} · {n}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex gap-1 bg-gray-100 p-1 rounded-lg w-fit">
+          <button onClick={()=>setVista("pendientes")}
+            className={`px-4 py-1.5 rounded-md text-sm font-medium transition ${vista==="pendientes"?"bg-white text-gray-900 shadow-sm":"text-gray-500 hover:text-gray-700"}`}>
+            Pendientes · {pendientes.length}
+          </button>
+          <button onClick={()=>setVista("analizadas")}
+            className={`px-4 py-1.5 rounded-md text-sm font-medium transition ${vista==="analizadas"?"bg-white text-gray-900 shadow-sm":"text-gray-500 hover:text-gray-700"}`}>
+            Analizadas · {analizadas.length}
+          </button>
+        </div>
+        <input value={buscar} onChange={e=>setBuscar(e.target.value)} placeholder="Buscar OT, equipo..."
+          className="px-3 py-1.5 rounded-lg border border-gray-200 text-sm w-56"/>
+        <select value={filtroEquip} onChange={e=>setFiltroEquip(e.target.value)} className={sCls+" !w-auto"}>
+          <option value="">Todos los equipos</option>
+          {[...equip].sort((a,b)=>(a.code||"").localeCompare(b.code||"")).map(e=><option key={e.id} value={e.id}>{e.code} — {e.name}</option>)}
+        </select>
+      </div>
+
+      {vista==="pendientes"?(
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+          {pendientesF.map(w=>{
+            const eq=equip.find(e=>e.id===w.equipId);
+            return(
+              <div key={w.id} className="rounded-xl border border-gray-200 bg-white p-3.5 flex flex-col gap-2">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-bold text-gray-900 truncate">{w.code} — {eq?.code||"—"}</p>
+                  <span className={`flex-shrink-0 text-[10px] px-2 py-0.5 rounded-full font-semibold ${w.type==="preventiva"?"bg-blue-100 text-blue-700":"bg-amber-100 text-amber-700"}`}>
+                    {w.type==="preventiva"?"PM":"Correctiva"}
+                  </span>
+                </div>
+                <p className="text-xs text-gray-500 truncate">{w.title}</p>
+                {w.observations&&<p className="text-xs text-gray-400 line-clamp-2 italic">"{w.observations}"</p>}
+                <button onClick={()=>setWizardOT(w)}
+                  className="mt-auto text-xs font-semibold px-3 py-2 rounded-lg text-white transition hover:opacity-90"
+                  style={{background:"#7C3AED"}}>
+                  🔍 Analizar
+                </button>
+              </div>
+            );
+          })}
+          {pendientesF.length===0&&(
+            <div className="col-span-full text-center py-12 text-gray-400 text-sm bg-white rounded-2xl border border-gray-200">
+              {pendientes.length===0?"No hay OTs completadas todavía.":"Sin OTs que coincidan con el filtro."}
+            </div>
+          )}
+        </div>
+      ):(
+        <div className="space-y-3">
+          {analizadasF.map(w=>{
+            const eq=equip.find(e=>e.id===w.equipId);
+            const abierto=expandido===w.id;
+            return(
+              <div key={w.id} className="rounded-xl border border-gray-200 bg-white p-4">
+                <div className="flex items-start justify-between gap-2 cursor-pointer" onClick={()=>setExpandido(abierto?null:w.id)}>
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold text-gray-900">{w.code} — {eq?.code||"—"} <span className="font-normal text-gray-400">· {w.title}</span></p>
+                    <p className="text-xs text-gray-500 mt-1 italic">Causa raíz: "{w.causaRaiz}"</p>
+                  </div>
+                  <div className="flex-shrink-0 flex items-center gap-2">
+                    <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-purple-100 text-purple-700">{catLabel(w.causaRaizCategoria)}</span>
+                    <button onClick={e=>{e.stopPropagation();setWizardOT(w);}} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400" title="Editar análisis"><Edit2 size={13}/></button>
+                  </div>
+                </div>
+                {abierto&&(
+                  <div className="mt-3 pt-3 border-t border-gray-100 space-y-2">
+                    {(w.causaRaizCadena||[]).map((r,i)=>(
+                      <p key={i} className="text-xs text-gray-600"><span className="font-semibold text-gray-400">Por qué #{i+1}:</span> {r}</p>
+                    ))}
+                    {w.causaRaizAccionCorrectiva&&(
+                      <p className="text-xs text-emerald-700 bg-emerald-50 rounded-lg px-2.5 py-2 border border-emerald-100 mt-2">
+                        <span className="font-semibold">Acción correctiva:</span> {w.causaRaizAccionCorrectiva}
+                      </p>
+                    )}
+                    <p className="text-[10px] text-gray-400 mt-1">Analizado por {w.causaRaizPor||"—"} · {w.causaRaizFecha?new Date(w.causaRaizFecha).toLocaleDateString("es-CL"):"—"}</p>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {analizadasF.length===0&&(
+            <div className="text-center py-12 text-gray-400 text-sm bg-white rounded-2xl border border-gray-200">
+              {analizadas.length===0?"Todavía no se hizo ningún análisis.":"Sin análisis que coincidan con el filtro."}
+            </div>
+          )}
+        </div>
+      )}
+
+      {wizardOT&&(
+        <CausaRaizWizard ot={wizardOT} eq={equip.find(e=>e.id===wizardOT.equipId)} user={user}
+          onClose={()=>setWizardOT(null)} onSave={guardarAnalisis}/>
+      )}
+    </div>
+  );
+}
+
 // ─── REPORTS ─────────────────────────────────────────────────────────────────
-function Reports({user,data,activeModule}){
+function Reports({user,data,setData,saveData,activeModule}){
   const {wos,equip,users,requests,checklists}=data;
-const [activeTab,setActiveTab]=useState("ots"); // "ots" | "resumen"
+const [activeTab,setActiveTab]=useState("ots"); // "ots" | "resumen" | "causa_raiz"
 const [rptDateFrom,setRptDateFrom]=useState(new Date().toISOString().slice(0,7)+"-01");
 const [rptDateTo,setRptDateTo]=useState(new Date().toISOString().slice(0,10));
 const inRange=w=>{
@@ -15381,9 +15658,16 @@ return(
           className={`pb-2 px-3 text-sm font-semibold border-b-2 transition ${activeTab==="resumen"?"border-red-600 text-red-600":"border-transparent text-gray-400 hover:text-gray-600"}`}>
           📋 Resumen Mensual
         </button>
+        {activeModule!=="maritimo"&&(
+          <button onClick={()=>setActiveTab("causa_raiz")}
+            className={`pb-2 px-3 text-sm font-semibold border-b-2 transition ${activeTab==="causa_raiz"?"border-purple-600 text-purple-600":"border-transparent text-gray-400 hover:text-gray-600"}`}>
+            🔍 Causa Raíz
+          </button>
+        )}
       </div>
 
       {activeTab==="resumen"&&<ResumenMensual data={data} activeModule={activeModule}/>}
+      {activeTab==="causa_raiz"&&<CausaRaizPage data={data} setData={setData} saveData={saveData} user={user}/>}
 
       {activeTab==="ots"&&(<>
 <div className="flex items-center gap-3 flex-wrap mb-2">
@@ -37509,7 +37793,7 @@ notifications: <Notifications user={user} data={data} onSeen={()=>setSeenNotifs(
 checklist:     <Checklist     user={user} data={data} setData={setData} activeModule={activeModule} activeBarco={activeBarco} saveData={saveData} appendToArray={appendToArray} updateInArray={updateInArray}/>,
 historial_postop: <HistorialPostOperacional data={data}/>,
 dashboard_checklist: <DashboardChecklist data={data} activeModule={activeModule}/>,
-reports:       <Reports       user={user} data={data} activeModule={activeModule}/>,
+reports:       <Reports       user={user} data={data} setData={setData} saveData={saveData} activeModule={activeModule}/>,
 deviaciones:   <DeviationReports user={user} data={data} setData={setData} saveData={saveData} appendToArray={appendToArray} updateInArray={updateInArray} activeCOLL={activeCOLL}/>,
 users:         <UsersPage     data={data} setData={setData} currentUser={user} saveData={saveData} appendToArray={appendToArray} updateInArray={updateInArray} activeModule={activeModule} activeCOLL={activeCOLL}/>,
 operadores:    <OperadoresPage user={user} data={data} setData={setData} saveData={saveData}/>,
