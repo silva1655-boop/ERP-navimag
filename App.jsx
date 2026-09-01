@@ -5362,7 +5362,10 @@ const finalizeWizard=async(closeOT)=>{
   const partsList=wz.repuestos.map(r=>`${r.codigo} — ${r.descripcion} (${r.cantidad} ${r.unidad})${r.pendiente?" [PENDIENTE]":""}`);
   const summary=[
     `Diagnóstico: ${wz.diagnostico}`,
-    `Causa raíz: ${wz.causaRaiz}`,
+    // wz.causaRaiz nunca se llena desde ningún campo del wizard — sin este
+    // chequeo, toda OT cerrada por acá imprimía una línea "Causa raíz: "
+    // en blanco. El análisis real ahora vive en Reportes → Causa Raíz.
+    wz.causaRaiz?`Causa raíz: ${wz.causaRaiz}`:"",
     `Trabajo realizado: ${wz.trabajoRealizado}`,
     wz.observacionesFinales?`Observaciones finales: ${wz.observacionesFinales}`:""
   ].filter(Boolean).join("\n\n");
