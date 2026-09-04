@@ -25085,11 +25085,18 @@ function ChecklistDetailModal({checklist,equip,onClose}){
             <div className={`${card} p-2.5`}><p className="text-gray-400 text-xs">Ítems evaluados</p><p className="font-bold text-gray-800 text-sm">{(checklist.items||[]).length}</p></div>
           </div>
         )}
-        {/* Daño reportado */}
+        {/* Daño reportado (post-op) */}
         {checklist.damageNote&&(
           <div className="bg-red-50 border border-red-100 rounded-xl p-3 mb-4">
             <p className="text-red-700 text-xs font-bold uppercase tracking-wide mb-1">Daño / desviación reportada</p>
             <p className="text-red-600 text-sm">{checklist.damageNote}</p>
+          </div>
+        )}
+        {/* Comentarios (pre-op) */}
+        {checklist.comentario&&(
+          <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 mb-4">
+            <p className="text-blue-700 text-xs font-bold uppercase tracking-wide mb-1">💬 Comentarios</p>
+            <p className="text-blue-700 text-sm">{checklist.comentario}</p>
           </div>
         )}
         {/* Fotos del equipo */}
@@ -25208,6 +25215,11 @@ const [postDamagePhotos,setPostDamagePhotos]=useState([]);
 const [items,setItems]=useState([]);
 const [step,setStep]=useState(1);
   const [showSig,setShowSig]=useState(false);
+  // Cuadro de comentarios libre del checklist pre-operacional — pedido
+  // explícito, se muestra al final (misma pantalla que la firma). El
+  // post-operacional ya tiene su propio campo para daños (damageNote),
+  // así que esto es específico de pre.
+  const [preComentario,setPreComentario]=useState("");
 const [vehiclePhotos,setVehiclePhotos]=useState({front:null,right:null,left:null,rear:null,interior:null,extintor:null});
 const [startTime,setStartTime]=useState(null);
 const [clTab,setClTab]=useState("registros");
@@ -25477,6 +25489,7 @@ const naCount=items.filter(it=>it.status==="na").length;
       hasIssues:issueItemsFinal.length>0,
       issueCount:issueItemsFinal.length,
       operatorSignature:uploadedSig||null,
+      comentario:preComentario.trim(),
       module:activeModule||"taller",
       savedAt:Date.now(),
     };
@@ -25689,6 +25702,7 @@ const naCount=items.filter(it=>it.status==="na").length;
     setShowCriticalWarning(false);
     setCriticalFaultsList([]);
     setStartTime(null);
+    setPreComentario("");
     setPostDamageNote("");
     setPostDamagePhotos([]);
     setVehiclePhotos({front:null,right:null,left:null,rear:null,interior:null,extintor:null});
@@ -26118,6 +26132,14 @@ const mine=((user.role==="supervisor"||user.role==="operaciones"||user.role==="m
             <p className="text-gray-500 text-sm">Confirma la inspección con tu firma (opcional)</p>
           </div>
         </div>
+        {!saving&&(
+          <div className={`${card} p-5 mb-4`}>
+            <label className="text-gray-700 font-semibold text-sm block mb-2">💬 Comentarios (opcional)</label>
+            <textarea value={preComentario} onChange={e=>setPreComentario(e.target.value)} rows={3}
+              placeholder="Cualquier observación adicional sobre el equipo o la inspección..."
+              className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 text-sm focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100"/>
+          </div>
+        )}
         <div className={`${card} p-5`}>
           {saving?(
             <div className="text-center py-10">
