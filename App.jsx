@@ -13579,6 +13579,20 @@ function Indicadores({data,activeModule}){
 const {wos=[],equip=[],plans=[],planAssignments=[],
   requests=[],repuestos=[]}=data;
 const [eqExpanded,setEqExpanded]=useState(null);
+const [tractoEqExpanded,setTractoEqExpanded]=useState(null);
+
+// Tractos (Estado de Tractos) — log de transiciones de estado, para MTBF/MTTR
+// propio de tractos (Mol/Kalmar/Terberg, no Liftec). Se auto-suscribe acá
+// porque mantek_tracto_estado_log es una colección aparte de `data`, igual
+// que hace EstadoTractosPage/FaenaActivaPage con sus propias colecciones.
+const [logTractos,setLogTractos]=useState([]);
+useEffect(()=>{
+  const unsub=onSnapshot(doc(db,COLL_TRACTO_ESTADO_LOG,"log"),snap=>{
+    setLogTractos(snap.exists()?(snap.data().data||[]):[]);
+  });
+  return()=>unsub();
+},[]);
+const tractos=equip.filter(e=>!e.deleted&&TRACTO_GRUPOS_VALIDOS.includes(getGroup(e))&&getGroup(e)!=="Liftec");
 
 const hoy=new Date();
 hoy.setHours(0,0,0,0);
@@ -13730,6 +13744,51 @@ const calcEq=eqId=>{
   const backlog=wos.filter(w=>w.equipId===eqId&&!["completada","cancelada"].includes(w.status||"")).reduce((s,w)=>s+(parseFloat(w.estimatedHours)||0),0);
   const reinc=reincidencias.filter(w=>w.equipId===eqId).length;
   return{n:corr.length,comp:comp.length,progr,mtbf,mttr,disp,costo,backlog,reinc};
+};
+
+// ── MTBF/MTTR de Tractos (Estado de Tractos) ──────────────────────────────
+// Fuente distinta a calcEq: acá la "falla" es una transición a
+// "fuera_servicio" en el log de Estado de Tractos, no una OT correctiva — un
+// tracto puede quedar fuera de servicio sin que nadie genere una OT formal.
+// Para el MTTR de cada episodio se busca automáticamente una OT correctiva
+// de ese tracto que se solape en fecha con el tramo fuera de servicio (mismo
+// equipo, ventana de tiempo); si la hay, se usan sus horas reales; si no, se
+// usa la duración del propio tramo (marcado→volvió a estar disponible) como
+// respaldo.
+const calcTracto=eqId=>{
+  const eq=tractos.find(e=>e.id===eqId);
+  const logEq=logTractos.filter(l=>l.equipId===eqId).sort((a,b)=>new Date(a.ts)-new Date(b.ts));
+  const episodios=[];
+  let abierto=null;
+  logEq.forEach(l=>{
+    if(l.estadoNuevo==="fuera_servicio"&&!abierto){
+      abierto={inicio:l.ts};
+    }else if(abierto&&l.estadoAnterior==="fuera_servicio"&&l.estadoNuevo!=="fuera_servicio"){
+      episodios.push({...abierto,fin:l.ts});
+      abierto=null;
+    }
+  });
+  // El episodio abierto (fuera de servicio ahora mismo, sin cerrar) cuenta
+  // como falla para MTBF, pero no entra al MTTR — todavía no se sabe cuánto
+  // va a durar.
+  const fallasTotal=logEq.filter(l=>l.estadoNuevo==="fuera_servicio").length;
+  const hrs=parseFloat(eq?.hours)||0;
+  const mtbf=fallasTotal>0?hrs/fallasTotal:null;
+  const episodiosConMTTR=episodios.map(ep=>{
+    const iniMs=new Date(ep.inicio).getTime(),finMs=new Date(ep.fin).getTime();
+    const otMatch=wos.find(w=>{
+      if(w.equipId!==eqId||!esCorrectivo(w)) return false;
+      const wIni=new Date(w.createdAt||0).getTime();
+      const wFin=w.closedAt?new Date(w.closedAt).getTime():Date.now();
+      return wIni<=finMs&&wFin>=iniMs; // se solapan en el tiempo
+    });
+    const horasTramo=(finMs-iniMs)/3600000;
+    return otMatch?{horas:hrsOT(otMatch)||horasTramo,fuente:"ot"}:{horas:horasTramo,fuente:"tramo"};
+  });
+  const mttr=episodiosConMTTR.length>0?episodiosConMTTR.reduce((s,e)=>s+e.horas,0)/episodiosConMTTR.length:null;
+  const disp=(mtbf&&mttr&&(mtbf+mttr)>0)?(mtbf/(mtbf+mttr)*100):null;
+  const conOT=episodiosConMTTR.filter(e=>e.fuente==="ot").length;
+  return{n:fallasTotal,cerrados:episodios.length,mtbf,mttr,disp,conOT,abierto:!!abierto};
 };
 
 const fH=v=>v==null?"—":`${v.toFixed(1)}h`;
@@ -14022,6 +14081,89 @@ return(
       </table>
     </div>
   </div>
+
+  {/* TABLA MTBF/MTTR de Tractos (Estado de Tractos) — solo aparece si hay
+      tractos en este módulo (equip con grupo Mol/Kalmar/Terberg). */}
+  {tractos.length>0&&(
+    <div className={`${card} overflow-hidden`}>
+      <div className="px-4 py-3 flex items-center gap-2 border-b border-gray-100">
+        <Truck size={14} className="text-gray-400"/>
+        <p className="text-gray-700 font-bold text-sm">MTBF/MTTR de Tractos</p>
+        <span className="ml-auto text-gray-400 text-xs">Fuente: transiciones de Estado de Tractos · Click en fila para ver detalle</span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="bg-gray-50 border-b border-gray-200">
+              {["Tracto","Horas","Fallas","Con OT","MTBF","MTTR","Disponib."].map(h=>(
+                <th key={h} className={`px-4 py-3 text-gray-500 font-semibold uppercase tracking-wide ${h==="Tracto"?"text-left":"text-right"}`}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {[...tractos].map(e=>({e,m:calcTracto(e.id)})).sort((a,b)=>b.m.n-a.m.n).map(({e,m},i)=>{
+              const logEq=logTractos.filter(l=>l.equipId===e.id).sort((a,b)=>new Date(a.ts)-new Date(b.ts));
+              return(
+              <React.Fragment key={e.id}>
+                <tr
+                  onClick={()=>setTractoEqExpanded(tractoEqExpanded===e.id?null:e.id)}
+                  className={`border-b border-gray-100 cursor-pointer hover:bg-blue-50/40 transition ${i%2===0?"bg-white":"bg-gray-50/30"} ${tractoEqExpanded===e.id?"bg-blue-50/50":""}`}>
+                  <td className="px-4 py-2.5">
+                    <div className="flex items-center gap-1.5">
+                      <ChevronDown size={12} className={`text-gray-400 transition-transform ${tractoEqExpanded===e.id?"rotate-180":""}`}/>
+                      <div>
+                        <p className="font-semibold text-gray-800">{e.name}</p>
+                        <p className="font-mono text-gray-400" style={{fontSize:"10px"}}>{e.code}</p>
+                      </div>
+                      {m.abierto&&<span className="px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 font-bold text-[10px]">Fuera de servicio</span>}
+                    </div>
+                  </td>
+                  <td className="px-4 py-2.5 text-right text-gray-600 font-mono">{(e.hours||0).toLocaleString()}h</td>
+                  <td className="px-4 py-2.5 text-right"><span className={`font-bold ${m.n>0?"text-red-600":"text-gray-400"}`}>{m.n}</span></td>
+                  <td className="px-4 py-2.5 text-right text-gray-500">{m.cerrados>0?`${m.conOT}/${m.cerrados}`:"—"}</td>
+                  <td className="px-4 py-2.5 text-right font-semibold" style={{color:NV.blue}}>{fH(m.mtbf)}</td>
+                  <td className="px-4 py-2.5 text-right text-amber-700 font-semibold">{fH(m.mttr)}</td>
+                  <td className="px-4 py-2.5 text-right">
+                    {m.disp!=null?(
+                      <div className="flex flex-col items-end gap-1">
+                        <span className={`font-bold ${dC(m.disp)}`}>{fP(m.disp)}</span>
+                        <div className="w-14 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                          <div className={`h-full rounded-full ${m.disp>=90?"bg-emerald-500":m.disp>=70?"bg-amber-400":"bg-red-500"}`} style={{width:`${Math.min(100,m.disp)}%`}}/>
+                        </div>
+                      </div>
+                    ):<span className="text-gray-400">—</span>}
+                  </td>
+                </tr>
+                {tractoEqExpanded===e.id&&(
+                  <tr key={`exp-${e.id}`}>
+                    <td colSpan={7} className="px-4 py-4 bg-blue-50/40 border-b border-gray-200">
+                      <p className="text-gray-500 text-xs font-semibold uppercase mb-3">Historial de transiciones — {e.name}</p>
+                      {logEq.length===0?(
+                        <p className="text-gray-400 text-xs italic">Sin transiciones de estado registradas para este tracto todavía.</p>
+                      ):(
+                        <div className="space-y-1.5 max-h-64 overflow-y-auto">
+                          {[...logEq].reverse().map(l=>(
+                            <div key={l.id} className="flex items-center gap-2 text-xs bg-white rounded-lg border border-gray-200 px-3 py-2">
+                              <span className="text-gray-400 font-mono w-36 flex-shrink-0">{new Date(l.ts).toLocaleString("es-CL")}</span>
+                              <span className="text-gray-600">{ESTADO_TRACTO_CFG[l.estadoAnterior]?.label||l.estadoAnterior||"—"}</span>
+                              <span className="text-gray-300">→</span>
+                              <span className={`font-semibold ${l.estadoNuevo==="fuera_servicio"?"text-red-600":"text-emerald-600"}`}>{ESTADO_TRACTO_CFG[l.estadoNuevo]?.label||l.estadoNuevo}</span>
+                              <span className="text-gray-400 ml-auto">{l.actualizadoPor}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                )}
+              </React.Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )}
 
   {/* CAUSA RAÍZ — Pareto (Reportes ▸ Causa Raíz, solo Taller) */}
   {activeModule!=="maritimo"&&(
@@ -19527,7 +19669,7 @@ const dotacionSerie=(log)=>{
   return {actual:Math.max(0,running),max};
 };
 
-function EstadoTractosPage({user,data}){
+function EstadoTractosPage({user,data,setData,saveData}){
   const equip=data?.equip||[];
   const quien=user.name||user.username||"";
   const [estados,setEstados]=useState([]);
@@ -19574,6 +19716,28 @@ function EstadoTractosPage({user,data}){
       const logActualizado=[...logCambios,entry].slice(-200);
       setLogCambios(logActualizado);
       await setDoc(doc(db,COLL_TRACTO_ESTADO_LOG,"log"),{data:logActualizado});
+    }
+    // Sincroniza el status del equipo (Equipos) con el cambio de Estado de
+    // Tractos — antes eran dos estados totalmente paralelos que podían
+    // divergir. "Fuera de Servicio" acá == "falla" en Equipos; cualquier otro
+    // estado (disponible/en_viaje/en_otra_sucursal) == "operativo". Esta es
+    // ahora la fuente de la fecha de falla para MTBF/MTTR de tractos (ver
+    // Indicadores KPI), reemplazando lastFailAt/lastFailReason cuando el
+    // origen es este tablero.
+    if(nueva.estado!==actual.estado&&setData&&saveData){
+      const eq=(data.equip||[]).find(e=>e.id===equipId);
+      if(eq){
+        const eqActualizado=nueva.estado==="fuera_servicio"?{
+          ...eq,status:"falla",
+          lastFailReason:nueva.motivo?.trim()||"Marcado fuera de servicio (Estado de Tractos)",
+          lastFailAt:new Date().toISOString(),
+        }:{
+          ...eq,status:"operativo",
+        };
+        const equipUpdated=(data.equip||[]).map(e=>e.id===equipId?eqActualizado:e);
+        setData(d=>({...d,equip:equipUpdated}));
+        saveData("equipment",equipUpdated);
+      }
     }
   };
 
@@ -38149,7 +38313,7 @@ config_reportes:<ConfigReportes user={user}/>,
 gastos:        <GastosPresupuesto user={user} data={data} activeModule={activeModule} activeBarco={activeBarco}/>,
 disponibilidad:<DisponibilidadUtilizacion user={user} data={data}/>,
 faena_activa:  <FaenaActivaPage user={user} data={data}/>,
-estado_tractos:<EstadoTractosPage user={user} data={data}/>,
+estado_tractos:<EstadoTractosPage user={user} data={data} setData={setData} saveData={saveData}/>,
 gestion_documental:<GestionDocumentalPage user={user} data={data}/>,
 };
 
