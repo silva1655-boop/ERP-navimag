@@ -19933,7 +19933,16 @@ function FaenaActivaPage({user,data}){
   // La faena activa del usuario NO se acota a "hoy" — si quedó abierta de un
   // turno anterior (ej. faena nocturna sin cerrar), tiene que seguir
   // apareciendo acá para poder cerrarla, no esconderse al pasar la medianoche.
-  const esSup=user.role==="supervisor"||user.role==="admin"||user.role==="jefe_operaciones"||user.role==="sup_operaciones"||user.authRole==="ADMIN";
+  // "jefe_operaciones"/"sup_operaciones" nunca existen como user.role real —
+  // mapAuthRoleToErp() colapsa JEFE_OPERACIONES/SUP_OPERACIONES/GERENTE al rol
+  // ERP "operaciones" (ver línea ~37), igual que en el resto del archivo
+  // (esSuper, canUsePlanner, etc.). Con los dos strings viejos, cualquier
+  // supervisor/jefe de operaciones que no fuera literalmente "supervisor" o
+  // "admin" quedaba tratado como no-supervisor: no veía, no podía tomar ni
+  // cerrar la faena activa creada por otro supervisor — solo la propia (por
+  // nombre exacto en creadoPor). Bug reportado: "otro supervisor no puede
+  // cerrar la faena que ya creó el primero".
+  const esSup=["supervisor","admin","operaciones"].includes(user.role)||user.authRole==="ADMIN";
 const faenaActiva=faenas.find(f=>f.estado==="activa"&&(esSup||f.creadoPor===quien));
   const horasFaenaAbierta=faenaActiva?.inicioOp?(nowTick-new Date(faenaActiva.inicioOp).getTime())/3600000:0;
   const faenaAbiertaLarga=horasFaenaAbierta>=12;
