@@ -20584,6 +20584,20 @@ function DisponibilidadUtilizacion({user,data}){
   // presentaciones sin tener que hacer una captura de pantalla manual.
   const informeRef=useRef(null);
   const [exportandoImagen,setExportandoImagen]=useState(false);
+  // Cálculo "real" (con colchón de tractos) — oculto por defecto, se muestra
+  // como pestaña aparte para no mezclar con el número oficial validado
+  // contra el Excel. localStorage para que cada usuario mantenga su
+  // preferencia entre sesiones.
+  const [mostrarCalculoReal,setMostrarCalculoReal]=useState(()=>{
+    try{return localStorage.getItem("mantek_mostrar_disp_real")==="1";}catch(e){return false;}
+  });
+  const toggleMostrarCalculoReal=()=>{
+    setMostrarCalculoReal(v=>{
+      const next=!v;
+      try{localStorage.setItem("mantek_mostrar_disp_real",next?"1":"0");}catch(e){}
+      return next;
+    });
+  };
   // Refs para ExportBar (Descargar como imagen) de los gráficos y tablas
   // de la pestaña Gestión.
   const refChartEsperanza=useRef(null);
@@ -21787,7 +21801,7 @@ function DisponibilidadUtilizacion({user,data}){
           <div className="bg-gray-50 rounded-xl p-3 mb-3 text-xs text-gray-600 space-y-1">
             <p>Impacto en faena <b>{previewImpactoFaena.faena.numeroFaena}</b>: Solo Disponibilidad {fmtPct(previewImpactoFaena.antes.disponibilidadTecnica)} → <b>{fmtPct(previewImpactoFaena.despues.disponibilidadTecnica)}</b>
             {" · "}Utilización {fmtPct(previewImpactoFaena.antes.utilizacion)} → <b>{fmtPct(previewImpactoFaena.despues.utilizacion)}</b></p>
-            {previewImpactoFaena.despues.indisponibilidadRealHH!=null&&(
+            {mostrarCalculoReal&&previewImpactoFaena.despues.indisponibilidadRealHH!=null&&(
               <p className="text-emerald-700">
                 Considerando colchón de {previewImpactoFaena.despues.colchonTractos} tracto{previewImpactoFaena.despues.colchonTractos!==1?"s":""} de respaldo (tractosOp − target): Disponibilidad real {fmtPct(previewImpactoFaena.antes.disponibilidadTecnicaReal)} → <b>{fmtPct(previewImpactoFaena.despues.disponibilidadTecnicaReal)}</b>
                 {" · "}Utilización real {fmtPct(previewImpactoFaena.antes.utilizacionReal)} → <b>{fmtPct(previewImpactoFaena.despues.utilizacionReal)}</b>
@@ -21909,6 +21923,12 @@ function DisponibilidadUtilizacion({user,data}){
                   className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition flex items-center gap-1.5 disabled:opacity-50">
                   <Camera size={14}/>{exportandoImagen?"Generando…":"Exportar como imagen"}
                 </button>
+                <button onClick={toggleMostrarCalculoReal}
+                  className={`px-3 py-1.5 rounded-lg border text-xs font-semibold transition flex items-center gap-1.5 ${
+                    mostrarCalculoReal?"border-emerald-300 bg-emerald-50 text-emerald-700":"border-gray-200 text-gray-600 hover:bg-gray-50"}`}>
+                  {mostrarCalculoReal?<Eye size={14}/>:<EyeOff size={14}/>}
+                  Cálculo real (colchón de tractos)
+                </button>
               </div>
             </div>
             <p className="text-xs text-gray-400 mb-1">
@@ -21937,7 +21957,7 @@ function DisponibilidadUtilizacion({user,data}){
               <StatCard icon={Clock} label="Horas indisponibilidad" value={fmtH(informeKPIsCombinado.hhIndisp)} sub={informeModo==="mensual"?"suma del mes":"suma del trimestre"} color="amber"/>
               <StatCard icon={Truck} label="Tractos OP promedio" value={informeKPIsCombinado.n>0?informeKPIsCombinado.tractosOpProm.toFixed(1):"—"} sub="por faena" color="navy"/>
             </div>
-            {informeKPIsCombinado.nr>0&&(
+            {mostrarCalculoReal&&informeKPIsCombinado.nr>0&&(
               <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 mt-3 pt-3 border-t border-gray-100">
                 <StatCard icon={Gauge} label="Disp. real (con colchón de tractos)" value={fmtPct(informeKPIsCombinado.dispPromReal)} sub={`${informeKPIsCombinado.nr} de ${informeKPIsCombinado.n} faena(s) recalculadas`} color="emerald"/>
                 <StatCard icon={TrendingUp} label="Utilización real" value={fmtPct(informeKPIsCombinado.utilPromReal)} sub={`${informeKPIsCombinado.nr} de ${informeKPIsCombinado.n} faena(s) recalculadas`} color="emerald"/>
@@ -21961,7 +21981,7 @@ function DisponibilidadUtilizacion({user,data}){
                   <StatCard icon={Clock} label="Horas indisponibilidad" value={fmtH(k.hhIndisp)} sub={informeModo==="mensual"?"suma del mes":"suma del trimestre"} color="amber"/>
                   <StatCard icon={Truck} label="Tractos OP promedio" value={k.n>0?k.tractosOpProm.toFixed(1):"—"} sub="por faena" color="navy"/>
                 </div>
-                {k.nr>0&&(
+                {mostrarCalculoReal&&k.nr>0&&(
                   <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 mb-5 pt-3 border-t border-gray-100">
                     <StatCard icon={Gauge} label="Disp. real (con colchón de tractos)" value={fmtPct(k.dispPromReal)} sub={`${k.nr} de ${k.n} faena(s) recalculadas`} color="emerald"/>
                     <StatCard icon={TrendingUp} label="Utilización real" value={fmtPct(k.utilPromReal)} sub={`${k.nr} de ${k.n} faena(s) recalculadas`} color="emerald"/>
