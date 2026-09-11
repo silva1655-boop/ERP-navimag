@@ -11785,6 +11785,7 @@ return(
 {tab==="vista"&&(()=>{
   // Reuse the same overdue/soon calculations as "planes" tab
   const today=new Date().toISOString().slice(0,7);
+  const hoy=new Date();
   const enriched=plans.map(p=>{
     const eq=equip.find(e=>e.id===p.equipId);
     const currentH=liveHours(p.equipId)||0;
@@ -11808,6 +11809,61 @@ return(
   const completadosMes=enriched.filter(x=>x.completedThisMonth);
   const cumplimiento=enriched.length>0?Math.round(((enriched.length-vencidos.length)/enriched.length)*100):100;
 
+  // "Completadas" real de los últimos 30 días (antes decía "30 días" pero en
+  // realidad era "este mes calendario") y "Cumplimiento histórico": % de
+  // preventivas cerradas en los últimos 6 meses que se cerraron ANTES o EN la
+  // fecha que tenían programada (scheduledDate, la que quedó fijada al
+  // generar la OT desde el plan) — a diferencia de "Cumplimiento" (arriba),
+  // que es solo una foto de "cuántos planes no están vencidos ahora mismo".
+  const hace30d=new Date(hoy);hace30d.setDate(hace30d.getDate()-30);
+  const completados30d=wos.filter(w=>w.source==="plan"&&w.status==="completada"&&(w.closedAt||w.createdAt)&&new Date(w.closedAt||w.createdAt)>=hace30d);
+  const hace6m=new Date(hoy);hace6m.setMonth(hace6m.getMonth()-6);
+  const preventivasCerradas6m=wos.filter(w=>w.source==="plan"&&w.status==="completada"&&w.closedAt&&new Date(w.closedAt)>=hace6m);
+  const cerradasATiempo=preventivasCerradas6m.filter(w=>!w.scheduledDate||new Date(w.closedAt)<=new Date(w.scheduledDate+"T23:59:59"));
+  const cumplimientoHistorico=preventivasCerradas6m.length>0?Math.round((cerradasATiempo.length/preventivasCerradas6m.length)*100):null;
+
+  // ── Equipos próximos a mantenimiento — agrupa por equipo tomando SU plan
+  // más urgente (vencido primero, si no el de menos horas restantes). Antes
+  // no existía ninguna vista agregada por equipo, solo por plan/tarea suelta.
+  const porEquipo={};
+  enriched.forEach(x=>{
+    if(!x.plan.equipId) return;
+    const cur=porEquipo[x.plan.equipId];
+    const masUrgente=!cur||(x.overdue&&!cur.masUrgente.overdue)||(x.overdue===cur.masUrgente.overdue&&x.hoursLeft<cur.masUrgente.hoursLeft);
+    porEquipo[x.plan.equipId]={
+      eq:x.eq,totalPlanes:(cur?.totalPlanes||0)+1,
+      masUrgente:masUrgente?x:cur.masUrgente,
+    };
+  });
+  const equiposProximos=Object.values(porEquipo)
+    .map(g=>({...g,proyeccion:proyeccionPMHorometro(g.masUrgente.currentH,g.masUrgente.target,g.eq)}))
+    .sort((a,b)=>{
+      if(a.masUrgente.overdue!==b.masUrgente.overdue) return a.masUrgente.overdue?-1:1;
+      return a.masUrgente.hoursLeft-b.masUrgente.hoursLeft;
+    });
+
+  // ── Planes a reforzar — equipos con plan preventivo activo que igual
+  // siguen acumulando fallas reales (correctivas no programadas/emergencia,
+  // no cuenta preventivo) en los últimos 90 días. Señal de que el plan no
+  // está cubriendo lo que debería, no una certeza — hay que revisarlo con
+  // criterio. Cruce por equipo completo (los planes de Taller no tienen
+  // subsistema estructurado, solo nombre/tareas en texto libre).
+  const d90ref=new Date(hoy);d90ref.setDate(d90ref.getDate()-90);
+  const planesAReforzar=[...new Set(plans.map(p=>p.equipId))].map(eqId=>{
+    const eq=equip.find(e=>e.id===eqId);
+    const fallas=wos.filter(w=>w.equipId===eqId&&esFallaReal(w)&&new Date(w.createdAt||w.closedAt||0)>=d90ref);
+    if(fallas.length<2) return null;
+    const causas={};
+    fallas.forEach(w=>{if(w.causaRaizCategoria) causas[w.causaRaizCategoria]=(causas[w.causaRaizCategoria]||0)+1;});
+    const causaTop=Object.entries(causas).sort((a,b)=>b[1]-a[1])[0];
+    return{
+      eq,nFallas:fallas.length,
+      causaTop:causaTop?{cat:causaTop[0],label:CAUSA_RAIZ_OPTIONS.find(o=>o.v===causaTop[0])?.label||causaTop[0],n:causaTop[1]}:null,
+      conCausaRaiz:fallas.filter(w=>w.causaRaizCategoria).length,
+      planesDelEquipo:plans.filter(p=>p.equipId===eqId),
+    };
+  }).filter(Boolean).sort((a,b)=>b.nFallas-a.nFallas);
+
   const categoryMap={vencidos,proximos,planificados,completados:completadosMes};
   const visibleList=(categoryMap[vistaCategory]||[])
     .filter(x=>!vistaSearch||x.plan.name.toLowerCase().includes(vistaSearch.toLowerCase())||x.eq?.code?.toLowerCase().includes(vistaSearch.toLowerCase()));
@@ -11817,22 +11873,92 @@ return(
   return(
     <>
     {/* ── Top stat cards ── */}
-    <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-5">
+    <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3 mb-5">
       {[
-        [AlertTriangle,"text-red-600","bg-red-50",vencidos.length,"Vencidos","Tareas"],
-        [Clock,"text-amber-600","bg-amber-50",proximos.length,"Próximos 30 días","Tareas"],
-        [Calendar,"text-blue-600","bg-blue-50",planificados.length,"Planificados","Tareas"],
-        [CheckCircle,"text-emerald-600","bg-emerald-50",completadosMes.length,"Completadas (30 días)","Tareas"],
-        [TrendingUp,"text-purple-600","bg-purple-50",`${cumplimiento}%`,"Cumplimiento",`Meta: 90%`],
-      ].map(([Icon,textCl,bgCl,val,label,sub],i)=>(
+        [AlertTriangle,"text-red-600","bg-red-50",vencidos.length,"Vencidos","Tareas",null],
+        [Clock,"text-amber-600","bg-amber-50",proximos.length,"Próximos a vencer","≤15% de la frecuencia",null],
+        [Calendar,"text-blue-600","bg-blue-50",planificados.length,"Planificados","Tareas",null],
+        [CheckCircle,"text-emerald-600","bg-emerald-50",completados30d.length,"Completadas","últimos 30 días",null],
+        [TrendingUp,"text-purple-600","bg-purple-50",`${cumplimiento}%`,"Cumplimiento (hoy)","planes al día ahora",
+          "Cumplimiento (hoy) = (planes activos − planes vencidos en este momento) ÷ planes activos. Es una foto del instante actual, no mide si las ejecuciones pasadas se hicieron a tiempo."],
+        [Gauge,"text-cyan-600","bg-cyan-50",cumplimientoHistorico==null?"—":`${cumplimientoHistorico}%`,"Cumplimiento histórico","últimos 6 meses",
+          "Cumplimiento histórico = % de preventivas cerradas en los últimos 6 meses que se cerraron en la fecha programada o antes (closedAt vs. scheduledDate). Mide si las ejecuciones pasadas se hicieron a tiempo, no solo el estado de hoy."],
+      ].map(([Icon,textCl,bgCl,val,label,sub,info],i)=>(
         <div key={i} className={`${card} p-4`}>
           <div className={`w-9 h-9 rounded-xl ${bgCl} flex items-center justify-center mb-2`}><Icon size={16} className={textCl}/></div>
           <p className={`text-2xl font-bold leading-none ${textCl}`}>{val}</p>
-          <p className="text-gray-400 text-xs mt-1.5">{label}</p>
+          <p className="text-gray-400 text-xs mt-1.5 flex items-center gap-1">{label}{info&&<InfoPop texto={info}/>}</p>
           <p className="text-gray-300 text-xs">{sub}</p>
         </div>
       ))}
     </div>
+
+    {/* ── Equipos próximos a mantenimiento — agrupado por equipo, no por
+        tarea suelta. Click en una tarjeta selecciona ese plan abajo. ── */}
+    {equiposProximos.length>0&&(
+      <div className={`${card} p-4 mb-5`}>
+        <p className="text-gray-700 font-bold text-sm mb-3 flex items-center gap-2"><Truck size={15} className="text-gray-400"/>Equipos próximos a mantenimiento</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2.5 max-h-[420px] overflow-y-auto pr-1">
+          {equiposProximos.map(g=>{
+            const x=g.masUrgente;
+            const estCls=x.overdue?"border-red-200 bg-red-50/50":x.soon?"border-amber-200 bg-amber-50/50":"border-gray-200";
+            return(
+              <button key={g.eq?.id||x.plan.id} onClick={()=>{setSelectedPlanId(x.plan.id);setVistaCategory(x.overdue?"vencidos":x.soon?"proximos":"planificados");}}
+                className={`text-left rounded-xl border p-3 hover:shadow-sm transition ${estCls}`}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-mono font-bold text-xs" style={{color:NV.blue}}>{g.eq?.code}</span>
+                  <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${x.overdue?"bg-red-100 text-red-700":x.soon?"bg-amber-100 text-amber-700":"bg-emerald-100 text-emerald-700"}`}>
+                    {x.overdue?"Vencido":x.soon?"Próximo":"Al día"}
+                  </span>
+                </div>
+                <p className="text-gray-800 text-xs font-semibold truncate">{g.eq?.name}</p>
+                <p className="text-gray-500 text-xs truncate mt-0.5">{x.plan.name}</p>
+                <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-100">
+                  <span className={`text-xs font-bold ${x.overdue?"text-red-600":"text-gray-700"}`}>
+                    {x.overdue?`Vencido hace ${Math.abs(Math.round(x.hoursLeft))}h`:`${Math.round(x.hoursLeft)}h restantes`}
+                  </span>
+                  {g.proyeccion&&!g.proyeccion.vencido&&(
+                    <span className="text-gray-400 text-[10px]">~{g.proyeccion.dias}d ({fmt(g.proyeccion.fecha)})</span>
+                  )}
+                </div>
+                {g.totalPlanes>1&&<p className="text-gray-300 text-[10px] mt-1">+{g.totalPlanes-1} plan{g.totalPlanes>2?"es":""} más en este equipo</p>}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    )}
+
+    {/* ── Planes a reforzar — equipos con plan activo que igual siguen
+        fallando (correctivas reales, 90 días). Señal, no certeza. ── */}
+    {planesAReforzar.length>0&&(
+      <div className={`${card} p-4 mb-5 border-amber-200 bg-amber-50/30`}>
+        <p className="text-amber-800 font-bold text-sm mb-1 flex items-center gap-2"><AlertTriangle size={15}/>Planes a reforzar</p>
+        <p className="text-amber-700/70 text-xs mb-3">Equipos con plan preventivo activo que igual acumularon 2+ fallas reales en los últimos 90 días — vale la pena revisar si el plan cubre lo que está fallando.</p>
+        <div className="space-y-2">
+          {planesAReforzar.map(r=>(
+            <div key={r.eq?.id} className="bg-white rounded-xl border border-amber-100 p-3 flex flex-wrap items-center gap-3">
+              <div className="flex-1 min-w-[160px]">
+                <p className="text-gray-800 text-sm font-semibold">{r.eq?.code} — {r.eq?.name}</p>
+                <p className="text-gray-400 text-xs">
+                  {r.planesDelEquipo.length} plan{r.planesDelEquipo.length!==1?"es":""} activo{r.planesDelEquipo.length!==1?"s":""}: {r.planesDelEquipo.map(p=>p.name).join(", ")}
+                </p>
+              </div>
+              <span className="px-2 py-1 rounded-lg bg-red-50 text-red-700 text-xs font-bold flex-shrink-0">{r.nFallas} fallas / 90d</span>
+              {r.causaTop?(
+                <span className="px-2 py-1 rounded-lg bg-amber-100 text-amber-800 text-xs font-semibold flex-shrink-0">
+                  {r.causaTop.label} ({r.causaTop.n}/{r.nFallas})
+                </span>
+              ):(
+                <span className="px-2 py-1 rounded-lg bg-gray-100 text-gray-500 text-xs font-semibold flex-shrink-0">Sin causa raíz cargada</span>
+              )}
+              <button onClick={()=>{const p=r.planesDelEquipo[0];if(p) setSelectedPlanId(p.id);}}
+                className="text-blue-600 text-xs font-semibold hover:underline flex-shrink-0">Ver plan →</button>
+            </div>
+          ))}
+        </div>
+      </div>
+    )}
 
     {/* ── Main grid: left list + right detail ── */}
     <div className="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-4">
