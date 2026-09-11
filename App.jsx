@@ -1731,12 +1731,21 @@ const resolveOTType=w=>{
   return null;
 };
 
-// Tipos que se consideran "falla/correctivo" para MTBF/MTTR
+// Tipos que se consideran "falla/correctivo" para efectos de carga de trabajo y costo
 const esCorrectivo=w=>{
   // OTs de plan preventivo nunca afectan MTBF/MTTR, aunque su tipo sea correctivo
   if(w.source==="plan"||w.source==="planAssignment"||w.planId||w.assignmentId) return false;
   const t=resolveOTType(w)||w.type||"";
   return["correctiva_no_programada","correctiva_planificada","correctivo","emergencia"].includes(t);
+};
+// Subconjunto de esCorrectivo que representa una FALLA REAL (no programada) — la
+// única población que debe entrar a MTBF/tasa de falla. Una correctiva
+// planificada (se sabe de antemano que hay que intervenir, se agenda) es
+// mantenimiento programado, no una falla imprevista: infla el MTBF si se mezcla.
+const esFallaReal=w=>{
+  if(!esCorrectivo(w)) return false;
+  const t=resolveOTType(w)||w.type||"";
+  return t!=="correctiva_planificada";
 };
 
 const BACKLOG_URGENCIA={
@@ -13469,7 +13478,7 @@ const KPICard=({label,icon:Icon,unit="",color="blue",positiveIsUp=true,mesActual
 };
 
 // ─── INDICADORES ─────────────────────────────────────────────────────────────
-function Indicadores({data}){
+function Indicadores({data,activeModule}){
 const {wos=[],equip=[],plans=[],planAssignments=[],
   requests=[],repuestos=[]}=data;
 const [eqExpanded,setEqExpanded]=useState(null);
@@ -13509,14 +13518,14 @@ const woDelMes=(mesYM)=>wos.filter(w=>{
 });
 
 const seriesMTBF=meses6.map(mes=>{
-  const corrMes=woDelMes(mes).filter(w=>esCorrectivo(w)&&w.status==="completada");
+  const corrMes=woDelMes(mes).filter(w=>esFallaReal(w)&&w.status==="completada");
   const tHtotal=equip.reduce((s,e)=>s+(parseFloat(e.hours)||0),0);
   return{mes,valor:corrMes.length>0?parseFloat((tHtotal/corrMes.length).toFixed(1)):null};
 });
 
 const seriesMTTR=meses6.map(mes=>{
-  const comp=woDelMes(mes).filter(w=>esCorrectivo(w)&&w.status==="completada"&&(w.tiempoDetencion!=null||w.actualHours));
-  return{mes,valor:comp.length>0?parseFloat((comp.reduce((s,w)=>s+((w.tiempoDetencion??parseFloat(w.actualHours))??0),0)/comp.length).toFixed(1)):null};
+  const comp=woDelMes(mes).filter(w=>esFallaReal(w)&&w.status==="completada"&&hrsOT(w)>0);
+  return{mes,valor:comp.length>0?parseFloat((comp.reduce((s,w)=>s+hrsOT(w),0)/comp.length).toFixed(1)):null};
 });
 
 const seriesDisp=meses6.map((mes,i)=>{
@@ -13566,17 +13575,27 @@ const planVencidos=planAssignments.filter(a=>{
 const planTotalActivo=planAssignments.filter(a=>a.activo).length||1;
 const pctPMCumpl=Math.max(0,Math.round(((planTotalActivo-planVencidos.length)/planTotalActivo)*100));
 
-const corrComp=wos.filter(w=>esCorrectivo(w)&&w.status==="completada");
+// MTBF/MTTR/Disponibilidad se calculan SOLO sobre fallas reales (no programadas +
+// emergencias) — una correctiva planificada es una intervención agendada, no un
+// imprevisto, y mezclarla infla el MTBF y distorsiona el MTTR. Se trackea aparte.
+const corrComp=wos.filter(w=>esFallaReal(w)&&w.status==="completada");
 const tH=equip.reduce((s,e)=>s+(parseFloat(e.hours)||0),0);
 const gMTBF=corrComp.length>0?(tH/corrComp.length):null;
-const gMTTR=corrComp.length>0?(corrComp.reduce((s,w)=>s+(w.tiempoDetencion??hrsOT(w)),0)/corrComp.length):null;
+const gMTTR=corrComp.length>0?(corrComp.reduce((s,w)=>s+hrsOT(w),0)/corrComp.length):null;
 const gDisp=(gMTBF&&gMTTR&&(gMTBF+gMTTR)>0)?(gMTBF/(gMTBF+gMTTR)*100):null;
+
+// Correctivas planificadas: mismo origen (falla/desgaste detectado) pero se agendó
+// la intervención — tratamiento aparte, no cuenta como falla para MTBF/tasa de falla.
+const corrProgComp=wos.filter(w=>esCorrectivo(w)&&!esFallaReal(w)&&w.status==="completada");
+const mttrProg=corrProgComp.length>0?(corrProgComp.reduce((s,w)=>s+hrsOT(w),0)/corrProgComp.length):null;
+const fallasReales90=wo90.filter(w=>esFallaReal(w));
+const tasaFalla=parseFloat((fallasReales90.length/3).toFixed(1)); // fallas reales / mes, ventana de 90 días
 
 const wo30=wos.filter(w=>enPeriodo(w,d30)&&w.status==="completada");
 const costoMes=wo30.reduce((s,w)=>s+costoOT(w),0);
 
 const emerTotal=wo90.filter(w=>w.type==="emergencia").length;
-const pctEmer=Math.round((emerTotal/(corrTotal.length||1))*100);
+const pctEmer=Math.round((emerTotal/(fallasReales90.length||1))*100);
 
 const reincidencias=corrComp.filter(w=>{
   if(!w.closedAt||!w.equipId) return false;
@@ -13591,18 +13610,29 @@ const reincidencias=corrComp.filter(w=>{
 });
 const pctReinc=corrComp.length>0?Math.round((reincidencias.length/corrComp.length)*100):0;
 
+// ── Causa Raíz (Reportes ▸ Causa Raíz, solo Taller) — cobertura y Pareto ──────
+const otsCompletadas=wos.filter(w=>w.status==="completada");
+const conCausaRaiz=otsCompletadas.filter(w=>w.causaRaizCategoria);
+const pctCausaRaiz=otsCompletadas.length>0?Math.round((conCausaRaiz.length/otsCompletadas.length)*100):0;
+const causaCounts=Object.entries(
+  conCausaRaiz.reduce((acc,w)=>{acc[w.causaRaizCategoria]=(acc[w.causaRaizCategoria]||0)+1;return acc;},{})
+).map(([v,n])=>({v,n,label:CAUSA_RAIZ_OPTIONS.find(o=>o.v===v)?.label||v}))
+ .sort((a,b)=>b.n-a.n);
+const causaMax=causaCounts[0]?.n||1;
+
 const calcEq=eqId=>{
   const eq=equip.find(e=>e.id===eqId);
-  const corr=wos.filter(w=>w.equipId===eqId&&esCorrectivo(w));
+  const corr=wos.filter(w=>w.equipId===eqId&&esFallaReal(w));
   const comp=corr.filter(w=>w.status==="completada");
+  const progr=wos.filter(w=>w.equipId===eqId&&esCorrectivo(w)&&!esFallaReal(w)).length;
   const hrs=parseFloat(eq?.hours)||0;
   const mtbf=corr.length>0?hrs/corr.length:null;
-  const mttr=comp.length>0?(comp.reduce((s,w)=>s+(w.tiempoDetencion??hrsOT(w)),0)/comp.length):null;
+  const mttr=comp.length>0?(comp.reduce((s,w)=>s+hrsOT(w),0)/comp.length):null;
   const disp=(mtbf&&mttr&&(mtbf+mttr)>0)?(mtbf/(mtbf+mttr)*100):null;
   const costo=wos.filter(w=>w.equipId===eqId&&w.status==="completada").reduce((s,w)=>s+costoOT(w),0);
   const backlog=wos.filter(w=>w.equipId===eqId&&!["completada","cancelada"].includes(w.status||"")).reduce((s,w)=>s+(parseFloat(w.estimatedHours)||0),0);
   const reinc=reincidencias.filter(w=>w.equipId===eqId).length;
-  return{n:corr.length,comp:comp.length,mtbf,mttr,disp,costo,backlog,reinc};
+  return{n:corr.length,comp:comp.length,progr,mtbf,mttr,disp,costo,backlog,reinc};
 };
 
 const fH=v=>v==null?"—":`${v.toFixed(1)}h`;
@@ -13623,10 +13653,10 @@ return(
   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
     <KPICard label="MTBF" icon={Clock} unit="h" color="blue" positiveIsUp={true}
       mesActual={getVal(seriesMTBF,mesActualYM)} mesAnterior={getVal(seriesMTBF,mesAnteriorYM)}
-      series={seriesMTBF} sub="horas entre fallas — más es mejor"/>
+      series={seriesMTBF} sub="horas entre fallas reales — más es mejor"/>
     <KPICard label="MTTR" icon={Wrench} unit="h" color="amber" positiveIsUp={false}
       mesActual={getVal(seriesMTTR,mesActualYM)} mesAnterior={getVal(seriesMTTR,mesAnteriorYM)}
-      series={seriesMTTR} sub="horas de detención — menos es mejor"/>
+      series={seriesMTTR} sub="horas de trabajo en falla real — menos es mejor"/>
     <KPICard label="Disponibilidad" icon={TrendingUp} unit="%" color="emerald" positiveIsUp={true}
       mesActual={getVal(seriesDisp,mesActualYM)} mesAnterior={getVal(seriesDisp,mesAnteriorYM)}
       series={seriesDisp} sub="de la flota — más es mejor"/>
@@ -13639,7 +13669,20 @@ return(
   </div>
 
   {/* FILA 2 — KPIs operacionales */}
-  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+  <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+    <div className={`${card} p-4`}>
+      <div className="flex items-center gap-2 mb-2">
+        <div className="w-8 h-8 rounded-xl bg-red-100 flex items-center justify-center flex-shrink-0">
+          <AlertTriangle size={15} className="text-red-600"/>
+        </div>
+        <p className="text-gray-500 text-xs font-semibold uppercase tracking-wide">Tasa de Falla</p>
+      </div>
+      <p className="text-gray-900 font-bold text-2xl">{tasaFalla}<span className="text-gray-400 text-sm font-normal ml-1">fallas/mes</span></p>
+      <p className="text-gray-400 text-xs mt-1">{fallasReales90.length} fallas reales en 90 días</p>
+      {corrProgComp.length>0&&(
+        <p className="text-gray-400 text-xs mt-1 pt-1 border-t border-gray-100">+{corrProgComp.length} correctiva{corrProgComp.length!==1?"s":""} planificada{corrProgComp.length!==1?"s":""} ({fH(mttrProg)} prom.) — no cuentan como falla</p>
+      )}
+    </div>
     <div className={`${card} p-4`}>
       <div className="flex items-center gap-2 mb-2">
         <div className="w-8 h-8 rounded-xl bg-purple-100 flex items-center justify-center flex-shrink-0">
@@ -13774,7 +13817,7 @@ return(
       <table className="w-full text-xs">
         <thead>
           <tr className="bg-gray-50 border-b border-gray-200">
-            {["Equipo","Horas","Fallas","MTBF","MTTR","Disponib.","Backlog","Costo","Reinc."].map(h=>(
+            {["Equipo","Horas","Fallas","C.Prog.","MTBF","MTTR","Disponib.","Backlog","Costo","Reinc."].map(h=>(
               <th key={h} className={`px-4 py-3 text-gray-500 font-semibold uppercase tracking-wide ${h==="Equipo"?"text-left":"text-right"}`}>{h}</th>
             ))}
           </tr>
@@ -13796,6 +13839,7 @@ return(
                 </td>
                 <td className="px-4 py-2.5 text-right text-gray-600 font-mono">{(e.hours||0).toLocaleString()}h</td>
                 <td className="px-4 py-2.5 text-right"><span className={`font-bold ${m.n>0?"text-red-600":"text-gray-400"}`}>{m.n}</span></td>
+                <td className="px-4 py-2.5 text-right">{m.progr>0?(<span className="text-amber-600 font-semibold">{m.progr}</span>):(<span className="text-gray-400">—</span>)}</td>
                 <td className="px-4 py-2.5 text-right font-semibold" style={{color:NV.blue}}>{fH(m.mtbf)}</td>
                 <td className="px-4 py-2.5 text-right text-amber-700 font-semibold">{fH(m.mttr)}</td>
                 <td className="px-4 py-2.5 text-right">
@@ -13814,26 +13858,26 @@ return(
               </tr>
               {eqExpanded===e.id&&(
                 <tr key={`exp-${e.id}`}>
-                  <td colSpan={9} className="px-4 py-4 bg-blue-50/40 border-b border-gray-200">
+                  <td colSpan={10} className="px-4 py-4 bg-blue-50/40 border-b border-gray-200">
                     <p className="text-gray-500 text-xs font-semibold uppercase mb-3">Evolución últimos 6 meses — {e.name}</p>
                     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
                       {[
                         {label:"MTBF",unit:"h",positiveIsUp:true,color:"blue",icon:Clock,
                           series:meses6.map(mes=>{
-                            const corr=woDelMes(mes).filter(w=>w.equipId===e.id&&esCorrectivo(w)&&w.status==="completada");
+                            const corr=woDelMes(mes).filter(w=>w.equipId===e.id&&esFallaReal(w)&&w.status==="completada");
                             return{mes,valor:corr.length>0?parseFloat(((e.hours||0)/corr.length).toFixed(1)):null};
                           })},
                         {label:"MTTR",unit:"h",positiveIsUp:false,color:"amber",icon:Wrench,
                           series:meses6.map(mes=>{
-                            const comp=woDelMes(mes).filter(w=>w.equipId===e.id&&esCorrectivo(w)&&w.status==="completada"&&(w.tiempoDetencion!=null||w.actualHours));
-                            return{mes,valor:comp.length>0?parseFloat((comp.reduce((s,w)=>s+((w.tiempoDetencion??parseFloat(w.actualHours))??0),0)/comp.length).toFixed(1)):null};
+                            const comp=woDelMes(mes).filter(w=>w.equipId===e.id&&esFallaReal(w)&&w.status==="completada"&&hrsOT(w)>0);
+                            return{mes,valor:comp.length>0?parseFloat((comp.reduce((s,w)=>s+hrsOT(w),0)/comp.length).toFixed(1)):null};
                           })},
                         {label:"Disponibilidad",unit:"%",positiveIsUp:true,color:"emerald",icon:TrendingUp,
                           series:meses6.map(mes=>{
-                            const corr=woDelMes(mes).filter(w=>w.equipId===e.id&&esCorrectivo(w)&&w.status==="completada");
-                            const comp=corr.filter(w=>w.tiempoDetencion!=null||w.actualHours);
+                            const corr=woDelMes(mes).filter(w=>w.equipId===e.id&&esFallaReal(w)&&w.status==="completada");
+                            const comp=corr.filter(w=>hrsOT(w)>0);
                             const mtbf=corr.length>0?(e.hours||0)/corr.length:null;
-                            const mttr=comp.length>0?comp.reduce((s,w)=>s+((w.tiempoDetencion??parseFloat(w.actualHours))??0),0)/comp.length:null;
+                            const mttr=comp.length>0?comp.reduce((s,w)=>s+hrsOT(w),0)/comp.length:null;
                             return{mes,valor:(mtbf&&mttr&&(mtbf+mttr)>0)?parseFloat((mtbf/(mtbf+mttr)*100).toFixed(1)):null};
                           })},
                         {label:"Costo",unit:" CLP",positiveIsUp:false,color:"red",icon:Package,
@@ -13844,7 +13888,7 @@ return(
                         {label:"Fallas",unit:"",positiveIsUp:false,color:"purple",icon:AlertTriangle,
                           series:meses6.map(mes=>({
                             mes,
-                            valor:woDelMes(mes).filter(w=>w.equipId===e.id&&esCorrectivo(w)).length||null,
+                            valor:woDelMes(mes).filter(w=>w.equipId===e.id&&esFallaReal(w)).length||null,
                           }))},
                       ].map(({label,unit,positiveIsUp,color,icon:Ic,series})=>{
                         const bgC={blue:"#EBF4FF",emerald:"#ECFDF5",amber:"#FFFBEB",red:"#FEF2F2",purple:"#F5F3FF"};
@@ -13881,6 +13925,35 @@ return(
       </table>
     </div>
   </div>
+
+  {/* CAUSA RAÍZ — Pareto (Reportes ▸ Causa Raíz, solo Taller) */}
+  {activeModule!=="maritimo"&&(
+    <div className={`${card} overflow-hidden`}>
+      <div className="px-4 py-3 flex items-center gap-2 border-b border-gray-100">
+        <Search size={14} className="text-gray-400"/>
+        <p className="text-gray-700 font-bold text-sm">Causa Raíz — principales categorías</p>
+        <span className="ml-auto text-gray-400 text-xs">{conCausaRaiz.length} de {otsCompletadas.length} OTs completadas analizadas ({pctCausaRaiz}%)</span>
+      </div>
+      {causaCounts.length>0?(
+        <div className="p-4 space-y-2.5">
+          {causaCounts.slice(0,8).map(({v,n,label})=>(
+            <div key={v} className="flex items-center gap-3">
+              <span className="text-gray-600 text-xs w-44 flex-shrink-0 truncate" title={label}>{label}</span>
+              <div className="flex-1 h-2.5 bg-gray-100 rounded-full overflow-hidden">
+                <div className="h-full rounded-full bg-red-400" style={{width:`${Math.max(4,Math.round(n/causaMax*100))}%`}}/>
+              </div>
+              <span className="text-gray-700 text-xs font-bold w-6 text-right">{n}</span>
+            </div>
+          ))}
+          <p className="text-gray-400 text-xs pt-1">Ve el detalle y la cadena de 5 porqués de cada análisis en Reportes ▸ Causa Raíz.</p>
+        </div>
+      ):(
+        <div className="p-4">
+          <p className="text-gray-400 text-xs">Aún no hay análisis de causa raíz cargados. Se registran desde Reportes ▸ Causa Raíz sobre cualquier OT completada.</p>
+        </div>
+      )}
+    </div>
+  )}
 
   {/* PLANES VENCIDOS */}
   {planVencidos.length>0&&(
@@ -37811,7 +37884,7 @@ dashboard:     activeModule==="maritimo"
 workorders:    <WorkOrders    user={user} data={data} setData={setData} saveData={saveData} appendToArray={appendToArray} updateInArray={updateInArray} activeCOLL={activeCOLL} setPmNotifications={setPmNotifications} activeModule={activeModule} focusOTId={notifFocus?.kind==="ot"?notifFocus.id:null} onFocusHandled={()=>setNotifFocus(null)}/>,
 equipment:     <Equipment     user={user} data={data} setData={setData} saveData={saveData} appendToArray={appendToArray} updateInArray={updateInArray} activeModule={activeModule}/>,
 plans:         <Plans         user={user} data={data} setData={setData} saveData={saveData} appendToArray={appendToArray} updateInArray={updateInArray} activeModule={activeModule} activeBarco={activeBarco}/>,
-indicadores:   <Indicadores   data={data}/>,
+indicadores:   <Indicadores   data={data} activeModule={activeModule}/>,
 requests:      <Requests      user={user} data={data} setData={setData} saveData={saveData} appendToArray={appendToArray} updateInArray={updateInArray} activeCOLL={activeCOLL} activeModule={activeModule} focusReqId={notifFocus?.kind==="solicitud"?notifFocus.id:null} onFocusHandled={()=>setNotifFocus(null)}/>,
 gruas_arrendadas:<GruasArrendadasPage user={user} data={data} setData={setData} activeCOLL={activeCOLL}/>,
 notifications: <Notifications user={user} data={data} onSeen={()=>setSeenNotifs(true)}/>,
