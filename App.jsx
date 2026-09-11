@@ -8069,7 +8069,9 @@ style={sel?.id===w.id?{borderColor:NV.blue,background:"#EBF4FF"}:sem?{borderColo
         <div>
           <label className="text-gray-500 text-xs font-medium mb-1.5 block">TIPO DE OT *</label>
           <select value={newOTForm.type} onChange={e=>setNewOTForm(f=>({...f,type:e.target.value}))} className={sCls}>
-            <option value="correctiva_no_programada">Correctiva</option>
+            <option value="correctiva_no_programada">Correctiva — No Programada (imprevisto)</option>
+            <option value="correctiva_planificada">Correctiva — Planificada (se agenda)</option>
+            <option value="emergencia">Emergencia</option>
             <option value="preventiva">Preventiva</option>
           </select>
         </div>
@@ -14223,6 +14225,7 @@ const [pendingApproval,setPendingApproval]=useState(null);
 const [selectedMechanic,setSelectedMechanic]=useState("");
 const [scheduledDate,setScheduledDate]=useState("");
 const [supEquipoFuera,setSupEquipoFuera]=useState(false);
+const [otTypeAprob,setOtTypeAprob]=useState("correctiva_no_programada");
 const [showOpsModal,setShowOpsModal]=useState(false);
 const [opsPendingReq,setOpsPendingReq]=useState(null);
 const [opsEquipoFuera,setOpsEquipoFuera]=useState(false);
@@ -14281,6 +14284,7 @@ const approve=req=>{
   setPendingApproval(req);
   setSelectedMechanic(users.find(u=>u.role==="mecanico")?.id||"");
   setScheduledDate(new Date().toISOString().slice(0,10));
+  setOtTypeAprob(req.urgente?"emergencia":"correctiva_no_programada");
   setShowAssignModal(true);
 };
 const confirmApprove=async()=>{
@@ -14290,8 +14294,8 @@ const confirmApprove=async()=>{
   const priority=req.priority==="alta"||eq?.criticality==="A"?"alta":req.priority;
   const isInsp=req.source==="inspeccion";
   const newOT={
-    id:uid(),code:nextOTCode(wos),type:"correctivo",
-    log:[{ts:new Date().toISOString(),action:"creada",user:user.name,detail:`OT generada desde solicitud · Mecánico: ${users.find(u=>u.id===selectedMechanic)?.name||"—"} · Fecha programada: ${scheduledDate}`}],
+    id:uid(),code:nextOTCode(wos),type:otTypeAprob||"correctiva_no_programada",
+    log:[{ts:new Date().toISOString(),action:"creada",user:user.name,detail:`OT generada desde solicitud · Tipo: ${OT_TYPES[otTypeAprob]?.label||otTypeAprob} · Mecánico: ${users.find(u=>u.id===selectedMechanic)?.name||"—"} · Fecha programada: ${scheduledDate}`}],
     equipId:req.equipId,planId:null,
     title:`${isInsp?"Inspección":"Reparación"} ${eq?.name||""} - ${req.title}`,
     priority,status:"asignada",
@@ -14750,7 +14754,7 @@ return(
 );
 })()}
 {showAssignModal&&pendingApproval&&(
-  <Modal title="Aprobar Solicitud — Asignar Mecánico" onClose={()=>{setShowAssignModal(false);setPendingApproval(null);setSelectedMechanic("");setScheduledDate("");}}>
+  <Modal title="Aprobar Solicitud — Asignar Mecánico" onClose={()=>{setShowAssignModal(false);setPendingApproval(null);setSelectedMechanic("");setScheduledDate("");setOtTypeAprob("correctiva_no_programada");}}>
     <div className="space-y-4">
       <div className="bg-gray-50 border border-gray-100 rounded-lg p-3">
         <p className="text-gray-400 text-xs uppercase tracking-wide mb-1">Solicitud</p>
@@ -14791,6 +14795,26 @@ return(
       {scheduledDate&&new Date(scheduledDate)<new Date(new Date().toDateString())&&(
         <p className="text-amber-600 text-xs mt-1">⚠️ La fecha seleccionada es anterior a hoy</p>
       )}
+    </div>
+
+    <div>
+      <label className="text-gray-500 text-xs font-medium mb-2 block">TIPO DE CORRECTIVA</label>
+      <div className="grid grid-cols-3 gap-2">
+        {[
+          {val:"correctiva_no_programada",icon:"🔧",label:"No Programada",desc:"Imprevisto"},
+          {val:"correctiva_planificada",  icon:"📅",label:"Planificada",   desc:"Se agenda"},
+          {val:"emergencia",              icon:"🚨",label:"Emergencia",    desc:"Crítico"},
+        ].map(({val,icon,label,desc})=>(
+          <button key={val} type="button" onClick={()=>setOtTypeAprob(val)}
+            className={`p-2.5 rounded-xl border-2 text-left transition-all ${
+              otTypeAprob===val?"border-red-400 bg-red-50":"border-gray-200 bg-white hover:border-gray-300"}`}>
+            <p className="text-base mb-0.5">{icon}</p>
+            <p className={`text-xs font-bold ${otTypeAprob===val?"text-red-700":"text-gray-700"}`}>{label}</p>
+            <p className={`text-xs ${otTypeAprob===val?"text-red-500":"text-gray-400"}`}>{desc}</p>
+          </button>
+        ))}
+      </div>
+      <p className="text-gray-400 text-xs mt-1.5">Define cómo se contabiliza esta OT en MTBF/tasa de falla (Indicadores KPI).</p>
     </div>
 
     {/* Supervisor decides equipment status */}
@@ -14844,7 +14868,7 @@ return(
 
     <ModalActions
       onSave={confirmApprove}
-      onCancel={()=>{setShowAssignModal(false);setPendingApproval(null);setSelectedMechanic("");setScheduledDate("");setSupEquipoFuera(false);}}
+      onCancel={()=>{setShowAssignModal(false);setPendingApproval(null);setSelectedMechanic("");setScheduledDate("");setSupEquipoFuera(false);setOtTypeAprob("correctiva_no_programada");}}
       label="Confirmar y Generar OT"
     />
   </Modal>
