@@ -748,8 +748,14 @@ function calcularIndisponibilidadReal({tractosOp,inicioOp,terminoOp},detenciones
   if(isNaN(ini)||isNaN(finFaena)||finFaena<=ini) return{indisponibilidadRealHH:0,colchon};
   const eventos=[];
   (detencionesFaena||[]).forEach(d=>{
+    // Un registro sin "fin" (dato incompleto) se ignora, igual que hace la
+    // bruta (horasReparacion queda NaN→0 con d.horasReparacion||0). Antes acá
+    // se le inventaba un "cae hasta el fin de la faena" — eso podía inflar la
+    // indisponibilidad real POR ENCIMA de la bruta, que es imposible: el
+    // cálculo con colchón solo puede restar, nunca sumar.
+    if(!d.fin) return;
     const dIniRaw=new Date(d.inicio).getTime();
-    const dFinRaw=d.fin?new Date(d.fin).getTime():finFaena;
+    const dFinRaw=new Date(d.fin).getTime();
     if(isNaN(dIniRaw)||isNaN(dFinRaw)) return;
     const dIni=Math.max(ini,dIniRaw), dFin=Math.min(finFaena,dFinRaw);
     if(dFin<=dIni) return;
@@ -789,7 +795,10 @@ function calcularFaenaDerivados({buque,terminal,inicioOp,terminoOp,tractosOp,tra
   let indisponibilidadRealHH=null,colchonTractos=null,disponibilidadTecnicaReal=null,utilizacionReal=null;
   if(detencionesFaena){
     const real=calcularIndisponibilidadReal({tractosOp:tOp,inicioOp,terminoOp},detencionesFaena,target);
-    indisponibilidadRealHH=real.indisponibilidadRealHH;
+    // La real es un subconjunto de la bruta (solo el exceso sobre el colchón)
+    // — nunca puede ser mayor. Resguardo defensivo por si algún dato
+    // incompleto se cuela por otro lado: nunca mostrar un número imposible.
+    indisponibilidadRealHH=Math.min(real.indisponibilidadRealHH,indisponibilidadHH);
     colchonTractos=real.colchon;
     disponibilidadTecnicaReal=utilizacionEsperada>0?Math.max(0,Math.min(1,(horasOperacion-indisponibilidadRealHH)/utilizacionEsperada)):0;
     utilizacionReal=horasOperacion>0?Math.max(0,Math.min(1,(horasOperacion-indisponibilidadRealHH-horasDescontables)/horasOperacion)):0;
