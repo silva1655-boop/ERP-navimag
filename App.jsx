@@ -732,7 +732,43 @@ function getISOWeek(date){
 // horasOperacionBruta) y "horasOperacion" quedan en la misma unidad que
 // indisponibilidadHH (suma de horas de reparación, potencialmente de varios
 // tractos distintos), que es lo que hace comparables sus ratios.
-function calcularFaenaDerivados({buque,terminal,inicioOp,terminoOp,tractosOp,tractosUtilizados,capacidadOperadores},targets,indisponibilidadHH=0){
+// Reconstruye, evento a evento, cuántos tractos de una faena estuvieron caídos
+// EN SIMULTÁNEO (a partir de inicio/fin de cada Detención, recortados a la
+// ventana de la faena) y solo cuenta como indisponibilidad REAL las horas en
+// que esa cantidad de tractos caídos a la vez supera el "colchón" de
+// redundancia (tractosOp − target): mientras la cantidad de tractos caídos en
+// un instante no exceda ese colchón, a la faena le siguen quedando tractos
+// suficientes para cumplir el target, y esa falla no debería restar
+// disponibilidad. Deduplica solapamientos automáticamente (dos tractos caídos
+// en el mismo rango horario no suman doble).
+function calcularIndisponibilidadReal({tractosOp,inicioOp,terminoOp},detencionesFaena,target){
+  const colchon=Math.max(0,(parseFloat(tractosOp)||0)-(target||0));
+  const ini=new Date(inicioOp).getTime();
+  const finFaena=terminoOp?new Date(terminoOp).getTime():Date.now();
+  if(isNaN(ini)||isNaN(finFaena)||finFaena<=ini) return{indisponibilidadRealHH:0,colchon};
+  const eventos=[];
+  (detencionesFaena||[]).forEach(d=>{
+    const dIniRaw=new Date(d.inicio).getTime();
+    const dFinRaw=d.fin?new Date(d.fin).getTime():finFaena;
+    if(isNaN(dIniRaw)||isNaN(dFinRaw)) return;
+    const dIni=Math.max(ini,dIniRaw), dFin=Math.min(finFaena,dFinRaw);
+    if(dFin<=dIni) return;
+    eventos.push({t:dIni,delta:1});
+    eventos.push({t:dFin,delta:-1});
+  });
+  if(!eventos.length) return{indisponibilidadRealHH:0,colchon};
+  eventos.sort((a,b)=>a.t-b.t);
+  let concurrentes=0,tAnterior=eventos[0].t,horasReal=0;
+  eventos.forEach(ev=>{
+    const dtHoras=(ev.t-tAnterior)/3600000;
+    if(dtHoras>0) horasReal+=Math.max(0,concurrentes-colchon)*dtHoras;
+    concurrentes+=ev.delta;
+    tAnterior=ev.t;
+  });
+  return{indisponibilidadRealHH:parseFloat(horasReal.toFixed(2)),colchon};
+}
+
+function calcularFaenaDerivados({buque,terminal,inicioOp,terminoOp,tractosOp,tractosUtilizados,capacidadOperadores},targets,indisponibilidadHH=0,detencionesFaena=null){
   const targetRow=(targets||[]).find(t=>t.buque===buque&&t.terminal===terminal);
   if(!targetRow||!inicioOp||!terminoOp) return null;
   const target=targetRow.target;
@@ -746,9 +782,22 @@ function calcularFaenaDerivados({buque,terminal,inicioOp,terminoOp,tractosOp,tra
   const disponibilidadTecnica=utilizacionEsperada>0?Math.max(0,Math.min(1,(horasOperacion-indisponibilidadHH)/utilizacionEsperada)):0;
   const cumplimiento=target>0?Math.min(1,tOp/target):0;
   const utilizacion=horasOperacion>0?Math.max(0,Math.min(1,(horasOperacion-indisponibilidadHH-horasDescontables)/horasOperacion)):0;
+  // "Real" — no reemplaza indisponibilidadHH/disponibilidadTecnica/utilizacion
+  // (esas quedan intactas, validadas celda a celda contra el Excel oficial,
+  // ver comentario arriba). Son métricas NUEVAS y opcionales que se agregan
+  // solo si se pasa detencionesFaena — ver calcularIndisponibilidadReal.
+  let indisponibilidadRealHH=null,colchonTractos=null,disponibilidadTecnicaReal=null,utilizacionReal=null;
+  if(detencionesFaena){
+    const real=calcularIndisponibilidadReal({tractosOp:tOp,inicioOp,terminoOp},detencionesFaena,target);
+    indisponibilidadRealHH=real.indisponibilidadRealHH;
+    colchonTractos=real.colchon;
+    disponibilidadTecnicaReal=utilizacionEsperada>0?Math.max(0,Math.min(1,(horasOperacion-indisponibilidadRealHH)/utilizacionEsperada)):0;
+    utilizacionReal=horasOperacion>0?Math.max(0,Math.min(1,(horasOperacion-indisponibilidadRealHH-horasDescontables)/horasOperacion)):0;
+  }
   return{
     target,horasOperacionBruta,horasDescontables,horasOperacion,utilizacionEsperada,
     indisponibilidadHH,disponibilidadTecnica,cumplimiento,utilizacion,
+    indisponibilidadRealHH,colchonTractos,disponibilidadTecnicaReal,utilizacionReal,
     semana:getISOWeek(fin),mes:fin.getMonth()+1,anio:fin.getFullYear(),
   };
 }
@@ -19995,7 +20044,7 @@ const faenaActiva=faenas.find(f=>f.estado==="activa"&&(esSup||f.creadoPor===quie
     // capacidadOperadores final = máximo visto entre todos los turnos
     // registrados durante la faena (no solo el del turno inicial).
     const faenaConDotacionFinal={...faenaActiva,capacidadOperadores:dotacionMax,terminoOp};
-    const derivados=calcularFaenaDerivados(faenaConDotacionFinal,targets,indisp);
+    const derivados=calcularFaenaDerivados(faenaConDotacionFinal,targets,indisp,detencionesActiva);
     if(!derivados){alert("No se pudo calcular la faena por un motivo inesperado — avisa a soporte con la hora de inicio/término que estabas usando.");return;}
     const cerrada={...faenaConDotacionFinal,estado:"cerrada",indisponibilidadHH:indisp,...derivados,cerradoPor:quien,cerradoEn:new Date().toISOString()};
     await guardarFaenas(faenas.map(f=>f.id===faenaActiva.id?cerrada:f));
@@ -20645,9 +20694,10 @@ function DisponibilidadUtilizacion({user,data}){
   };
 
   const indisponibilidadHHDeEdicion=editFaenaId?(faenas.find(x=>x.id===editFaenaId)?.indisponibilidadHH||0):0;
+  const detencionesDeEdicion=editFaenaId?detenciones.filter(x=>x.faenaId===editFaenaId):[];
   const previewFaena=useMemo(
-    ()=>calcularFaenaDerivados(nuevaFaena,targets,indisponibilidadHHDeEdicion),
-    [nuevaFaena,targets,indisponibilidadHHDeEdicion]
+    ()=>calcularFaenaDerivados(nuevaFaena,targets,indisponibilidadHHDeEdicion,detencionesDeEdicion),
+    [nuevaFaena,targets,indisponibilidadHHDeEdicion,detencionesDeEdicion]
   );
   const targetFaenaActual=targets.find(t=>t.buque===nuevaFaena.buque&&t.terminal===nuevaFaena.terminal);
 
@@ -20668,7 +20718,7 @@ function DisponibilidadUtilizacion({user,data}){
     if(new Date(f.terminoOp)<=new Date(f.inicioOp)){alert("El término de la operación debe ser posterior al inicio.");return;}
     if(!targetFaenaActual){alert(`No hay target configurado para ${f.buque} · ${f.terminal}. Agrégalo arriba en "Configuración de Targets" antes de guardar esta faena.`);return;}
     if(faenaDuplicada&&!window.confirm(`Ya existe una faena ${faenaDuplicada.buque} N°"${faenaDuplicada.numeroFaena}" (${faenaDuplicada.terminal}, término ${faenaDuplicada.terminoOp?new Date(faenaDuplicada.terminoOp).toLocaleDateString("es-CL"):"—"}). ¿Guardar igual y tener dos faenas con el mismo número?`)) return;
-    const derivados=calcularFaenaDerivados(f,targets,indisponibilidadHHDeEdicion);
+    const derivados=calcularFaenaDerivados(f,targets,indisponibilidadHHDeEdicion,detencionesDeEdicion);
     if(!derivados){alert("No se pudo calcular la faena — revisa las fechas ingresadas.");return;}
     const ahora=new Date().toISOString();
     const base={
@@ -20763,9 +20813,15 @@ function DisponibilidadUtilizacion({user,data}){
     // metería un grupo "undefined-undefined" con NaN en el gráfico.
     faenas.filter(f=>f.estado!=="activa").forEach(f=>{
       const{key,label}=periodoDeFecha(f.anio,f.mes,granularidadPromedio);
-      if(!grupos[key]) grupos[key]={key,label,ESPERANZA:{d:0,u:0,n:0},DALKA:{d:0,u:0,n:0}};
+      if(!grupos[key]) grupos[key]={key,label,ESPERANZA:{d:0,u:0,dr:0,ur:0,nr:0,n:0},DALKA:{d:0,u:0,dr:0,ur:0,nr:0,n:0}};
       const g=grupos[key][f.buque];
-      if(g){g.d+=f.disponibilidadTecnica;g.u+=f.utilizacion;g.n++;}
+      if(g){
+        g.d+=f.disponibilidadTecnica;g.u+=f.utilizacion;g.n++;
+        // dispReal/utilReal solo existen en faenas ya recalculadas con
+        // detenciones (ver "Recalcular todas las faenas") — se promedian
+        // aparte para no mezclar faenas con y sin este dato.
+        if(f.disponibilidadTecnicaReal!=null){g.dr+=f.disponibilidadTecnicaReal;g.ur+=f.utilizacionReal;g.nr++;}
+      }
     });
     return Object.values(grupos).sort((a,b)=>a.key.localeCompare(b.key)).map(g=>({
       key:g.key,label:g.label,
@@ -20773,6 +20829,10 @@ function DisponibilidadUtilizacion({user,data}){
       dispDalka:g.DALKA.n>0?g.DALKA.d/g.DALKA.n:null,
       utilEsperanza:g.ESPERANZA.n>0?g.ESPERANZA.u/g.ESPERANZA.n:null,
       utilDalka:g.DALKA.n>0?g.DALKA.u/g.DALKA.n:null,
+      dispRealEsperanza:g.ESPERANZA.nr>0?g.ESPERANZA.dr/g.ESPERANZA.nr:null,
+      dispRealDalka:g.DALKA.nr>0?g.DALKA.dr/g.DALKA.nr:null,
+      utilRealEsperanza:g.ESPERANZA.nr>0?g.ESPERANZA.ur/g.ESPERANZA.nr:null,
+      utilRealDalka:g.DALKA.nr>0?g.DALKA.ur/g.DALKA.nr:null,
       nEsperanza:g.ESPERANZA.n,nDalka:g.DALKA.n,
     }));
   },[faenas,granularidadPromedio]);
@@ -20804,11 +20864,20 @@ function DisponibilidadUtilizacion({user,data}){
   const resumenBuqueInforme=(fs)=>{
     const n=fs.length;
     const hhIndisp=fs.reduce((s,f)=>s+(f.indisponibilidadHH||0),0);
+    // *Real: solo entre faenas que ya tienen indisponibilidadRealHH calculado
+    // (requiere haber pasado por "Recalcular todas las faenas" al menos una
+    // vez desde que existe este cálculo) — se promedian aparte para no
+    // mezclar faenas con y sin el dato.
+    const fsConReal=fs.filter(f=>f.indisponibilidadRealHH!=null);
+    const nr=fsConReal.length;
     return{
       n,hhIndisp,
       dispProm:n>0?fs.reduce((s,f)=>s+f.disponibilidadTecnica,0)/n:null,
       utilProm:n>0?fs.reduce((s,f)=>s+f.utilizacion,0)/n:null,
       tractosOpProm:n>0?fs.reduce((s,f)=>s+(f.tractosOp||0),0)/n:null,
+      nr,hhIndispReal:fsConReal.reduce((s,f)=>s+(f.indisponibilidadRealHH||0),0),
+      dispPromReal:nr>0?fsConReal.reduce((s,f)=>s+f.disponibilidadTecnicaReal,0)/nr:null,
+      utilPromReal:nr>0?fsConReal.reduce((s,f)=>s+f.utilizacionReal,0)/nr:null,
     };
   };
 
@@ -20963,8 +21032,9 @@ function DisponibilidadUtilizacion({user,data}){
     faenaIds.forEach(fid=>{
       const faena=faenasActualizadas.find(f=>f.id===fid);
       if(!faena) return;
-      const nuevaIndisp=detencionesActuales.filter(x=>x.faenaId===fid).reduce((s,x)=>s+(x.horasReparacion||0),0);
-      const derivados=calcularFaenaDerivados(faena,targets,nuevaIndisp);
+      const detencionesDeFaena=detencionesActuales.filter(x=>x.faenaId===fid);
+      const nuevaIndisp=detencionesDeFaena.reduce((s,x)=>s+(x.horasReparacion||0),0);
+      const derivados=calcularFaenaDerivados(faena,targets,nuevaIndisp,detencionesDeFaena);
       if(!derivados) return;
       faenasActualizadas=faenasActualizadas.map(f=>f.id===fid?{...f,...derivados,recalculadoEn:new Date().toISOString()}:f);
       huboCambios=true;
@@ -20985,12 +21055,15 @@ function DisponibilidadUtilizacion({user,data}){
     if(!nuevaDetencion.faenaId||horasReparacionPreview==null) return null;
     const faena=faenas.find(f=>f.id===nuevaDetencion.faenaId);
     if(!faena) return null;
-    const otrasHoras=detenciones.filter(x=>x.faenaId===nuevaDetencion.faenaId&&x.id!==editDetencionId).reduce((s,x)=>s+(x.horasReparacion||0),0);
-    const antes=calcularFaenaDerivados(faena,targets,faena.indisponibilidadHH||0);
-    const despues=calcularFaenaDerivados(faena,targets,otrasHoras+horasReparacionPreview);
+    const todasActuales=detenciones.filter(x=>x.faenaId===nuevaDetencion.faenaId);
+    const otrasDetenciones=todasActuales.filter(x=>x.id!==editDetencionId);
+    const otrasHoras=otrasDetenciones.reduce((s,x)=>s+(x.horasReparacion||0),0);
+    const detencionPreview={inicio:nuevaDetencion.inicio,fin:nuevaDetencion.fin,horasReparacion:horasReparacionPreview};
+    const antes=calcularFaenaDerivados(faena,targets,faena.indisponibilidadHH||0,todasActuales);
+    const despues=calcularFaenaDerivados(faena,targets,otrasHoras+horasReparacionPreview,otrasDetenciones.concat([detencionPreview]));
     if(!antes||!despues) return null;
     return{faena,antes,despues};
-  },[nuevaDetencion.faenaId,horasReparacionPreview,faenas,detenciones,editDetencionId,targets]);
+  },[nuevaDetencion.faenaId,nuevaDetencion.inicio,nuevaDetencion.fin,horasReparacionPreview,faenas,detenciones,editDetencionId,targets]);
 
   const guardarDetencion=async()=>{
     const d=nuevaDetencion;
@@ -21049,13 +21122,22 @@ function DisponibilidadUtilizacion({user,data}){
   // a mitad de camino entre guardar la Detención y recalcular su Faena (o dos
   // admins editaron casi al mismo tiempo), esto vuelve a sumar indisponibilidadHH
   // desde cero para TODAS las faenas y corrige solo las que quedaron desincronizadas.
+  // También sirve para backfillear indisponibilidadRealHH/disponibilidadTecnicaReal/
+  // utilizacionReal en faenas cerradas antes de que existiera ese cálculo — por
+  // eso el chequeo de "sin cambios" exige además que indisponibilidadRealHH ya
+  // esté seteado, no solo que la bruta coincida.
   const recalcularTodasLasFaenas=async()=>{
     setRecalculandoTodas(true);
     let cambios=0;
     const faenasActualizadas=faenas.map(f=>{
-      const hh=detenciones.filter(d=>d.faenaId===f.id).reduce((s,d)=>s+(d.horasReparacion||0),0);
-      const derivados=calcularFaenaDerivados(f,targets,hh);
-      if(!derivados||Math.abs((f.indisponibilidadHH||0)-derivados.indisponibilidadHH)<0.001) return f;
+      const detencionesDeFaena=detenciones.filter(d=>d.faenaId===f.id);
+      const hh=detencionesDeFaena.reduce((s,d)=>s+(d.horasReparacion||0),0);
+      const derivados=calcularFaenaDerivados(f,targets,hh,detencionesDeFaena);
+      if(!derivados) return f;
+      const sinCambios=Math.abs((f.indisponibilidadHH||0)-derivados.indisponibilidadHH)<0.001
+        &&f.indisponibilidadRealHH!=null
+        &&Math.abs((f.indisponibilidadRealHH||0)-derivados.indisponibilidadRealHH)<0.001;
+      if(sinCambios) return f;
       cambios++;
       return{...f,...derivados,recalculadoEn:new Date().toISOString()};
     });
@@ -21693,9 +21775,15 @@ function DisponibilidadUtilizacion({user,data}){
           <p className="text-sm text-gray-600 mb-2">Horas de reparación: <span className="font-bold text-gray-800">{fmtH(horasReparacionPreview)}</span></p>
         )}
         {previewImpactoFaena&&(
-          <div className="bg-gray-50 rounded-xl p-3 mb-3 text-xs text-gray-600">
-            Impacto en faena <b>{previewImpactoFaena.faena.numeroFaena}</b>: Solo Disponibilidad {fmtPct(previewImpactoFaena.antes.disponibilidadTecnica)} → <b>{fmtPct(previewImpactoFaena.despues.disponibilidadTecnica)}</b>
-            {" · "}Utilización {fmtPct(previewImpactoFaena.antes.utilizacion)} → <b>{fmtPct(previewImpactoFaena.despues.utilizacion)}</b>
+          <div className="bg-gray-50 rounded-xl p-3 mb-3 text-xs text-gray-600 space-y-1">
+            <p>Impacto en faena <b>{previewImpactoFaena.faena.numeroFaena}</b>: Solo Disponibilidad {fmtPct(previewImpactoFaena.antes.disponibilidadTecnica)} → <b>{fmtPct(previewImpactoFaena.despues.disponibilidadTecnica)}</b>
+            {" · "}Utilización {fmtPct(previewImpactoFaena.antes.utilizacion)} → <b>{fmtPct(previewImpactoFaena.despues.utilizacion)}</b></p>
+            {previewImpactoFaena.despues.indisponibilidadRealHH!=null&&(
+              <p className="text-emerald-700">
+                Considerando colchón de {previewImpactoFaena.despues.colchonTractos} tracto{previewImpactoFaena.despues.colchonTractos!==1?"s":""} de respaldo (tractosOp − target): Disponibilidad real {fmtPct(previewImpactoFaena.antes.disponibilidadTecnicaReal)} → <b>{fmtPct(previewImpactoFaena.despues.disponibilidadTecnicaReal)}</b>
+                {" · "}Utilización real {fmtPct(previewImpactoFaena.antes.utilizacionReal)} → <b>{fmtPct(previewImpactoFaena.despues.utilizacionReal)}</b>
+              </p>
+            )}
           </div>
         )}
 
@@ -21753,13 +21841,13 @@ function DisponibilidadUtilizacion({user,data}){
               {recalculandoTodas?"Recalculando...":"🔄 Recalcular todas las Faenas"}
             </button>
             <p className="text-gray-300 text-[10px] mt-1">
-              Vuelve a sumar indisponibilidadHH desde cero para cada Faena a partir de sus Detenciones actuales. Úsalo si sospechás que una Faena quedó desincronizada (ej. se cerró la pestaña justo después de guardar una Detención, antes de que terminara el recálculo).
+              Vuelve a sumar indisponibilidadHH desde cero para cada Faena a partir de sus Detenciones actuales, y de paso calcula/actualiza la Disponibilidad y Utilización "real" (con colchón de tractos). Úsalo si sospechás que una Faena quedó desincronizada (ej. se cerró la pestaña justo después de guardar una Detención, antes de que terminara el recálculo), o para que las faenas cerradas antes de este cálculo muestren también sus valores "real".
             </p>
             {recalcularTodasResult!=null&&(
               <p className="text-emerald-700 text-xs mt-2">
                 {recalcularTodasResult.cambios===0
                   ?`✅ Las ${recalcularTodasResult.total} faena(s) ya estaban sincronizadas — no hizo falta corregir nada.`
-                  :`✅ ${recalcularTodasResult.cambios} de ${recalcularTodasResult.total} faena(s) tenían indisponibilidadHH desactualizado — ya se corrigieron.`}
+                  :`✅ ${recalcularTodasResult.cambios} de ${recalcularTodasResult.total} faena(s) se actualizaron.`}
               </p>
             )}
           </div>
@@ -21840,6 +21928,13 @@ function DisponibilidadUtilizacion({user,data}){
               <StatCard icon={Clock} label="Horas indisponibilidad" value={fmtH(informeKPIsCombinado.hhIndisp)} sub={informeModo==="mensual"?"suma del mes":"suma del trimestre"} color="amber"/>
               <StatCard icon={Truck} label="Tractos OP promedio" value={informeKPIsCombinado.n>0?informeKPIsCombinado.tractosOpProm.toFixed(1):"—"} sub="por faena" color="navy"/>
             </div>
+            {informeKPIsCombinado.nr>0&&(
+              <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 mt-3 pt-3 border-t border-gray-100">
+                <StatCard icon={Gauge} label="Disp. real (con colchón de tractos)" value={fmtPct(informeKPIsCombinado.dispPromReal)} sub={`${informeKPIsCombinado.nr} de ${informeKPIsCombinado.n} faena(s) recalculadas`} color="emerald"/>
+                <StatCard icon={TrendingUp} label="Utilización real" value={fmtPct(informeKPIsCombinado.utilPromReal)} sub={`${informeKPIsCombinado.nr} de ${informeKPIsCombinado.n} faena(s) recalculadas`} color="emerald"/>
+                <StatCard icon={Clock} label="Horas indisp. reales" value={fmtH(informeKPIsCombinado.hhIndispReal)} sub="excluye fallas cubiertas por otro tracto" color="emerald"/>
+              </div>
+            )}
           </div>
 
           {[["Esperanza","ESPERANZA"],["Dalka","DALKA"]].map(([nombre,buque])=>{
@@ -21851,12 +21946,19 @@ function DisponibilidadUtilizacion({user,data}){
                   {nombre} — {periodoLabelInforme}
                 </h2>
 
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
                   <StatCard icon={Gauge} label={informeModo==="mensual"?"Solo Disp. mensual":"Solo Disp. trimestral"} value={k.n>0?fmtPct(k.dispProm):"—"} sub={`${k.n} faena(s)`} color="blue"/>
                   <StatCard icon={TrendingUp} label={informeModo==="mensual"?"Utilización mensual":"Utilización trimestral"} value={k.n>0?fmtPct(k.utilProm):"—"} sub={`${k.n} faena(s)`} color="cyan"/>
                   <StatCard icon={Clock} label="Horas indisponibilidad" value={fmtH(k.hhIndisp)} sub={informeModo==="mensual"?"suma del mes":"suma del trimestre"} color="amber"/>
                   <StatCard icon={Truck} label="Tractos OP promedio" value={k.n>0?k.tractosOpProm.toFixed(1):"—"} sub="por faena" color="navy"/>
                 </div>
+                {k.nr>0&&(
+                  <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 mb-5 pt-3 border-t border-gray-100">
+                    <StatCard icon={Gauge} label="Disp. real (con colchón de tractos)" value={fmtPct(k.dispPromReal)} sub={`${k.nr} de ${k.n} faena(s) recalculadas`} color="emerald"/>
+                    <StatCard icon={TrendingUp} label="Utilización real" value={fmtPct(k.utilPromReal)} sub={`${k.nr} de ${k.n} faena(s) recalculadas`} color="emerald"/>
+                    <StatCard icon={Clock} label="Horas indisp. reales" value={fmtH(k.hhIndispReal)} sub="excluye fallas cubiertas por otro tracto" color="emerald"/>
+                  </div>
+                )}
 
                 {informeModo==="trimestral"&&(<>
                 <div className="flex items-center justify-between mb-2">
