@@ -811,6 +811,20 @@ function calcularFaenaDerivados({buque,terminal,inicioOp,terminoOp,tractosOp,tra
   };
 }
 
+// Metodología de cada indicador de Disponibilidad y Utilización, para el "?"
+// de StatCard (InfoPop) en Gestión e Informe Gerencial — texto plano, sin
+// fórmulas de código, para que lo entienda cualquiera que no programe.
+const DISP_METODOLOGIA={
+  solaDisponibilidad:"Solo Disponibilidad = (horas-tracto operadas − horas de indisponibilidad) ÷ (target × duración de la faena). Horas-tracto operadas = tractos asignados × duración. Compara lo que realmente se entregó contra lo que exigía el target, descontando las horas perdidas por fallas.",
+  utilizacion:"Utilización = (horas-tracto operadas − indisponibilidad − horas descontables) ÷ horas-tracto operadas. Horas descontables = déficit de dotación de operadores (target − operadores disponibles) × duración. Mide qué % de lo entregado se usó de forma efectiva, descontando fallas y falta de operadores.",
+  cumplimiento:"Cumplimiento = tractos asignados a la faena ÷ tractos que exige el target (tope 100%). Solo mide si se asignó la cantidad de tractos necesaria, no si funcionaron bien durante la faena.",
+  horasIndisponibilidad:"Suma de las horas de reparación de TODAS las Detenciones (fallas de tractos) registradas en el período — sin excepción, sin importar si otro tracto cubrió la falla.",
+  tractosOpProm:"Promedio de tractos asignados (tractosOp) por faena del período seleccionado.",
+  dispReal:"Igual que Solo Disponibilidad, pero solo cuenta como indisponibilidad las horas en que la cantidad de tractos caídos EN SIMULTÁNEO superó el colchón de respaldo (tractos asignados − target). Si una falla quedó cubierta por otro tracto sin bajar del target, no resta disponibilidad — la falla igual queda registrada para mantenimiento, pero no penaliza este indicador.",
+  utilizacionReal:"Igual que Utilización, pero usando la indisponibilidad real (ver 'Disp. real'): solo descuenta las horas en que los tractos caídos a la vez superaron el colchón de respaldo.",
+  horasIndispReales:"Solo las horas en que la cantidad de tractos caídos al mismo tiempo superó el colchón de respaldo (tractos asignados − target) — excluye fallas que un tracto de repuesto cubrió sin afectar el cumplimiento del target.",
+};
+
 async function initIfEmpty(coll, key, seed) {
 try {
   const s=await getDoc(doc(db,coll,key));
@@ -2439,7 +2453,30 @@ return(
 }
 
 // ─── STAT CARD ───────────────────────────────────────────────────────────────
-function StatCard({icon:Icon,label,value,sub,color="navy"}){
+// Botón "?" que muestra/oculta un popover con texto libre — pensado para
+// explicar la metodología de cálculo de un indicador sin ocuparle espacio
+// permanente en pantalla. Cierra al hacer click afuera (overlay fixed) o de
+// nuevo en el botón.
+function InfoPop({texto}){
+  const [open,setOpen]=useState(false);
+  return(
+    <span className="relative inline-block" onClick={e=>e.stopPropagation()}>
+      <button type="button" onClick={()=>setOpen(o=>!o)} title="Metodología de cálculo"
+        className={`w-3.5 h-3.5 rounded-full border text-[9px] font-bold flex items-center justify-center flex-shrink-0 transition ${
+          open?"border-blue-400 bg-blue-50 text-blue-600":"border-gray-300 text-gray-400 hover:border-gray-400 hover:text-gray-600"}`}>?</button>
+      {open&&(
+        <>
+          <div className="fixed inset-0 z-40" onClick={()=>setOpen(false)}/>
+          <div className="absolute z-50 top-full left-0 mt-1.5 w-64 max-w-[80vw] bg-gray-900 text-gray-100 text-[11px] leading-relaxed rounded-lg p-3 shadow-xl">
+            {texto}
+          </div>
+        </>
+      )}
+    </span>
+  );
+}
+
+function StatCard({icon:Icon,label,value,sub,color="navy",info}){
 const m={
 navy:   "border-blue-200 bg-blue-50   text-blue-800",
 blue:   "border-blue-200 bg-blue-50   text-blue-700",
@@ -2452,7 +2489,7 @@ return(
 <div className={`${card} p-5 flex items-center gap-4`}>
 <div className={`w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 border ${m[color]||m.navy}`}><Icon size={20}/></div>
 <div>
-<p className="text-gray-500 text-xs font-medium mb-0.5">{label}</p>
+<p className="text-gray-500 text-xs font-medium mb-0.5 flex items-center gap-1">{label}{info&&<InfoPop texto={info}/>}</p>
 <p className="text-gray-900 font-bold text-2xl leading-none">{value}</p>
 {sub&&<p className="text-gray-400 text-xs mt-1">{sub}</p>}
 </div>
@@ -21683,10 +21720,10 @@ function DisponibilidadUtilizacion({user,data}){
         </div>
         {periodoActualInfo.datos?(
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <StatCard icon={Gauge} label="Solo Disp. · Esperanza" value={periodoActualInfo.datos.nEsperanza>0?fmtPct(periodoActualInfo.datos.dispEsperanza):"—"} sub={periodoActualInfo.datos.nEsperanza>0?`${periodoActualInfo.datos.nEsperanza} faena(s)`:"Sin faenas"} color="blue"/>
-            <StatCard icon={TrendingUp} label="Utilización · Esperanza" value={periodoActualInfo.datos.nEsperanza>0?fmtPct(periodoActualInfo.datos.utilEsperanza):"—"} sub={periodoActualInfo.datos.nEsperanza>0?`${periodoActualInfo.datos.nEsperanza} faena(s)`:"Sin faenas"} color="cyan"/>
-            <StatCard icon={Gauge} label="Solo Disp. · Dalka" value={periodoActualInfo.datos.nDalka>0?fmtPct(periodoActualInfo.datos.dispDalka):"—"} sub={periodoActualInfo.datos.nDalka>0?`${periodoActualInfo.datos.nDalka} faena(s)`:"Sin faenas"} color="blue"/>
-            <StatCard icon={TrendingUp} label="Utilización · Dalka" value={periodoActualInfo.datos.nDalka>0?fmtPct(periodoActualInfo.datos.utilDalka):"—"} sub={periodoActualInfo.datos.nDalka>0?`${periodoActualInfo.datos.nDalka} faena(s)`:"Sin faenas"} color="cyan"/>
+            <StatCard icon={Gauge} label="Solo Disp. · Esperanza" value={periodoActualInfo.datos.nEsperanza>0?fmtPct(periodoActualInfo.datos.dispEsperanza):"—"} sub={periodoActualInfo.datos.nEsperanza>0?`${periodoActualInfo.datos.nEsperanza} faena(s)`:"Sin faenas"} color="blue" info={DISP_METODOLOGIA.solaDisponibilidad}/>
+            <StatCard icon={TrendingUp} label="Utilización · Esperanza" value={periodoActualInfo.datos.nEsperanza>0?fmtPct(periodoActualInfo.datos.utilEsperanza):"—"} sub={periodoActualInfo.datos.nEsperanza>0?`${periodoActualInfo.datos.nEsperanza} faena(s)`:"Sin faenas"} color="cyan" info={DISP_METODOLOGIA.utilizacion}/>
+            <StatCard icon={Gauge} label="Solo Disp. · Dalka" value={periodoActualInfo.datos.nDalka>0?fmtPct(periodoActualInfo.datos.dispDalka):"—"} sub={periodoActualInfo.datos.nDalka>0?`${periodoActualInfo.datos.nDalka} faena(s)`:"Sin faenas"} color="blue" info={DISP_METODOLOGIA.solaDisponibilidad}/>
+            <StatCard icon={TrendingUp} label="Utilización · Dalka" value={periodoActualInfo.datos.nDalka>0?fmtPct(periodoActualInfo.datos.utilDalka):"—"} sub={periodoActualInfo.datos.nDalka>0?`${periodoActualInfo.datos.nDalka} faena(s)`:"Sin faenas"} color="cyan" info={DISP_METODOLOGIA.utilizacion}/>
           </div>
         ):(
           <p className="text-gray-400 text-sm italic">Todavía no hay faenas registradas en el período actual ({periodoActualInfo.label}).</p>
@@ -22003,16 +22040,16 @@ function DisponibilidadUtilizacion({user,data}){
               Promedio Combinado (Esperanza + Dalka) — {periodoLabelInforme}
             </h2>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-              <StatCard icon={Gauge} label={informeModo==="mensual"?"Solo Disp. mensual":"Solo Disp. trimestral"} value={informeKPIsCombinado.n>0?fmtPct(informeKPIsCombinado.dispProm):"—"} sub={`${informeKPIsCombinado.n} faena(s)`} color="blue"/>
-              <StatCard icon={TrendingUp} label={informeModo==="mensual"?"Utilización mensual":"Utilización trimestral"} value={informeKPIsCombinado.n>0?fmtPct(informeKPIsCombinado.utilProm):"—"} sub={`${informeKPIsCombinado.n} faena(s)`} color="cyan"/>
-              <StatCard icon={Clock} label="Horas indisponibilidad" value={fmtH(informeKPIsCombinado.hhIndisp)} sub={informeModo==="mensual"?"suma del mes":"suma del trimestre"} color="amber"/>
-              <StatCard icon={Truck} label="Tractos OP promedio" value={informeKPIsCombinado.n>0?informeKPIsCombinado.tractosOpProm.toFixed(1):"—"} sub="por faena" color="navy"/>
+              <StatCard icon={Gauge} label={informeModo==="mensual"?"Solo Disp. mensual":"Solo Disp. trimestral"} value={informeKPIsCombinado.n>0?fmtPct(informeKPIsCombinado.dispProm):"—"} sub={`${informeKPIsCombinado.n} faena(s)`} color="blue" info={DISP_METODOLOGIA.solaDisponibilidad}/>
+              <StatCard icon={TrendingUp} label={informeModo==="mensual"?"Utilización mensual":"Utilización trimestral"} value={informeKPIsCombinado.n>0?fmtPct(informeKPIsCombinado.utilProm):"—"} sub={`${informeKPIsCombinado.n} faena(s)`} color="cyan" info={DISP_METODOLOGIA.utilizacion}/>
+              <StatCard icon={Clock} label="Horas indisponibilidad" value={fmtH(informeKPIsCombinado.hhIndisp)} sub={informeModo==="mensual"?"suma del mes":"suma del trimestre"} color="amber" info={DISP_METODOLOGIA.horasIndisponibilidad}/>
+              <StatCard icon={Truck} label="Tractos OP promedio" value={informeKPIsCombinado.n>0?informeKPIsCombinado.tractosOpProm.toFixed(1):"—"} sub="por faena" color="navy" info={DISP_METODOLOGIA.tractosOpProm}/>
             </div>
             {mostrarCalculoReal&&informeKPIsCombinado.nr>0&&(
               <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 mt-3 pt-3 border-t border-gray-100">
-                <StatCard icon={Gauge} label="Disp. real (con colchón de tractos)" value={fmtPct(informeKPIsCombinado.dispPromReal)} sub={`${informeKPIsCombinado.nr} de ${informeKPIsCombinado.n} faena(s) recalculadas`} color="emerald"/>
-                <StatCard icon={TrendingUp} label="Utilización real" value={fmtPct(informeKPIsCombinado.utilPromReal)} sub={`${informeKPIsCombinado.nr} de ${informeKPIsCombinado.n} faena(s) recalculadas`} color="emerald"/>
-                <StatCard icon={Clock} label="Horas indisp. reales" value={fmtH(informeKPIsCombinado.hhIndispReal)} sub="excluye fallas cubiertas por otro tracto" color="emerald"/>
+                <StatCard icon={Gauge} label="Disp. real (con colchón de tractos)" value={fmtPct(informeKPIsCombinado.dispPromReal)} sub={`${informeKPIsCombinado.nr} de ${informeKPIsCombinado.n} faena(s) recalculadas`} color="emerald" info={DISP_METODOLOGIA.dispReal}/>
+                <StatCard icon={TrendingUp} label="Utilización real" value={fmtPct(informeKPIsCombinado.utilPromReal)} sub={`${informeKPIsCombinado.nr} de ${informeKPIsCombinado.n} faena(s) recalculadas`} color="emerald" info={DISP_METODOLOGIA.utilizacionReal}/>
+                <StatCard icon={Clock} label="Horas indisp. reales" value={fmtH(informeKPIsCombinado.hhIndispReal)} sub="excluye fallas cubiertas por otro tracto" color="emerald" info={DISP_METODOLOGIA.horasIndispReales}/>
               </div>
             )}
           </div>
@@ -22027,16 +22064,16 @@ function DisponibilidadUtilizacion({user,data}){
                 </h2>
 
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
-                  <StatCard icon={Gauge} label={informeModo==="mensual"?"Solo Disp. mensual":"Solo Disp. trimestral"} value={k.n>0?fmtPct(k.dispProm):"—"} sub={`${k.n} faena(s)`} color="blue"/>
-                  <StatCard icon={TrendingUp} label={informeModo==="mensual"?"Utilización mensual":"Utilización trimestral"} value={k.n>0?fmtPct(k.utilProm):"—"} sub={`${k.n} faena(s)`} color="cyan"/>
-                  <StatCard icon={Clock} label="Horas indisponibilidad" value={fmtH(k.hhIndisp)} sub={informeModo==="mensual"?"suma del mes":"suma del trimestre"} color="amber"/>
-                  <StatCard icon={Truck} label="Tractos OP promedio" value={k.n>0?k.tractosOpProm.toFixed(1):"—"} sub="por faena" color="navy"/>
+                  <StatCard icon={Gauge} label={informeModo==="mensual"?"Solo Disp. mensual":"Solo Disp. trimestral"} value={k.n>0?fmtPct(k.dispProm):"—"} sub={`${k.n} faena(s)`} color="blue" info={DISP_METODOLOGIA.solaDisponibilidad}/>
+                  <StatCard icon={TrendingUp} label={informeModo==="mensual"?"Utilización mensual":"Utilización trimestral"} value={k.n>0?fmtPct(k.utilProm):"—"} sub={`${k.n} faena(s)`} color="cyan" info={DISP_METODOLOGIA.utilizacion}/>
+                  <StatCard icon={Clock} label="Horas indisponibilidad" value={fmtH(k.hhIndisp)} sub={informeModo==="mensual"?"suma del mes":"suma del trimestre"} color="amber" info={DISP_METODOLOGIA.horasIndisponibilidad}/>
+                  <StatCard icon={Truck} label="Tractos OP promedio" value={k.n>0?k.tractosOpProm.toFixed(1):"—"} sub="por faena" color="navy" info={DISP_METODOLOGIA.tractosOpProm}/>
                 </div>
                 {mostrarCalculoReal&&k.nr>0&&(
                   <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 mb-5 pt-3 border-t border-gray-100">
-                    <StatCard icon={Gauge} label="Disp. real (con colchón de tractos)" value={fmtPct(k.dispPromReal)} sub={`${k.nr} de ${k.n} faena(s) recalculadas`} color="emerald"/>
-                    <StatCard icon={TrendingUp} label="Utilización real" value={fmtPct(k.utilPromReal)} sub={`${k.nr} de ${k.n} faena(s) recalculadas`} color="emerald"/>
-                    <StatCard icon={Clock} label="Horas indisp. reales" value={fmtH(k.hhIndispReal)} sub="excluye fallas cubiertas por otro tracto" color="emerald"/>
+                    <StatCard icon={Gauge} label="Disp. real (con colchón de tractos)" value={fmtPct(k.dispPromReal)} sub={`${k.nr} de ${k.n} faena(s) recalculadas`} color="emerald" info={DISP_METODOLOGIA.dispReal}/>
+                    <StatCard icon={TrendingUp} label="Utilización real" value={fmtPct(k.utilPromReal)} sub={`${k.nr} de ${k.n} faena(s) recalculadas`} color="emerald" info={DISP_METODOLOGIA.utilizacionReal}/>
+                    <StatCard icon={Clock} label="Horas indisp. reales" value={fmtH(k.hhIndispReal)} sub="excluye fallas cubiertas por otro tracto" color="emerald" info={DISP_METODOLOGIA.horasIndispReales}/>
                   </div>
                 )}
 
