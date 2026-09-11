@@ -17362,6 +17362,9 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
   const [importandoPresupuesto,setImportandoPresupuesto]=useState(false);
   const [mostrarFiltros,setMostrarFiltros]=useState(false);
   const [verTodasTxns,setVerTodasTxns]=useState(false);
+  const [txnBusqueda,setTxnBusqueda]=useState("");
+  const [txnCategoriaFiltro,setTxnCategoriaFiltro]=useState("");
+  const [txnOrden,setTxnOrden]=useState("desc"); // desc = mayor a menor gasto
   const [compararAnioAnterior,setCompararAnioAnterior]=useState(false);
   const [vistaGastos,setVistaGastos]=useState("gestion"); // gestion|informe
   const [usuarioExpandido,setUsuarioExpandido]=useState(null);
@@ -17870,6 +17873,28 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
   const txnsRecientes=useMemo(()=>{
     return[...txnsFiltradas].sort((a,b)=>(b.fechaContabilizacion||"").localeCompare(a.fechaContabilizacion||"")).slice(0,50);
   },[txnsFiltradas]);
+
+  // Categorías disponibles para el filtro del detalle — del pool completo del
+  // período (no solo de las filas visibles), para que el select no cambie de
+  // opciones según el mes/vista que se esté mirando.
+  const txnCategoriasDisponibles=useMemo(()=>
+    [...new Set(txnsFiltradas.map(t=>t.descripClaseCoste).filter(Boolean))].sort(),
+  [txnsFiltradas]);
+
+  // Búsqueda + filtro de categoría + orden por monto, aplicados sobre el
+  // detalle por mes o "ver todas" según corresponda — por defecto de mayor a
+  // menor gasto (txnOrden="desc").
+  const txnsDetalleFiltradas=useMemo(()=>{
+    const base=verTodasTxns?txnsRecientes:txnsDetalle;
+    const q=txnBusqueda.trim().toLowerCase();
+    const filtradas=base.filter(t=>{
+      if(txnCategoriaFiltro&&t.descripClaseCoste!==txnCategoriaFiltro) return false;
+      if(!q) return true;
+      const campos=[t.documentoCabecera,t.centroCoste,t.descripClaseCoste,t.descripcionMaterial,t.denominacionObjeto,t.textoPedido,t.textoCabecera];
+      return campos.some(c=>c&&String(c).toLowerCase().includes(q));
+    });
+    return[...filtradas].sort((a,b)=>txnOrden==="desc"?(b.valor||0)-(a.valor||0):(a.valor||0)-(b.valor||0));
+  },[verTodasTxns,txnsRecientes,txnsDetalle,txnBusqueda,txnCategoriaFiltro,txnOrden]);
 
   const desviacionCls=(pct)=>{
     if(pct==null) return "text-gray-400 bg-gray-50 border-gray-200";
@@ -18619,25 +18644,24 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
         </div>
       </div>
 
-      {/* ── Detalle de transacciones + Carga rápida de presupuesto ── */}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
-          <div className="flex items-center justify-between mb-3 gap-2">
-            <h2 className="font-bold text-gray-800 text-sm">
+      {/* ── Detalle de transacciones (ancho completo) ── */}
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+          <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
+            <h2 className="font-bold text-gray-800 text-xl">
               {verTodasTxns?"Todas las transacciones filtradas":`Detalle de transacciones${mesDetalle?` (${mesDetalle})`:""}`}
             </h2>
             <div className="flex items-center gap-2 flex-shrink-0">
               <ExportBar targetRef={refDetalleTxnsTabla} filename={`detalle-transacciones-${activeModule}`}
                 excelData={{sheetName:"Detalle transacciones",
                   headers:["Fecha","Documento","Centro","Categoría","Descripción","Texto Breve","Texto Cabecera","Monto","Estado"],
-                  rows:(verTodasTxns?txnsRecientes:txnsDetalle).map(t=>[
+                  rows:txnsDetalleFiltradas.map(t=>[
                     t.fechaContabilizacion?t.fechaContabilizacion.slice(0,10):"—",t.documentoCabecera||"—",t.centroCoste,t.descripClaseCoste,
                     t.descripcionMaterial||t.denominacionObjeto||"—",t.textoPedido||"—",t.textoCabecera||"—",t.valor||0,
                     t._reglaExcluida?"Excluida":t._reglaPuntual?"Puntual":"Normal",
                   ])}}
                 pdfData={{titulo:"Detalle de transacciones",subtitulo:mesDetalle||undefined,
                   headers:["Fecha","Documento","Centro","Categoría","Monto","Estado"],
-                  rows:(verTodasTxns?txnsRecientes:txnsDetalle).map(t=>[
+                  rows:txnsDetalleFiltradas.map(t=>[
                     t.fechaContabilizacion?t.fechaContabilizacion.slice(0,10):"—",t.documentoCabecera||"—",t.centroCoste,t.descripClaseCoste,fmtCLP(t.valor),
                     t._reglaExcluida?"Excluida":t._reglaPuntual?"Puntual":"Normal",
                   ])}}/>
@@ -18646,8 +18670,27 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
               </button>
             </div>
           </div>
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <input value={txnBusqueda} onChange={e=>setTxnBusqueda(e.target.value)}
+              placeholder="🔎 Buscar por documento, centro, categoría, descripción..."
+              className="px-2.5 py-2 rounded-lg border border-gray-200 text-xs flex-1 min-w-[220px]"/>
+            <select value={txnCategoriaFiltro} onChange={e=>setTxnCategoriaFiltro(e.target.value)}
+              className="px-2.5 py-2 rounded-lg border border-gray-200 text-xs">
+              <option value="">Todas las categorías</option>
+              {txnCategoriasDisponibles.map(c=><option key={c} value={c}>{c}</option>)}
+            </select>
+            <select value={txnOrden} onChange={e=>setTxnOrden(e.target.value)}
+              className="px-2.5 py-2 rounded-lg border border-gray-200 text-xs">
+              <option value="desc">Monto: mayor a menor</option>
+              <option value="asc">Monto: menor a mayor</option>
+            </select>
+            {(txnBusqueda||txnCategoriaFiltro)&&(
+              <button onClick={()=>{setTxnBusqueda("");setTxnCategoriaFiltro("");}}
+                className="text-xs text-gray-400 hover:text-gray-600 underline">Limpiar filtros</button>
+            )}
+          </div>
           {(()=>{
-            const filas=verTodasTxns?txnsRecientes:txnsDetalle;
+            const filas=txnsDetalleFiltradas;
             if(filas.length===0) return <p className="text-gray-400 text-xs italic">Sin transacciones con los filtros actuales.</p>;
             return(
               <div ref={refDetalleTxnsTabla} className="overflow-x-auto max-h-96 overflow-y-auto">
@@ -18743,7 +18786,6 @@ function GastosPresupuesto({user,data,activeModule,activeBarco}){
             {presupuestoAnioMsg&&<span className="text-emerald-700 text-xs font-semibold">{presupuestoAnioMsg}</span>}
           </div>
         </div>
-      </div>
 
       {/* ── Configuración avanzada ── */}
       <div className="pt-2">
