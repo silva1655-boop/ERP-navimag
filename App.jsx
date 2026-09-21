@@ -20358,7 +20358,13 @@ const faenaActiva=faenas.find(f=>f.estado==="activa"&&(esSup||f.creadoPor===quie
   const guardarFaenas=async(actualizadas)=>{setFaenas(actualizadas);await setDoc(doc(db,COLL_FAENA,"faenas"),{data:actualizadas});};
   const guardarDetenciones=async(actualizadas)=>{setDetenciones(actualizadas);await setDoc(doc(db,COLL_DETENCIONES,"detenciones"),{data:actualizadas});};
 
+  // Guard contra doble-submit: "Iniciar Faena" no tenía disabled mientras el
+  // guardado estaba en vuelo (a diferencia de cerrarFaena/enviar informe, que
+  // sí lo tienen) — un doble click, o un reintento porque la pantalla no
+  // cambió todavía (red lenta), podía disparar iniciarFaena dos veces.
+  const [enviandoFaena,setEnviandoFaena]=useState(false);
   const iniciarFaena=async()=>{
+    if(enviandoFaena) return;
     if(!form.numeroBase.trim()||!form.inicioOp||!form.capacidadOperadores||form.tractosEnServicio.length===0){
       alert("Completa los campos obligatorios — falta elegir al menos un tracto en servicio.");return;
     }
@@ -20385,9 +20391,30 @@ const faenaActiva=faenas.find(f=>f.estado==="activa"&&(esSup||f.creadoPor===quie
       tractosEnServicio:form.tractosEnServicio,
       estado:"activa",creadoPor:quien,creadoEn:new Date().toISOString(),
     };
-    await guardarFaenas([...faenas,nueva]);
-    setForm(f=>({...f,numeroBase:"",tractosEnServicio:[],tractosUtilizados:"",capacidadOperadores:""}));
-    setVista("faena_abierta");
+    setEnviandoFaena(true);
+    try{
+      // Transacción contra el documento REAL en el servidor, no contra el
+      // array local `faenas` (que puede estar desactualizado por un segundo
+      // click, otra pestaña, u otro usuario). Antes esto era
+      // guardarFaenas([...faenas,nueva]): un setDoc que reemplaza el
+      // documento entero a partir de lo que el cliente tenía en memoria — si
+      // dos invocaciones corrían casi a la vez, las dos faenas casi
+      // idénticas (mismo buque, mismo número/hora de inicio) podían quedar
+      // guardadas juntas. Acá, si al momento de escribir YA existe una
+      // faena activa con el mismo buque+número, no se agrega una segunda.
+      const ref=doc(db,COLL_FAENA,"faenas");
+      await runTransaction(db,async(tx)=>{
+        const snap=await tx.get(ref);
+        const actuales=snap.exists()?(snap.data().data||[]):[];
+        const yaExiste=actuales.some(f=>f.estado==="activa"&&f.buque===nueva.buque&&(f.numeroFaena||"").trim().toUpperCase()===nueva.numeroFaena.toUpperCase());
+        if(yaExiste) return;
+        tx.set(ref,{data:[...actuales,nueva]});
+      });
+      setForm(f=>({...f,numeroBase:"",tractosEnServicio:[],tractosUtilizados:"",capacidadOperadores:""}));
+      setVista("faena_abierta");
+    } finally {
+      setEnviandoFaena(false);
+    }
   };
 
   // Dotación de operadores durante la faena — se registra cada entrada/
@@ -20616,10 +20643,10 @@ const faenaActiva=faenas.find(f=>f.estado==="activa"&&(esSup||f.creadoPor===quie
           </div>
         </div>
 
-        <button onClick={iniciarFaena}
-          className="w-full py-4 rounded-2xl text-white text-base font-bold transition shadow-lg hover:opacity-90 flex items-center justify-center gap-2"
+        <button onClick={iniciarFaena} disabled={enviandoFaena}
+          className="w-full py-4 rounded-2xl text-white text-base font-bold transition shadow-lg hover:opacity-90 flex items-center justify-center gap-2 disabled:opacity-60"
           style={{background:"linear-gradient(135deg,#2563eb,#1d4ed8)"}}>
-          🚀 Iniciar Faena
+          {enviandoFaena?"Iniciando…":"🚀 Iniciar Faena"}
         </button>
 
         {(()=>{
