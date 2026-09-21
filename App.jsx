@@ -20370,8 +20370,17 @@ const faenaActiva=faenas.find(f=>f.estado==="activa"&&(esSup||f.creadoPor===quie
     }
     if(!targetActual){alert(`No hay target configurado para ${form.buque} · ${form.terminal}. Pídele a un supervisor que lo agregue en Disponibilidad y Utilización antes de iniciar.`);return;}
     const numeroFaena=`${form.numeroBase.trim()} ${form.sector}`;
-    const dup=faenas.find(f=>f.buque===form.buque&&f.numeroFaena.trim().toUpperCase()===numeroFaena.toUpperCase());
-    if(dup&&!window.confirm(`Ya existe una faena ${form.buque} N°"${dup.numeroFaena}" (${dup.estado==="activa"?"en curso":"cerrada"}). ¿Iniciar igual?`)) return;
+    const dup=faenas.find(f=>f.buque===form.buque&&(f.numeroFaena||"").trim().toUpperCase()===numeroFaena.toUpperCase());
+    // Bloqueo DURO si ya hay una faena EN CURSO con el mismo buque+número —
+    // antes esto era solo un window.confirm que se podía aceptar igual, y
+    // era justo la puerta por la que se colaban las duplicadas. Si la
+    // coincidencia es con una faena ya cerrada, se deja como aviso blando
+    // (puede ser un número reutilizado a propósito, ej. corrigiendo un typo).
+    if(dup?.estado==="activa"){
+      alert(`Ya hay una faena EN CURSO para ${form.buque} N°"${dup.numeroFaena}" (iniciada ${fmtDT(dup.inicioOp)}). No se puede iniciar otra con el mismo número mientras esa siga activa — ciérrala primero, o corrige el número si es un error de tipeo.`);
+      return;
+    }
+    if(dup&&!window.confirm(`Ya existe una faena cerrada ${form.buque} N°"${dup.numeroFaena}". ¿Iniciar igual otra con el mismo número?`)) return;
     // Tractos OP / utilizados: siempre el conteo de tractos seleccionados
     // arriba (Tractos en Servicio) — ya no se piden dos veces por separado.
     const tractosCount=form.tractosEnServicio.length;
@@ -20407,11 +20416,23 @@ const faenaActiva=faenas.find(f=>f.estado==="activa"&&(esSup||f.creadoPor===quie
         const snap=await tx.get(ref);
         const actuales=snap.exists()?(snap.data().data||[]):[];
         const yaExiste=actuales.some(f=>f.estado==="activa"&&f.buque===nueva.buque&&(f.numeroFaena||"").trim().toUpperCase()===nueva.numeroFaena.toUpperCase());
-        if(yaExiste) return;
+        // El chequeo de más arriba (dup?.estado==="activa") ya bloquea el
+        // caso normal — esto es la red de seguridad para el caso límite de
+        // dos personas confirmando casi en el mismo instante, donde ambas
+        // pasaron el chequeo del cliente antes de que cualquiera de las dos
+        // escrituras llegara al servidor.
+        if(yaExiste) throw new Error("FAENA_YA_INICIADA");
         tx.set(ref,{data:[...actuales,nueva]});
       });
       setForm(f=>({...f,numeroBase:"",tractosEnServicio:[],tractosUtilizados:"",capacidadOperadores:""}));
       setVista("faena_abierta");
+    } catch(e){
+      if(e.message==="FAENA_YA_INICIADA"){
+        alert("Otra persona ya inició una faena en curso con el mismo número justo ahora — no se creó una duplicada. Revisa la lista de faenas en curso.");
+      }else{
+        console.error("iniciarFaena:",e);
+        alert("No se pudo iniciar la faena — intenta de nuevo.");
+      }
     } finally {
       setEnviandoFaena(false);
     }
