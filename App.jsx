@@ -1807,6 +1807,13 @@ const resolveOTType=w=>{
 const esCorrectivo=w=>{
   // OTs de plan preventivo nunca afectan MTBF/MTTR, aunque su tipo sea correctivo
   if(w.source==="plan"||w.source==="planAssignment"||w.planId||w.assignmentId) return false;
+  // "Trabajo Fuera de Programa" (reporte retroactivo de trabajo ya hecho,
+  // módulo Reportes ▸ Deviaciones) tampoco cuenta como falla real — en
+  // Reportes ya se trata como categoría aparte de las correctivas (ver donuts
+  // de Resumen Mensual); antes acá SÍ se mezclaba, inflando MTBF/tasa de
+  // falla con reportes retroactivos que no son necesariamente una falla
+  // imprevista del equipo.
+  if(w.esFueraDePrograma) return false;
   const t=resolveOTType(w)||w.type||"";
   return["correctiva_no_programada","correctiva_planificada","correctivo","emergencia"].includes(t);
 };
@@ -13776,7 +13783,6 @@ const costoOT=w=>{
 };
 
 const d90=new Date(hoy);d90.setDate(d90.getDate()-90);
-const d30=new Date(hoy);d30.setDate(d30.getDate()-30);
 const enPeriodo=(w,desde)=>new Date(w.createdAt||w.closedAt||0)>=desde;
 
 // ── Series mensuales (últimos 6 meses) ───────────────────────────────────────
@@ -13785,16 +13791,26 @@ const meses6=Array.from({length:6},(_,i)=>{
   d.setMonth(d.getMonth()-5+i);
   return d.toISOString().slice(0,7);
 });
+const diasEnMes=ym=>{const[y,m]=ym.split("-").map(Number);return new Date(y,m,0).getDate();};
 
 const woDelMes=(mesYM)=>wos.filter(w=>{
   const ref=w.closedAt||w.createdAt||"";
   return ref.slice(0,7)===mesYM;
 });
 
+// Horas operadas ESTIMADAS de la flota en un período — reemplaza el horómetro
+// TOTAL acumulado (vida completa del equipo) que se usaba antes para MTBF, que
+// mezclaba una escala de "toda la vida" con un conteo de fallas de una ventana
+// de tiempo corta. Reutiliza getAvgActivo (horas/día promedio, aprendido o
+// manual), la misma fuente que ya usa la proyección de Plan Preventivo. Si un
+// equipo no tiene horas promedio configuradas, aporta 0 — no se le inventa un
+// número; eso puede dejar el MTBF en "—" para equipos sin ese dato cargado.
+const horasOperadasFlota=dias=>equip.reduce((s,e)=>s+(getAvgActivo(e)*dias),0);
+
 const seriesMTBF=meses6.map(mes=>{
   const corrMes=woDelMes(mes).filter(w=>esFallaReal(w)&&w.status==="completada");
-  const tHtotal=equip.reduce((s,e)=>s+(parseFloat(e.hours)||0),0);
-  return{mes,valor:corrMes.length>0?parseFloat((tHtotal/corrMes.length).toFixed(1)):null};
+  const horasMes=horasOperadasFlota(diasEnMes(mes));
+  return{mes,valor:corrMes.length>0&&horasMes>0?parseFloat((horasMes/corrMes.length).toFixed(1)):null};
 });
 
 const seriesMTTR=meses6.map(mes=>{
@@ -13808,20 +13824,24 @@ const seriesDisp=meses6.map((mes,i)=>{
   return{mes,valor:(mtbf&&mttr&&(mtbf+mttr)>0)?parseFloat((mtbf/(mtbf+mttr)*100).toFixed(1)):null};
 });
 
+// total>0?...:null confundía "$0 real" (hubo OTs cerradas pero sin costo de
+// repuestos cargado) con "no hay datos" — ahora se distingue por si hubo OTs
+// completadas ese mes, no por si el costo sumó cero.
 const seriesCosto=meses6.map(mes=>{
-  const total=woDelMes(mes).filter(w=>w.status==="completada").reduce((s,w)=>s+costoOT(w),0);
-  return{mes,valor:total>0?Math.round(total):null};
+  const compMes=woDelMes(mes).filter(w=>w.status==="completada");
+  const total=compMes.reduce((s,w)=>s+costoOT(w),0);
+  return{mes,valor:compMes.length>0?Math.round(total):null};
 });
 
-const seriesPM=meses6.map(mes=>{
-  const pmComp=woDelMes(mes).filter(w=>esPreventivo(w)&&w.status==="completada").length;
-  const pmVenc=planAssignments.filter(a=>{
-    if(!a.activo) return false;
-    const nd=a.nextDueDate||a.proximaFecha||"";
-    return nd.slice(0,7)===mes;
-  }).length;
-  const total=Math.max(pmComp,pmVenc)||1;
-  return{mes,valor:parseFloat((Math.min(100,(pmComp/total)*100)).toFixed(1))};
+// Tasa de Reportabilidad — % de OTs completadas ese mes con reporte mínimo
+// completo (observaciones + horas trabajadas). reporteCompleto se define más
+// abajo junto al resto de los KPIs globales; se declara acá arriba porque
+// esta serie mensual también la necesita.
+const reporteCompleto=w=>!!(w.observations&&w.observations.trim())&&hrsOT(w)>0;
+const seriesReportabilidad=meses6.map(mes=>{
+  const compMes=woDelMes(mes).filter(w=>w.status==="completada");
+  const conRepMes=compMes.filter(reporteCompleto);
+  return{mes,valor:compMes.length>0?parseFloat((conRepMes.length/compMes.length*100).toFixed(1)):null};
 });
 
 const mesActualYM=hoy.toISOString().slice(0,7);
@@ -13839,24 +13859,48 @@ const totalWo90=wo90.length||1;
 const pctCorr=Math.round((corrTotal.length/totalWo90)*100);
 const pctPrev=Math.round((prevTotal.length/totalWo90)*100);
 
-const planVencidos=planAssignments.filter(a=>{
+// Cumplimiento PM — un solo criterio de "vencido" (antes había DOS tarjetas
+// con DOS criterios distintos entre sí: una miraba solo fecha, la otra solo
+// horómetro — un plan programado por fecha sin nextDueHours cargado, o
+// viceversa, nunca podía marcarse vencido en la tarjeta que no correspondía).
+// Acá se considera vencido si pasó CUALQUIERA de los dos umbrales, el que
+// esté cargado. Con 0 planes activos ya no cae a 100% "por construcción" —
+// queda en null (la tarjeta muestra "—", no un cumplimiento falso).
+const hoyStr=hoy.toISOString().slice(0,10);
+const planEstaVencido=a=>{
   if(!a.activo) return false;
   const eq=equip.find(e=>e.id===a.equipId);
-  const next=parseFloat(a.nextDueHours)||0;
-  const cur=parseFloat(eq?.hours)||0;
-  return next>0&&cur>=next;
-});
-const planTotalActivo=planAssignments.filter(a=>a.activo).length||1;
-const pctPMCumpl=Math.max(0,Math.round(((planTotalActivo-planVencidos.length)/planTotalActivo)*100));
+  const nextH=parseFloat(a.nextDueHours)||0;
+  const curH=parseFloat(eq?.hours)||0;
+  const vencidoPorHoras=nextH>0&&curH>=nextH;
+  const nextD=a.nextDueDate||a.proximaFecha||"";
+  const vencidoPorFecha=!!nextD&&nextD<hoyStr;
+  return vencidoPorHoras||vencidoPorFecha;
+};
+const planVencidos=planAssignments.filter(planEstaVencido);
+const planTotalActivo=planAssignments.filter(a=>a.activo).length;
+const pctPMCumpl=planTotalActivo>0?Math.max(0,Math.round(((planTotalActivo-planVencidos.length)/planTotalActivo)*100)):null;
 
 // MTBF/MTTR/Disponibilidad se calculan SOLO sobre fallas reales (no programadas +
 // emergencias) — una correctiva planificada es una intervención agendada, no un
 // imprevisto, y mezclarla infla el MTBF y distorsiona el MTTR. Se trackea aparte.
-const corrComp=wos.filter(w=>esFallaReal(w)&&w.status==="completada");
-const tH=equip.reduce((s,e)=>s+(parseFloat(e.hours)||0),0);
-const gMTBF=corrComp.length>0?(tH/corrComp.length):null;
+// Ventana de 90 días — antes esto NO tenía ventana (todas las fallas reales de
+// toda la vida), lo que no calzaba con el "Últimos 90 días" que ya decía el
+// encabezado de la página ni con tasaFalla/pctEmer/reincidencias, que sí usan
+// esta ventana.
+const corrComp=wo90.filter(w=>esFallaReal(w)&&w.status==="completada");
+const tH=horasOperadasFlota(90);
+const gMTBF=corrComp.length>0&&tH>0?(tH/corrComp.length):null;
 const gMTTR=corrComp.length>0?(corrComp.reduce((s,w)=>s+hrsOT(w),0)/corrComp.length):null;
 const gDisp=(gMTBF&&gMTTR&&(gMTBF+gMTTR)>0)?(gMTBF/(gMTBF+gMTTR)*100):null;
+
+// Tasa de reportabilidad — % de OTs completadas (últimos 90 días) que quedaron
+// con un reporte mínimamente completo (observaciones + horas trabajadas
+// cargadas), no solo marcadas "completada" sin detalle. reporteCompleto está
+// definido más arriba, junto a seriesReportabilidad.
+const otsCompletadas90=wo90.filter(w=>w.status==="completada");
+const conReporte=otsCompletadas90.filter(reporteCompleto);
+const pctReportabilidad=otsCompletadas90.length>0?Math.round((conReporte.length/otsCompletadas90.length)*100):null;
 
 // Correctivas planificadas: mismo origen (falla/desgaste detectado) pero se agendó
 // la intervención — tratamiento aparte, no cuenta como falla para MTBF/tasa de falla.
@@ -13864,9 +13908,6 @@ const corrProgComp=wos.filter(w=>esCorrectivo(w)&&!esFallaReal(w)&&w.status==="c
 const mttrProg=corrProgComp.length>0?(corrProgComp.reduce((s,w)=>s+hrsOT(w),0)/corrProgComp.length):null;
 const fallasReales90=wo90.filter(w=>esFallaReal(w));
 const tasaFalla=parseFloat((fallasReales90.length/3).toFixed(1)); // fallas reales / mes, ventana de 90 días
-
-const wo30=wos.filter(w=>enPeriodo(w,d30)&&w.status==="completada");
-const costoMes=wo30.reduce((s,w)=>s+costoOT(w),0);
 
 const emerTotal=wo90.filter(w=>w.type==="emergencia").length;
 const pctEmer=Math.round((emerTotal/(fallasReales90.length||1))*100);
@@ -13896,11 +13937,14 @@ const causaMax=causaCounts[0]?.n||1;
 
 const calcEq=eqId=>{
   const eq=equip.find(e=>e.id===eqId);
-  const corr=wos.filter(w=>w.equipId===eqId&&esFallaReal(w));
+  // Ventana de 90 días — antes esto era TODA la vida del equipo, sin ventana,
+  // lo que ya no calza con "hrs" pasando de horómetro total a horas operadas
+  // del período (ver comentario de gMTBF más arriba).
+  const corr=wo90.filter(w=>w.equipId===eqId&&esFallaReal(w));
   const comp=corr.filter(w=>w.status==="completada");
-  const progr=wos.filter(w=>w.equipId===eqId&&esCorrectivo(w)&&!esFallaReal(w)).length;
-  const hrs=parseFloat(eq?.hours)||0;
-  const mtbf=corr.length>0?hrs/corr.length:null;
+  const progr=wo90.filter(w=>w.equipId===eqId&&esCorrectivo(w)&&!esFallaReal(w)).length;
+  const hrs=getAvgActivo(eq)*90;
+  const mtbf=corr.length>0&&hrs>0?hrs/corr.length:null;
   const mttr=comp.length>0?(comp.reduce((s,w)=>s+hrsOT(w),0)/comp.length):null;
   const disp=(mtbf&&mttr&&(mtbf+mttr)>0)?(mtbf/(mtbf+mttr)*100):null;
   const costo=wos.filter(w=>w.equipId===eqId&&w.status==="completada").reduce((s,w)=>s+costoOT(w),0);
@@ -13982,13 +14026,13 @@ return(
     <KPICard label="Costo repuestos" icon={Package} unit=" CLP" color="red" positiveIsUp={false}
       mesActual={getVal(seriesCosto,mesActualYM)} mesAnterior={getVal(seriesCosto,mesAnteriorYM)}
       series={seriesCosto} sub="mes en curso — menos es mejor"/>
-    <KPICard label="Cumplimiento PM" icon={ClipboardCheck} unit="%" color="purple" positiveIsUp={true}
-      mesActual={getVal(seriesPM,mesActualYM)} mesAnterior={getVal(seriesPM,mesAnteriorYM)}
-      series={seriesPM} sub="planes preventivos — más es mejor"/>
+    <KPICard label="Tasa de Reportabilidad" icon={ClipboardCheck} unit="%" color="purple" positiveIsUp={true}
+      mesActual={getVal(seriesReportabilidad,mesActualYM)} mesAnterior={getVal(seriesReportabilidad,mesAnteriorYM)}
+      series={seriesReportabilidad} sub="OTs con reporte completo — más es mejor"/>
   </div>
 
   {/* FILA 2 — KPIs operacionales */}
-  <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
     <div className={`${card} p-4`}>
       <div className="flex items-center gap-2 mb-2">
         <div className="w-8 h-8 rounded-xl bg-red-100 flex items-center justify-center flex-shrink-0">
@@ -14035,11 +14079,20 @@ return(
         </div>
         <p className="text-gray-500 text-xs font-semibold uppercase tracking-wide">Cumplimiento PM</p>
       </div>
-      <p className={`font-bold text-2xl ${pctPMCumpl>=90?"text-emerald-600":pctPMCumpl>=70?"text-amber-600":"text-red-600"}`}>{pctPMCumpl}%</p>
-      <p className="text-gray-400 text-xs mt-1">{planVencidos.length} plan{planVencidos.length!==1?"es":""} vencido{planVencidos.length!==1?"s":""} de {planAssignments.filter(a=>a.activo).length}</p>
-      <div className="mt-2 h-2 bg-gray-100 rounded-full overflow-hidden">
-        <div className={`h-full rounded-full transition-all ${pctPMCumpl>=90?"bg-emerald-500":pctPMCumpl>=70?"bg-amber-400":"bg-red-500"}`} style={{width:`${pctPMCumpl}%`}}/>
-      </div>
+      {pctPMCumpl==null?(
+        <>
+          <p className="font-bold text-2xl text-gray-400">—</p>
+          <p className="text-gray-400 text-xs mt-1">Sin planes preventivos activos</p>
+        </>
+      ):(
+        <>
+          <p className={`font-bold text-2xl ${pctPMCumpl>=90?"text-emerald-600":pctPMCumpl>=70?"text-amber-600":"text-red-600"}`}>{pctPMCumpl}%</p>
+          <p className="text-gray-400 text-xs mt-1">{planVencidos.length} plan{planVencidos.length!==1?"es":""} vencido{planVencidos.length!==1?"s":""} de {planTotalActivo} (horómetro o fecha)</p>
+          <div className="mt-2 h-2 bg-gray-100 rounded-full overflow-hidden">
+            <div className={`h-full rounded-full transition-all ${pctPMCumpl>=90?"bg-emerald-500":pctPMCumpl>=70?"bg-amber-400":"bg-red-500"}`} style={{width:`${pctPMCumpl}%`}}/>
+          </div>
+        </>
+      )}
     </div>
     <div className={`${card} p-4`}>
       <div className="flex items-center gap-2 mb-2">
@@ -14055,33 +14108,12 @@ return(
       <p className="text-gray-400 text-xs mt-1">Objetivo industria: &lt;20%</p>
       <div className="mt-2 h-3 bg-gray-100 rounded-full overflow-hidden flex">
         <div className="h-full bg-red-400 transition-all" style={{width:`${pctCorr}%`}}/>
-        <div className="h-full bg-emerald-400 transition-all flex-1"/>
+        <div className="h-full bg-emerald-400 transition-all" style={{width:`${pctPrev}%`}}/>
+        {100-pctCorr-pctPrev>0&&<div className="h-full bg-gray-300 transition-all flex-1"/>}
       </div>
       <div className="flex justify-between text-[10px] text-gray-400 mt-0.5">
         <span>Correctivo {pctCorr}%</span>
         <span>Preventivo {pctPrev}%</span>
-      </div>
-    </div>
-    <div className={`${card} p-4`}>
-      <div className="flex items-center gap-2 mb-2">
-        <div className="w-8 h-8 rounded-xl bg-emerald-100 flex items-center justify-center flex-shrink-0">
-          <Package size={15} className="text-emerald-600"/>
-        </div>
-        <p className="text-gray-500 text-xs font-semibold uppercase tracking-wide">Costo repuestos</p>
-      </div>
-      <p className="text-gray-900 font-bold text-xl">{fCLP(costoMes)}</p>
-      <p className="text-gray-400 text-xs mt-1">Últimos 30 días · {wo30.length} OTs cerradas</p>
-      <div className="mt-2 pt-2 border-t border-gray-100">
-        <p className="text-gray-400 text-[10px]">Por tipo:</p>
-        {[
-          {label:"Correctivo",v:wo30.filter(w=>esCorrectivo(w)).reduce((s,w)=>s+costoOT(w),0)},
-          {label:"Preventivo",v:wo30.filter(w=>esPreventivo(w)).reduce((s,w)=>s+costoOT(w),0)},
-        ].map(({label,v})=>(
-          <div key={label} className="flex justify-between text-xs mt-1">
-            <span className="text-gray-500">{label}</span>
-            <span className="font-semibold text-gray-700">{fCLP(v)}</span>
-          </div>
-        ))}
       </div>
     </div>
   </div>
@@ -14095,7 +14127,7 @@ return(
       <div>
         <p className="text-gray-500 text-xs font-semibold uppercase">Índice emergencias</p>
         <p className={`font-bold text-xl ${pctEmer>10?"text-red-600":"text-emerald-600"}`}>{pctEmer}%</p>
-        <p className="text-gray-400 text-xs">{emerTotal} emergencias de {corrTotal.length} fallas · objetivo &lt;10%</p>
+        <p className="text-gray-400 text-xs">{emerTotal} emergencias de {fallasReales90.length} fallas reales · objetivo &lt;10%</p>
       </div>
     </div>
     <div className={`${card} p-4 flex items-center gap-4`}>
@@ -14184,7 +14216,8 @@ return(
                         {label:"MTBF",unit:"h",positiveIsUp:true,color:"blue",icon:Clock,
                           series:meses6.map(mes=>{
                             const corr=woDelMes(mes).filter(w=>w.equipId===e.id&&esFallaReal(w)&&w.status==="completada");
-                            return{mes,valor:corr.length>0?parseFloat(((e.hours||0)/corr.length).toFixed(1)):null};
+                            const horasMes=getAvgActivo(e)*diasEnMes(mes);
+                            return{mes,valor:corr.length>0&&horasMes>0?parseFloat((horasMes/corr.length).toFixed(1)):null};
                           })},
                         {label:"MTTR",unit:"h",positiveIsUp:false,color:"amber",icon:Wrench,
                           series:meses6.map(mes=>{
@@ -14195,7 +14228,8 @@ return(
                           series:meses6.map(mes=>{
                             const corr=woDelMes(mes).filter(w=>w.equipId===e.id&&esFallaReal(w)&&w.status==="completada");
                             const comp=corr.filter(w=>hrsOT(w)>0);
-                            const mtbf=corr.length>0?(e.hours||0)/corr.length:null;
+                            const horasMes=getAvgActivo(e)*diasEnMes(mes);
+                            const mtbf=corr.length>0&&horasMes>0?horasMes/corr.length:null;
                             const mttr=comp.length>0?comp.reduce((s,w)=>s+hrsOT(w),0)/comp.length:null;
                             return{mes,valor:(mtbf&&mttr&&(mtbf+mttr)>0)?parseFloat((mtbf/(mtbf+mttr)*100).toFixed(1)):null};
                           })},
@@ -14617,7 +14651,7 @@ useEffect(()=>{
   onFocusHandled?.();
 },[focusReqId]);
 const [supervisorApproveModal,setSupervisorApproveModal]=useState(null);
-const [supForm,setSupForm]=useState({mechanic:"",priority:"media",plannedDate:"",plannedReason:"",action:"now"});
+const [supForm,setSupForm]=useState({mechanic:"",priority:"media",plannedDate:"",plannedReason:"",action:"now",tipoOT:"correctiva_no_programada"});
 const [lightboxSrc,setLightboxSrc]=useState(null);
 const [flt,setFlt]=useState({userId:"",status:"",priority:"",dateFrom:"",dateTo:""});
 const [showAssignModal,setShowAssignModal]=useState(false);
@@ -15466,7 +15500,7 @@ return(
   </div>
 )}
 {supervisorApproveModal&&(
-  <Modal title={`Asignar OT — ${supervisorApproveModal.title}`} onClose={()=>{setSupervisorApproveModal(null);setSupForm({mechanic:"",priority:"media",plannedDate:"",plannedReason:"",action:"now"});}}>
+  <Modal title={`Asignar OT — ${supervisorApproveModal.title}`} onClose={()=>{setSupervisorApproveModal(null);setSupForm({mechanic:"",priority:"media",plannedDate:"",plannedReason:"",action:"now",tipoOT:"correctiva_no_programada"});}}>
     <div className="space-y-4">
       <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs">
         <p className="text-amber-700 font-semibold mb-1">Reporte de {supervisorApproveModal.requestedByName||"—"}</p>
@@ -15502,6 +15536,25 @@ return(
           <option value="baja">Baja — Sin impacto inmediato</option>
         </select>
       </div>
+      <div>
+        <label className="text-gray-500 text-xs font-medium mb-2 block">TIPO DE CORRECTIVA</label>
+        <div className="grid grid-cols-3 gap-2">
+          {[
+            {val:"correctiva_no_programada",icon:"🔧",label:"No Programada",desc:"Imprevisto"},
+            {val:"correctiva_planificada",  icon:"📅",label:"Planificada",   desc:"Se agenda"},
+            {val:"emergencia",              icon:"🚨",label:"Emergencia",    desc:"Crítico"},
+          ].map(({val,icon,label,desc})=>(
+            <button key={val} type="button" onClick={()=>setSupForm(f=>({...f,tipoOT:val}))}
+              className={`p-2.5 rounded-xl border-2 text-left transition-all ${
+                supForm.tipoOT===val?"border-red-400 bg-red-50":"border-gray-200 bg-white hover:border-gray-300"}`}>
+              <p className="text-base mb-0.5">{icon}</p>
+              <p className={`text-xs font-bold ${supForm.tipoOT===val?"text-red-700":"text-gray-700"}`}>{label}</p>
+              <p className={`text-xs ${supForm.tipoOT===val?"text-red-500":"text-gray-400"}`}>{desc}</p>
+            </button>
+          ))}
+        </div>
+        <p className="text-gray-400 text-xs mt-1.5">Define cómo se contabiliza esta OT en MTBF/tasa de falla (Indicadores KPI).</p>
+      </div>
       {supForm.action==="plan"&&(
         <div className="space-y-3 p-3 bg-purple-50 border border-purple-200 rounded-xl">
           <p className="text-purple-700 text-xs font-semibold">📅 Planificación de intervención</p>
@@ -15532,7 +15585,7 @@ return(
         const newOT={
           id:uid(),
           code:nextOTCode(wos),
-          type:"correctivo",
+          type:supForm.tipoOT||"correctiva_no_programada",
           equipId:r.equipId,
           planId:null,
           title:`[Inspección] ${r.title}`,
@@ -15562,7 +15615,7 @@ return(
         saveData("workOrders",updW);
         // requests saved via individual docs — no legacy write needed
         setSupervisorApproveModal(null);
-        setSupForm({mechanic:"",priority:"media",plannedDate:"",plannedReason:"",action:"now"});
+        setSupForm({mechanic:"",priority:"media",plannedDate:"",plannedReason:"",action:"now",tipoOT:"correctiva_no_programada"});
         alert(`✅ OT ${newOT.code} ${supForm.action==="plan"?"planificada para "+supForm.plannedDate:"asignada"} — ${users.find(u=>u.id===supForm.mechanic)?.name}`);
       }}
       style={{background:supForm.action==="plan"?"#7C3AED":NV.blue}}
@@ -24607,6 +24660,7 @@ const createDev=async()=>{
     parts:[],
     materialesUtilizados:matUsados,
     source:"inspeccion",
+    esFueraDePrograma:true,
     reqId:null,
     closedAt:new Date().toISOString(),
     horometroCierre:parseFloat(form.horometro)||0,
