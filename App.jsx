@@ -21975,8 +21975,31 @@ function DisponibilidadUtilizacion({user,data}){
             <option value="NAT">NAT</option>
             <option value="UCO">UCO</option>
           </select>
-          <input value={nuevaFaena.numeroFaena} onChange={e=>setNuevaFaena(f=>({...f,numeroFaena:e.target.value}))}
-            placeholder="N° faena (ej: 6160 S)" className="px-3 py-2 rounded-lg border border-gray-200 text-sm col-span-2"/>
+          <div className="col-span-2 flex gap-2">
+            <input value={nuevaFaena.numeroFaena} onChange={e=>setNuevaFaena(f=>({...f,numeroFaena:e.target.value}))}
+              placeholder="N° faena (ej: 6160)" className="px-3 py-2 rounded-lg border border-gray-200 text-sm flex-1"/>
+            <div className="flex gap-1 flex-shrink-0">
+              {["S","N"].map(s=>{
+                // Botón S/N para no tener que escribir el sector a mano (fuente de
+                // typos: minúscula, "Sur"/"Norte" completo, sin espacio, etc.) —
+                // toma lo que ya esté tipeado, le saca cualquier S/N final y le
+                // pone la letra elegida.
+                const actual=(nuevaFaena.numeroFaena||"").trim();
+                const esActual=new RegExp(`\\s*${s}$`,"i").test(actual);
+                return(
+                  <button key={s} type="button"
+                    onClick={()=>{
+                      const base=actual.replace(/\s*[sSnN]$/,"").trim();
+                      setNuevaFaena(f=>({...f,numeroFaena:base?`${base} ${s}`:s}));
+                    }}
+                    className={`px-3 py-2 rounded-lg font-bold text-xs border transition ${esActual?"bg-blue-600 text-white border-blue-600":"bg-white text-gray-600 border-gray-300 hover:border-blue-400"}`}
+                    title={s==="S"?"Sur":"Norte"}>
+                    {s}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
           <label className="text-xs text-gray-500 col-span-2 md:col-span-1">
             Inicio operación
             <input type="datetime-local" value={nuevaFaena.inicioOp} onChange={e=>setNuevaFaena(f=>({...f,inicioOp:e.target.value}))}
