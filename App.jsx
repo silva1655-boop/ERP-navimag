@@ -3602,6 +3602,23 @@ const availableWOs=wos.filter(w=>(!w.assignedTo||w.assignedTo==="")&&(w.status==
 const fallas=equip.filter(e=>e.status==="falla");
 const completed=wos.filter(w=>w.status==="completada"&&w.createdAt?.startsWith(thisMonth)).length;
 
+// Mismo criterio de fecha que usa Resumen Mensual (closedAt antes que
+// createdAt, para que una OT cerrada este mes cuente en este mes aunque se
+// haya creado antes) — acá acotado siempre al mes calendario actual, ya que
+// el Dashboard no tiene selector de período. Alimenta los 2 donuts de abajo.
+const otsMesDB=wos.filter(w=>(w.closedAt||w.createdAt||"").startsWith(thisMonth));
+const otsCompDB=otsMesDB.filter(w=>w.status==="completada");
+const otsPendDB=otsMesDB.filter(w=>w.status!=="completada"&&w.status!=="cancelada");
+const pmMesDB=otsMesDB.filter(w=>w.type==="preventiva"||w.planId||w.assignmentId);
+const donutEstadoDB=[
+  {label:"Completadas",value:otsCompDB.length,color:"#10B981"},
+  {label:"Pendientes",value:otsPendDB.length,color:"#F59E0B"},
+];
+const donutTipoDB=[
+  {label:"Preventivo",value:pmMesDB.length,color:"#3B82F6"},
+  {label:"Correctivo",value:Math.max(0,otsMesDB.length-pmMesDB.length),color:"#F97316"},
+];
+
 const equipOperativo=equip.filter(e=>e.status==="operativo").length;
 const equipMant=equip.filter(e=>e.status==="mantenimiento").length;
 const disponibilidadPct=equip.length>0?Math.round((equipOperativo/equip.length)*100):0;
@@ -4363,6 +4380,26 @@ return(
       ))}
     </div>
   </div>
+
+  {/* Resumen visual de OTs del mes — mismos 2 donuts que Reportes ▸ Resumen
+      Mensual (misma paleta, misma categorización), para verlo de un vistazo
+      sin entrar al informe. */}
+  {otsMesDB.length>0&&(
+    <div className={`${card} p-4`}>
+      <p className="font-bold text-sm mb-3" style={{color:NV.navy}}>OTs del mes — resumen visual</p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="bg-gray-50/60 rounded-xl p-3">
+          <p className="text-gray-600 text-xs font-semibold mb-2">Completadas vs Pendientes</p>
+          <div dangerouslySetInnerHTML={{__html:donutSVG(donutEstadoDB,96,14)}}/>
+        </div>
+        <div className="bg-gray-50/60 rounded-xl p-3">
+          <p className="text-gray-600 text-xs font-semibold mb-2">Preventivo vs Correctivo</p>
+          <div dangerouslySetInnerHTML={{__html:donutSVG(donutTipoDB,96,14)}}/>
+        </div>
+      </div>
+      <button onClick={()=>onNav("reports")} className="text-blue-600 text-xs font-semibold hover:underline mt-3">Ver Resumen Mensual completo →</button>
+    </div>
+  )}
 
   </>);
 })()}
@@ -16197,6 +16234,44 @@ return(
 );
 }
 
+// Donut SVG armado como STRING plano (no componente React) — se puede
+// insertar tal cual dentro del HTML del PDF impreso (exportarResumenPDF usa
+// window.open+document.write, sin React) y también en pantalla vía
+// dangerouslySetInnerHTML, así el gráfico que se ve en línea es idéntico
+// (mismos colores, mismos números) al que sale en el PDF, sin mantener dos
+// implementaciones de la misma matemática de arcos. items: [{label,value,color}].
+function donutSVG(items,size=120,strokeWidth=18){
+  const validos=(items||[]).filter(i=>i.value>0);
+  const total=validos.reduce((s,i)=>s+i.value,0);
+  const r=(size-strokeWidth)/2;
+  const c=size/2;
+  const circ=2*Math.PI*r;
+  let acumulado=0;
+  const arcos=validos.map(i=>{
+    const frac=total>0?i.value/total:0;
+    const dash=frac*circ;
+    const rotate=(acumulado/total)*360-90;
+    acumulado+=i.value;
+    return `<circle cx="${c}" cy="${c}" r="${r}" fill="none" stroke="${i.color}" stroke-width="${strokeWidth}" stroke-dasharray="${dash.toFixed(2)} ${(circ-dash).toFixed(2)}" transform="rotate(${rotate.toFixed(2)} ${c} ${c})"/>`;
+  }).join("");
+  const leyenda=(items||[]).map(i=>{
+    const pct=total>0?Math.round(i.value/total*100):0;
+    return `<div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#374151;margin-top:5px;white-space:nowrap">
+      <span style="width:9px;height:9px;border-radius:50%;background:${i.color};display:inline-block;flex-shrink:0"></span>
+      <span>${i.label}: <b>${i.value}</b>${total>0?` (${pct}%)`:""}</span>
+    </div>`;
+  }).join("");
+  return `<div style="display:flex;align-items:center;gap:14px">
+    <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="flex-shrink:0">
+      <circle cx="${c}" cy="${c}" r="${r}" fill="none" stroke="#F1F5F9" stroke-width="${strokeWidth}"/>
+      ${arcos}
+      <text x="${c}" y="${c-2}" text-anchor="middle" font-size="22" font-weight="700" fill="#111827" font-family="Arial,sans-serif">${total}</text>
+      <text x="${c}" y="${c+14}" text-anchor="middle" font-size="9" fill="#9CA3AF" font-family="Arial,sans-serif">total</text>
+    </svg>
+    <div>${leyenda}</div>
+  </div>`;
+}
+
 // Resumen Mensual — tab dentro de Reports. Ojo: data acá es SIEMPRE del
 // módulo activo (Taller o Marítimo/Esperanza/Dalka, nunca los dos a la vez
 // — la app solo mantiene un listener de Firestore vivo por vez, apuntando
@@ -16269,6 +16344,21 @@ function ResumenMensual({data,activeModule}){
   const labelProgramados=mesSel===MES_TODOS?"Programados":"Programados mes";
 
   const horasTotales=otsComp.reduce((s,w)=>s+(w.actualHours||0),0);
+
+  // Datos de los 2 donuts (en pantalla y en el PDF exportado) — reusan
+  // exactamente lo que ya calculan las tarjetas de arriba, sin nueva lógica
+  // ni nueva fuente de datos. "Preventivo vs Correctivo" usa la misma
+  // categorización binaria que ya se ve en cada tarjeta de OT (type==="preventiva"
+  // ? "PM" : "Correctiva") — NO mezcla "Fuera de Programa" (fdpMes), que es
+  // una colección distinta (requests, no wos) y se muestra aparte como nota.
+  const donutEstado=[
+    {label:"Completadas",value:otsComp.length,color:"#10B981"},
+    {label:"Pendientes",value:otsPend.length,color:"#F59E0B"},
+  ];
+  const donutTipo=[
+    {label:"Preventivo",value:pmMes.length,color:"#3B82F6"},
+    {label:"Correctivo",value:Math.max(0,otsMes.length-pmMes.length),color:"#F97316"},
+  ];
 
   const enriquecerOT=ot=>{
     const eqx=equip.find(e=>e.id===ot.equipId);
@@ -16390,6 +16480,17 @@ function ResumenMensual({data,activeModule}){
         <div class="kpi-row"><span class="kpi-green">✅ Completados</span><span class="kpi-green">${pmComp.length}</span></div>
         <div class="prog-bar"><div class="prog-fill" style="width:${pct(pmComp.length,pmMes.length)}%"></div></div>
         <div class="kpi-row"><span class="kpi-amber">📅 ${esc(labelProgramados)}</span><span class="kpi-amber">${pmPend.length}</span></div>
+      </div>
+    </div>
+    <div style="display:flex;gap:24px;margin-bottom:20px;padding:16px;border:1px solid #e5e7eb;border-radius:8px;flex-wrap:wrap">
+      <div style="flex:1;min-width:220px">
+        <div style="font-size:11px;font-weight:bold;color:#6b7280;margin-bottom:8px;letter-spacing:0.5px">COMPLETADAS VS PENDIENTES</div>
+        ${donutSVG(donutEstado,110,16)}
+      </div>
+      <div style="flex:1;min-width:220px">
+        <div style="font-size:11px;font-weight:bold;color:#6b7280;margin-bottom:8px;letter-spacing:0.5px">PREVENTIVO VS CORRECTIVO</div>
+        ${donutSVG(donutTipo,110,16)}
+        ${fdpMes.length>0?`<div style="font-size:10px;color:#9ca3af;margin-top:6px">+ ${fdpMes.length} solicitud${fdpMes.length!==1?"es":""} fuera de programa este período (categoría aparte, ver tarjeta arriba)</div>`:""}
       </div>
     </div>`;
 
@@ -16570,6 +16671,23 @@ function ResumenMensual({data,activeModule}){
               </div>
               <div className="h-1.5 bg-gray-100 rounded-full"><div className="h-full bg-emerald-500 rounded-full" style={{width:pct(pmComp.length,pmMes.length)+"%"}}/></div>
               <div className="flex justify-between text-xs"><span className="text-amber-600">📅 {labelProgramados}</span><span className="font-bold text-amber-700">{pmPend.length}</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div className="p-4 lg:p-5 border-b border-gray-100">
+          <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">📊 Resumen visual</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="bg-gray-50/60 rounded-xl p-4">
+              <p className="text-gray-600 text-xs font-semibold mb-2">Completadas vs Pendientes</p>
+              <div dangerouslySetInnerHTML={{__html:donutSVG(donutEstado)}}/>
+            </div>
+            <div className="bg-gray-50/60 rounded-xl p-4">
+              <p className="text-gray-600 text-xs font-semibold mb-2">Preventivo vs Correctivo</p>
+              <div dangerouslySetInnerHTML={{__html:donutSVG(donutTipo)}}/>
+              {fdpMes.length>0&&(
+                <p className="text-gray-400 text-[11px] mt-2">+ {fdpMes.length} solicitud{fdpMes.length!==1?"es":""} fuera de programa este período (categoría aparte, ver tarjeta arriba)</p>
+              )}
             </div>
           </div>
         </div>
