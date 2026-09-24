@@ -23816,6 +23816,7 @@ const MANUALES_TECNICOS=[
   {file:"TE15_Manual_Interactivo.html",             title:"Manual TE15",                          desc:"Manual interactivo TE15.",                                            icon:FileText, color:"emerald", sizeMB:"7.1"},
   {file:"Buscador_de_Fallas_Flota_Navimag.html",    title:"Buscador de Fallas — Flota Navimag",   desc:"Herramienta interactiva para diagnóstico de fallas de la flota.",    icon:Search,   color:"purple",  sizeMB:"0.8"},
   {file:"Repuestos_Kalmar_TR618i_AL_DSD.html",      title:"Repuestos Kalmar TR618i AL DSD",       desc:"Catálogo interactivo de repuestos con diagrama y buscador por código.", icon:Package, color:"red",     sizeMB:"10.0"},
+  {file:"Repuestos_MOL_RM255.html",                 title:"Repuestos Terminal RM255/4x4 5625",    desc:"Catálogo interactivo de repuestos con diagrama y buscador por código de parte.", icon:Package, color:"teal", sizeMB:"8.0"},
 ];
 const MANUALES_COLOR_CLS={
   blue:   {border:"border-blue-200",    bg:"bg-blue-50",    iconBg:"bg-blue-100",    icon:"text-blue-600"},
@@ -23823,6 +23824,7 @@ const MANUALES_COLOR_CLS={
   emerald:{border:"border-emerald-200", bg:"bg-emerald-50", iconBg:"bg-emerald-100", icon:"text-emerald-600"},
   purple: {border:"border-purple-200",  bg:"bg-purple-50",  iconBg:"bg-purple-100",  icon:"text-purple-600"},
   red:    {border:"border-red-200",     bg:"bg-red-50",     iconBg:"bg-red-100",     icon:"text-red-600"},
+  teal:   {border:"border-teal-200",    bg:"bg-teal-50",    iconBg:"bg-teal-100",    icon:"text-teal-600"},
 };
 function ManualesPage(){
   return(
