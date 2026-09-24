@@ -2293,6 +2293,12 @@ return(
 // ─── PHOTO PICKER ────────────────────────────────────────────────────────────
 function PhotoPicker({ photos = [], onChange, max = 3 }) {
 const inputRef = useRef(null);
+// Segundo input, sin capture y con multiple — antes había un solo input con
+// capture="environment" y sin multiple, que en navegadores móviles fuerza a
+// abrir la cámara directo, una foto a la vez, sin dar la opción de elegir
+// varias ya existentes desde la galería. Mismo patrón de 2 botones que ya
+// usan bien el wizard de cierre de OT y Fuera de Programa (Cámara/Galería).
+const galleryInputRef = useRef(null);
 const [lightbox, setLightbox] = useState(null);
 const compressImage = (file, cb) => {
   const reader = new FileReader();
@@ -2361,7 +2367,12 @@ return (
 })}
 {photos.length < max && (
 <button onClick={() => inputRef.current?.click()} className="w-16 h-16 border-2 border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center text-gray-400 hover:border-blue-400 hover:text-blue-500 transition">
-<Camera size={16}/><span className="text-xs mt-0.5">Foto</span>
+<Camera size={16}/><span className="text-xs mt-0.5">Cámara</span>
+</button>
+)}
+{photos.length < max && (
+<button onClick={() => galleryInputRef.current?.click()} className="w-16 h-16 border-2 border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center text-gray-400 hover:border-blue-400 hover:text-blue-500 transition">
+<ImageIcon size={16}/><span className="text-xs mt-0.5">Galería</span>
 </button>
 )}
 {photos.length > 0 && (()=>{
@@ -2379,6 +2390,7 @@ return (
 })()}
 </div>
 <input ref={inputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFile}/>
+<input ref={galleryInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFile}/>
 </div>
 );
 }
