@@ -14613,12 +14613,21 @@ async function saveRequestIndividual(req,patch,coll){
   try{
     const indivRef=doc(db,coll,`req_${req.id}`);
     await setDoc(indivRef,{data:updated});
+    // Transacción — antes esto era leer→modificar→escribir SIN protección
+    // (el mismo patrón que appendToArray/updateInArray ya resuelven bien en
+    // otros lugares del archivo, pero acá no se usaba). Si dos solicitudes
+    // se guardaban casi al mismo tiempo (dos personas activas en el mismo
+    // turno), la segunda escritura podía pisar por completo el índice recién
+    // escrito por la primera — el documento individual (req_<id>) quedaba
+    // perfectamente guardado en Firestore, pero su id desaparecía de
+    // requests_index, así que loadRequests nunca lo traía: la solicitud
+    // "desaparecía" sin ningún error visible para nadie.
     const idxRef=doc(db,coll,"requests_index");
-    const idxSnap=await getDoc(idxRef);
-    const ids=idxSnap.exists()?idxSnap.data().ids||[]:[];
-    if(!ids.includes(req.id)){
-      await setDoc(idxRef,{ids:[...ids,req.id]});
-    }
+    await runTransaction(db,async(tx)=>{
+      const idxSnap=await tx.get(idxRef);
+      const ids=idxSnap.exists()?idxSnap.data().ids||[]:[];
+      if(!ids.includes(req.id)) tx.set(idxRef,{ids:[...ids,req.id]});
+    });
     console.log(`✅ req_${req.id} → ${updated.status}`);
     return updated;
   }catch(e){
@@ -14634,13 +14643,14 @@ const deleteDeviacion=async(req)=>{
     // 1. Eliminar documento individual de Firestore
     const {deleteDoc,doc:docFn}=await import('firebase/firestore');
     await deleteDoc(docFn(db,activeCOLL,'req_'+req.id));
-    // 2. Quitar del índice
+    // 2. Quitar del índice — transaccional, mismo motivo que saveRequestIndividual.
     const idxRef=doc(db,activeCOLL,'requests_index');
-    const idxSnap=await getDoc(idxRef);
-    if(idxSnap.exists()){
+    await runTransaction(db,async(tx)=>{
+      const idxSnap=await tx.get(idxRef);
+      if(!idxSnap.exists()) return;
       const ids=(idxSnap.data().ids||[]).filter(id=>id!==req.id);
-      await setDoc(idxRef,{ids});
-    }
+      tx.set(idxRef,{ids});
+    });
     // 3. Actualizar estado local
     const updReqs=(data.requests||[]).filter(r=>r.id!==req.id);
     setData(d=>({...d,requests:updReqs}));
@@ -24793,11 +24803,13 @@ const deleteDevReport=async(dev)=>{
     // Documento individual del request + su entrada en el índice
     await deleteDoc(doc(db,activeCOLL,`req_${dev.id}`));
     try{
+      // Transaccional — mismo motivo que saveRequestIndividual.
       const idxRef=doc(db,activeCOLL,"requests_index");
-      const idxSnap=await getDoc(idxRef);
-      if(idxSnap.exists()){
-        await setDoc(idxRef,{ids:(idxSnap.data().ids||[]).filter(id=>id!==dev.id)});
-      }
+      await runTransaction(db,async(tx)=>{
+        const idxSnap=await tx.get(idxRef);
+        if(!idxSnap.exists()) return;
+        tx.set(idxRef,{ids:(idxSnap.data().ids||[]).filter(id=>id!==dev.id)});
+      });
     }catch(e){console.warn("Error actualizando requests_index:",e);}
 
     // La OT generada automáticamente al registrar (si existe) sale también
