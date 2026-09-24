@@ -16275,11 +16275,14 @@ function InformeBono({data,user}){
   const ind2=calcCumplimientoPM();
 
   const calcPonderado=()=>{
-    // Promedio simple entre los 2 indicadores (50/50) — pedido explícito del
-    // usuario, no ponderado con pesos distintos.
-    const vals=[ind1.pct,ind2.pct].filter(v=>v!==null);
+    // Disponibilidad 70% / Cumplimiento PM 30%. Si a alguno de los dos le
+    // falta dato ese mes, se renormaliza con el peso del que sí hay (no se
+    // divide por un peso total menor a 1 sin ajustar, para no subestimar el
+    // resultado cuando falta un indicador).
+    const vals=[{pct:ind1.pct,peso:0.70},{pct:ind2.pct,peso:0.30}].filter(v=>v.pct!==null);
     if(vals.length===0) return null;
-    return Math.round(vals.reduce((s,v)=>s+v,0)/vals.length);
+    const pesoTotal=vals.reduce((s,v)=>s+v.peso,0);
+    return Math.round(vals.reduce((s,v)=>s+v.pct*v.peso,0)/pesoTotal);
   };
   // Regla de piso: Disponibilidad < 80% → sin bono, sin importar el promedio
   // del otro indicador. El número del promedio no cambia por el piso — solo
@@ -16353,8 +16356,8 @@ function InformeBono({data,user}){
   <div class="fecha">Generado: ${esc(new Date().toLocaleDateString("es-CL",{day:"numeric",month:"long",year:"numeric"}))}<br>Por: ${esc(user.name||user.username||"—")}</div>
 </div>
 <div class="kpi-grid">
-  <div class="kpi"><div class="kpi-label">Disponibilidad Mecánica</div><div class="kpi-num" style="color:${colorP(ind1.pct)}">${fmtP(ind1.pct)}</div><div class="kpi-sub">Peso: 50% · ${ind1.total} faenas</div></div>
-  <div class="kpi"><div class="kpi-label">Cumplimiento PM</div><div class="kpi-num" style="color:${colorP(ind2.pct)}">${fmtP(ind2.pct)}</div><div class="kpi-sub">Peso: 50% · ${ind2.completadas}/${ind2.programadas} OTs</div></div>
+  <div class="kpi"><div class="kpi-label">Disponibilidad Mecánica</div><div class="kpi-num" style="color:${colorP(ind1.pct)}">${fmtP(ind1.pct)}</div><div class="kpi-sub">Peso: 70% · ${ind1.total} faenas</div></div>
+  <div class="kpi"><div class="kpi-label">Cumplimiento PM</div><div class="kpi-num" style="color:${colorP(ind2.pct)}">${fmtP(ind2.pct)}</div><div class="kpi-sub">Peso: 30% · ${ind2.completadas}/${ind2.programadas} OTs</div></div>
   <div class="kpi"><div class="kpi-label">Promedio</div><div class="kpi-num" style="color:${colorP(promedio)}">${fmtP(promedio)}</div><div class="kpi-sub">${esc(rango.label)}</div></div>
 </div>
 ${corresponePago?`
@@ -16367,9 +16370,9 @@ ${corresponePago?`
 <div class="sec-title">Cálculo por Indicador</div>
 <table>
   <tr><th>Indicador</th><th>Fórmula</th><th>Resultado</th><th>Ponderación</th><th>Aporte</th></tr>
-  <tr><td><b>1. Disponibilidad por Faena</b></td><td>Equipos disponibles / Requeridos por faena</td><td style="text-align:center;font-weight:bold;color:${colorP(ind1.pct)}">${fmtP(ind1.pct)}</td><td style="text-align:center">50%</td><td style="text-align:center;font-weight:bold">${ind1.pct!=null?Math.round(ind1.pct*0.50*10)/10+"%":"—"}</td></tr>
-  <tr style="background:#f9fafb"><td><b>2. Cumplimiento Plan PM</b></td><td>OTs PM completadas / OTs PM programadas</td><td style="text-align:center;font-weight:bold;color:${colorP(ind2.pct)}">${fmtP(ind2.pct)}</td><td style="text-align:center">50%</td><td style="text-align:center;font-weight:bold">${ind2.pct!=null?Math.round(ind2.pct*0.50*10)/10+"%":"—"}</td></tr>
-  <tr style="background:#0A1628;color:white"><td colspan="3" style="font-weight:bold;padding:8px">PROMEDIO TOTAL</td><td></td><td style="text-align:center;font-weight:bold;font-size:14px">${fmtP(promedio)}</td></tr>
+  <tr><td><b>1. Disponibilidad por Faena</b></td><td>Equipos disponibles / Requeridos por faena</td><td style="text-align:center;font-weight:bold;color:${colorP(ind1.pct)}">${fmtP(ind1.pct)}</td><td style="text-align:center">70%</td><td style="text-align:center;font-weight:bold">${ind1.pct!=null?Math.round(ind1.pct*0.70*10)/10+"%":"—"}</td></tr>
+  <tr style="background:#f9fafb"><td><b>2. Cumplimiento Plan PM</b></td><td>OTs PM completadas / OTs PM programadas</td><td style="text-align:center;font-weight:bold;color:${colorP(ind2.pct)}">${fmtP(ind2.pct)}</td><td style="text-align:center">30%</td><td style="text-align:center;font-weight:bold">${ind2.pct!=null?Math.round(ind2.pct*0.30*10)/10+"%":"—"}</td></tr>
+  <tr style="background:#0A1628;color:white"><td colspan="3" style="font-weight:bold;padding:8px">PROMEDIO PONDERADO TOTAL</td><td></td><td style="text-align:center;font-weight:bold;font-size:14px">${fmtP(promedio)}</td></tr>
 </table>
 ${ind1.detalle.length>0?`<div class="sec-title">Detalle — Disponibilidad por Faena</div><table><tr><th>N° Faena</th><th>Buque/Terminal</th><th>Fecha</th><th>Disponibles/Requeridos</th><th>% Disponibilidad</th></tr>${filasDisp}</table>`:""}
 </body></html>`;
@@ -16454,7 +16457,7 @@ ${ind1.detalle.length>0?`<div class="sec-title">Detalle — Disponibilidad por F
       </div>
 
       <div className="grid grid-cols-1 gap-4">
-        <IndCard titulo="1. Disponibilidad Mecánica por Faena" pct={ind1.pct} peso={50} sub={`${ind1.total} faenas cerradas en el mes`}>
+        <IndCard titulo="1. Disponibilidad Mecánica por Faena" pct={ind1.pct} peso={70} sub={`${ind1.total} faenas cerradas en el mes`}>
           {ind1.detalle.slice(0,5).map((d,i)=>(
             <div key={i} className="flex items-center justify-between text-xs">
               <span className="text-gray-500">Faena {d.numero} · {d.buque} · {d.fecha}</span>
@@ -16468,7 +16471,7 @@ ${ind1.detalle.length>0?`<div class="sec-title">Detalle — Disponibilidad por F
           {ind1.detalle.length===0&&<p className="text-xs text-gray-400 italic">Sin faenas cerradas en el mes</p>}
         </IndCard>
 
-        <IndCard titulo="2. Cumplimiento Plan de Mantenimiento (PM)" pct={ind2.pct} peso={50} sub={`${ind2.completadas} completadas / ${ind2.programadas} programadas en el mes`}>
+        <IndCard titulo="2. Cumplimiento Plan de Mantenimiento (PM)" pct={ind2.pct} peso={30} sub={`${ind2.completadas} completadas / ${ind2.programadas} programadas en el mes`}>
           {ind2.detalle.slice(0,5).map((d,i)=>(
             <div key={i} className="flex items-center justify-between text-xs">
               <span className="text-gray-500 truncate flex-1">{d.codigo} · {d.equipo} · {d.nombre}</span>
