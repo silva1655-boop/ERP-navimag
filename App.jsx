@@ -37895,11 +37895,25 @@ const loadMonthlyChecklists=async(loadAll=false)=>{
       })).then(()=>console.log(`✅ ${legacyCLs.length} checklists legacy migrados a documentos individuales`));
     }
 
+    // allIds se arma mes actual primero, meses anteriores después (el loop de
+    // arriba va i=0=mes actual → monthsToLoad-1=más viejo). allIds.slice(-200)
+    // tomaba la COLA del arreglo — es decir el mes MÁS VIEJO de la ventana,
+    // exactamente al revés de la intención ("cargar los últimos 200"). Si el
+    // volumen de checklists en la ventana de 3 meses supera 200, esto podía
+    // descartar TODO el mes actual y quedarse con meses más antiguos. Se
+    // ordena por fecha real (allMeta[id].date) antes de cortar, así el cap
+    // siempre se queda con los 200 más recientes de verdad, sin depender de
+    // en qué orden haya quedado cada índice mensual.
+    const allIdsPorFecha=[...allIds].sort((a,b)=>{
+      const fa=allMeta[a]?.date||"";
+      const fb=allMeta[b]?.date||"";
+      return fb.localeCompare(fa); // más reciente primero
+    });
     // Los recuperados van SIEMPRE, sin pasar por el cap de 200 — son pocos
     // (solo lo que el usuario recuperó a mano) y son justo los que se
     // perderían si quedaran sujetos al mismo recorte que el resto.
     const idsToLoad=[...new Set([
-      ...(loadAll?allIds:allIds.slice(-200)),
+      ...(loadAll?allIdsPorFecha:allIdsPorFecha.slice(0,200)),
       ...recoveredIds,
     ])];
 
