@@ -16191,6 +16191,356 @@ function CausaRaizPage({data,setData,saveData,user}){
   );
 }
 
+// ─── INFORME DE BONO TALLER ──────────────────────────────────────────────────
+// 3 indicadores de la propuesta de bono: Disponibilidad Mecánica por Faena
+// (40%), Cumplimiento Plan PM (35%), Reportabilidad de OTs (25%) — con una
+// regla de piso: si Disponibilidad < 80%, no corresponde bono ese mes sin
+// importar el promedio ponderado. Solo Taller (no hay faenas en Marítimo).
+function InformeBono({data,user}){
+  const {wos=[],plans=[],equip=[],users=[]}=data;
+
+  // Las faenas (mantek_faena) NO vienen en `data` — se cargan aparte en todo
+  // el archivo (Dashboard, Faena en Curso, Disponibilidad y Utilización),
+  // así que este componente necesita su propia suscripción, igual que ya
+  // hace Indicadores KPI con el log de tractos.
+  const [faenas,setFaenas]=useState([]);
+  useEffect(()=>{
+    const unsub=onSnapshot(doc(db,COLL_FAENA,"faenas"),snap=>{
+      setFaenas(snap.exists()?(snap.data().data||[]):[]);
+    });
+    return()=>unsub();
+  },[]);
+
+  const [mesSel,setMesSel]=useState(()=>new Date().toISOString().slice(0,7));
+  const mesesDisp=Array.from({length:6},(_,i)=>{
+    const d=new Date();
+    d.setMonth(d.getMonth()-i);
+    return d.toISOString().slice(0,7);
+  });
+  const nombreMes=new Date(mesSel+"-15").toLocaleDateString("es-CL",{month:"long",year:"numeric"});
+
+  // ─── INDICADOR 1: Disponibilidad Mecánica por Faena (40%) ─────────────────
+  const calcDisponibilidad=()=>{
+    const faenasMes=faenas.filter(f=>f.estado==="cerrada"&&(f.inicioOp||f.terminoOp||"").startsWith(mesSel));
+    if(faenasMes.length===0) return{pct:null,detalle:[],total:0};
+    const detalle=faenasMes.map(f=>{
+      const disponibles=(f.tractosEnServicio||[]).length||parseInt(f.tractosOp)||0;
+      const requeridos=parseInt(f.tractosUtilizados)||parseInt(f.tractosOp)||disponibles;
+      const pctFaena=requeridos>0?Math.round(disponibles/requeridos*100):100;
+      return{id:f.id,numero:f.numeroFaena||f.numeroBase||"—",buque:f.buque||"—",fecha:(f.inicioOp||"").slice(0,10),disponibles,requeridos,pct:pctFaena};
+    });
+    const promedio=Math.round(detalle.reduce((s,d)=>s+d.pct,0)/detalle.length);
+    return{pct:promedio,detalle,total:faenasMes.length};
+  };
+
+  // ─── INDICADOR 2: Cumplimiento Plan PM (35%) ───────────────────────────────
+  const calcCumplimientoPM=()=>{
+    // Mismo criterio "es OT de plan" ya usado en ResumenMensual/Indicadores
+    // (type==="preventiva"||planId||assignmentId) — plans (Taller) no tiene
+    // nextDueDate/activo (eso es exclusivo del modelo de Marítimo), así que
+    // no se puede sumar un "programados según plans" separado sin inventar
+    // un dato que hoy no existe; el % sale directo de las OTs del mes.
+    const esOTdePlan=w=>w.type==="preventiva"||!!w.planId||!!w.assignmentId;
+    const otsPMProgramadas=wos.filter(w=>{
+      const fecha=w.scheduledDate||w.createdAt||"";
+      return fecha.startsWith(mesSel)&&esOTdePlan(w);
+    });
+    const otsPMCompletadas=otsPMProgramadas.filter(w=>w.status==="completada");
+    const pct=otsPMProgramadas.length>0?Math.round(otsPMCompletadas.length/otsPMProgramadas.length*100):null;
+    return{
+      pct,completadas:otsPMCompletadas.length,programadas:otsPMProgramadas.length,
+      detalle:otsPMProgramadas.map(w=>{
+        const eq=equip.find(e=>e.id===w.equipId);
+        return{codigo:w.code||"—",equipo:eq?.code||"—",nombre:(w.title||w.description||"").slice(0,50),status:w.status,completada:w.status==="completada",fechaCierre:(w.closedAt||"").slice(0,10)};
+      }),
+    };
+  };
+
+  // ─── INDICADOR 3: Reportabilidad OTs (25%) ─────────────────────────────────
+  const calcReportabilidad=()=>{
+    const otsDelMes=wos.filter(w=>{
+      const creado=w.createdAt||"";
+      return creado.startsWith(mesSel)&&w.type!=="preventiva";
+    });
+    const otsCerradas=otsDelMes.filter(w=>w.status==="completada"&&w.closedAt);
+    const otsEnPlazo=otsCerradas.filter(w=>{
+      if(!w.createdAt||!w.closedAt) return false;
+      const dias=Math.floor((new Date(w.closedAt)-new Date(w.createdAt))/(1000*60*60*24));
+      return dias<=5;
+    });
+    const otsConComentario=otsEnPlazo.filter(w=>w.observations&&w.observations.trim().length>5);
+    const pct=otsDelMes.length>0?Math.round(otsConComentario.length/otsDelMes.length*100):null;
+    return{
+      pct,validas:otsConComentario.length,cerradasEnPlazo:otsEnPlazo.length,cerradas:otsCerradas.length,total:otsDelMes.length,
+      detalle:otsCerradas.map(w=>{
+        const eq=equip.find(e=>e.id===w.equipId);
+        const mec=users.find(u=>u.id===w.assignedTo);
+        const dias=Math.floor((new Date(w.closedAt)-new Date(w.createdAt))/(1000*60*60*24));
+        const enPlazo=dias<=5;
+        const tieneComentario=!!(w.observations&&w.observations.trim().length>5);
+        return{codigo:w.code||"—",equipo:eq?.code||"—",mecanico:mec?.name||w.assignedToName||"—",dias,enPlazo,tieneComentario,valida:enPlazo&&tieneComentario,observacion:(w.observations||"").slice(0,60)};
+      }),
+    };
+  };
+
+  const ind1=calcDisponibilidad();
+  const ind2=calcCumplimientoPM();
+  const ind3=calcReportabilidad();
+
+  const calcPonderado=()=>{
+    const vals=[{pct:ind1.pct,peso:0.40},{pct:ind2.pct,peso:0.35},{pct:ind3.pct,peso:0.25}].filter(v=>v.pct!==null);
+    if(vals.length===0) return null;
+    const pesoTotal=vals.reduce((s,v)=>s+v.peso,0);
+    return Math.round(vals.reduce((s,v)=>s+v.pct*v.peso,0)/pesoTotal);
+  };
+  // Regla de piso: Disponibilidad < 80% → sin bono, sin importar el promedio
+  // ponderado de los otros dos indicadores. El número del promedio no
+  // cambia por el piso — solo cambia si CORRESPONDE pagar (corresponePago
+  // más abajo), que es lo que decide el bono real.
+  const promedio=calcPonderado();
+  const pisoRoto=ind1.pct!=null&&ind1.pct<80;
+
+  const getRango=pct=>{
+    if(pisoRoto) return{label:"Insuficiente — Sin bono (piso Disponibilidad)",pct:0,color:"red"};
+    if(pct===null) return{label:"Sin datos",pct:0,color:"gray"};
+    if(pct>=95) return{label:"Excelente",pct:100,color:"emerald"};
+    if(pct>=90) return{label:"Muy Bueno",pct:85,color:"green"};
+    if(pct>=85) return{label:"Bueno",pct:70,color:"blue"};
+    if(pct>=80) return{label:"Suficiente",pct:50,color:"amber"};
+    return{label:"Insuficiente — Sin bono",pct:0,color:"red"};
+  };
+  const rango=getRango(promedio);
+  const corresponePago=!pisoRoto&&promedio!=null&&promedio>=80;
+
+  const colorInd=pct=>{
+    if(pct===null) return "gray";
+    if(pct>=95) return "emerald";
+    if(pct>=80) return "amber";
+    return "red";
+  };
+
+  // ─── EXPORTAR PDF ───────────────────────────────────────────────────────────
+  const exportarPDF=()=>{
+    const fmtP=pct=>pct!=null?pct+"%":"Sin datos";
+    const colorP=pct=>pct==null?"#6b7280":pct>=95?"#059669":pct>=80?"#d97706":"#dc2626";
+    const esc=s=>String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+
+    const filasDisp=ind1.detalle.map(d=>`
+      <tr style="border-bottom:1px solid #f3f4f6">
+        <td style="padding:6px 8px">${esc(d.numero)}</td>
+        <td style="padding:6px 8px">${esc(d.buque)}</td>
+        <td style="padding:6px 8px">${esc(d.fecha)}</td>
+        <td style="padding:6px 8px;text-align:center">${d.disponibles}/${d.requeridos}</td>
+        <td style="padding:6px 8px;text-align:center;font-weight:bold;color:${colorP(d.pct)}">${d.pct}%</td>
+      </tr>`).join("");
+
+    const filasOTs=ind3.detalle.slice(0,20).map(d=>`
+      <tr style="border-bottom:1px solid #f3f4f6">
+        <td style="padding:6px 8px">${esc(d.codigo)}</td>
+        <td style="padding:6px 8px">${esc(d.equipo)}</td>
+        <td style="padding:6px 8px">${esc(d.mecanico)}</td>
+        <td style="padding:6px 8px;text-align:center">${d.dias} días</td>
+        <td style="padding:6px 8px;text-align:center">${d.enPlazo?"✅":"❌"}</td>
+        <td style="padding:6px 8px;text-align:center">${d.tieneComentario?"✅":"❌"}</td>
+        <td style="padding:6px 8px;text-align:center;font-weight:bold;color:${d.valida?"#059669":"#dc2626"}">${d.valida?"Válida":"No válida"}</td>
+      </tr>`).join("");
+
+    const html=`<!DOCTYPE html><html><head><meta charset="UTF-8">
+<style>
+  body{font-family:Arial,sans-serif;font-size:11px;color:#1a1a1a;background:#fff;margin:0;padding:24px;}
+  .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;border-bottom:3px solid #CC0000;padding-bottom:10px;}
+  .company{font-size:22px;font-weight:bold;color:#0A1628;}
+  .subtitle{font-size:12px;color:#666;margin-top:4px;}
+  .fecha{font-size:11px;color:#666;text-align:right;}
+  .kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:16px 0;}
+  .kpi{background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px;text-align:center;}
+  .kpi-label{font-size:9px;font-weight:bold;text-transform:uppercase;color:#6b7280;margin-bottom:6px;}
+  .kpi-num{font-size:28px;font-weight:900;}
+  .kpi-sub{font-size:10px;color:#6b7280;margin-top:4px;}
+  .sec-title{font-size:13px;font-weight:bold;color:#CC0000;border-bottom:2px solid #CC0000;padding-bottom:4px;margin:20px 0 10px;}
+  table{width:100%;border-collapse:collapse;font-size:10px;}
+  th{background:#0A1628;color:white;padding:6px 8px;text-align:left;font-weight:bold;}
+  tr:nth-child(even){background:#f9fafb;}
+  .bono-box{background:#f0fdf4;border:2px solid #86efac;border-radius:8px;padding:12px;margin:12px 0;text-align:center;}
+  .bono-title{font-size:11px;color:#166534;font-weight:bold;}
+  .bono-pct{font-size:20px;font-weight:900;color:#166534;}
+  .alert{background:#fef2f2;border:1px solid #fecaca;border-radius:6px;padding:10px;margin:10px 0;font-size:10px;color:#991b1b;font-weight:bold;}
+  @media print{body{padding:0;}}
+</style></head><body>
+<div class="header">
+  <div>
+    <div class="company">NAVIMAG CARGA</div>
+    <div class="subtitle">Informe de Bono Taller — Indicadores de Desempeño<br>Período: ${esc(nombreMes.charAt(0).toUpperCase()+nombreMes.slice(1))}</div>
+  </div>
+  <div class="fecha">Generado: ${esc(new Date().toLocaleDateString("es-CL",{day:"numeric",month:"long",year:"numeric"}))}<br>Por: ${esc(user.name||user.username||"—")}</div>
+</div>
+<div class="kpi-grid">
+  <div class="kpi"><div class="kpi-label">Disponibilidad Mecánica</div><div class="kpi-num" style="color:${colorP(ind1.pct)}">${fmtP(ind1.pct)}</div><div class="kpi-sub">Peso: 40% · ${ind1.total} faenas</div></div>
+  <div class="kpi"><div class="kpi-label">Cumplimiento PM</div><div class="kpi-num" style="color:${colorP(ind2.pct)}">${fmtP(ind2.pct)}</div><div class="kpi-sub">Peso: 35% · ${ind2.completadas}/${ind2.programadas} OTs</div></div>
+  <div class="kpi"><div class="kpi-label">Reportabilidad OTs</div><div class="kpi-num" style="color:${colorP(ind3.pct)}">${fmtP(ind3.pct)}</div><div class="kpi-sub">Peso: 25% · ${ind3.validas}/${ind3.total} OTs</div></div>
+  <div class="kpi"><div class="kpi-label">Promedio Ponderado</div><div class="kpi-num" style="color:${colorP(promedio)}">${fmtP(promedio)}</div><div class="kpi-sub">${esc(rango.label)}</div></div>
+</div>
+${corresponePago?`
+<div class="bono-box">
+  <div class="bono-title">% del bono base que corresponde pagar</div>
+  <div class="bono-pct">${rango.pct}%</div>
+  <div style="font-size:10px;color:#166534;margin-top:4px">${esc(rango.label)} · Promedio ${promedio}%</div>
+</div>`:`
+<div class="alert">⚠️ ${pisoRoto?`DISPONIBILIDAD BAJO EL PISO MÍNIMO (80%) — Disponibilidad: ${fmtP(ind1.pct)}.`:`PROMEDIO BAJO EL PISO MÍNIMO (80%).`} El bono no se paga este mes. Promedio: ${fmtP(promedio)}</div>`}
+<div class="sec-title">Cálculo por Indicador</div>
+<table>
+  <tr><th>Indicador</th><th>Fórmula</th><th>Resultado</th><th>Ponderación</th><th>Aporte</th></tr>
+  <tr><td><b>1. Disponibilidad por Faena</b></td><td>Equipos disponibles / Requeridos por faena</td><td style="text-align:center;font-weight:bold;color:${colorP(ind1.pct)}">${fmtP(ind1.pct)}</td><td style="text-align:center">40%</td><td style="text-align:center;font-weight:bold">${ind1.pct!=null?Math.round(ind1.pct*0.40*10)/10+"%":"—"}</td></tr>
+  <tr style="background:#f9fafb"><td><b>2. Cumplimiento Plan PM</b></td><td>OTs PM completadas / OTs PM programadas</td><td style="text-align:center;font-weight:bold;color:${colorP(ind2.pct)}">${fmtP(ind2.pct)}</td><td style="text-align:center">35%</td><td style="text-align:center;font-weight:bold">${ind2.pct!=null?Math.round(ind2.pct*0.35*10)/10+"%":"—"}</td></tr>
+  <tr><td><b>3. Reportabilidad OTs</b></td><td>OTs cerradas ≤5 días con comentario / Total OTs</td><td style="text-align:center;font-weight:bold;color:${colorP(ind3.pct)}">${fmtP(ind3.pct)}</td><td style="text-align:center">25%</td><td style="text-align:center;font-weight:bold">${ind3.pct!=null?Math.round(ind3.pct*0.25*10)/10+"%":"—"}</td></tr>
+  <tr style="background:#0A1628;color:white"><td colspan="3" style="font-weight:bold;padding:8px">PROMEDIO PONDERADO TOTAL</td><td></td><td style="text-align:center;font-weight:bold;font-size:14px">${fmtP(promedio)}</td></tr>
+</table>
+${ind1.detalle.length>0?`<div class="sec-title">Detalle — Disponibilidad por Faena</div><table><tr><th>N° Faena</th><th>Buque/Terminal</th><th>Fecha</th><th>Disponibles/Requeridos</th><th>% Disponibilidad</th></tr>${filasDisp}</table>`:""}
+${ind3.detalle.length>0?`<div class="sec-title">Detalle — Reportabilidad OTs</div><table><tr><th>OT</th><th>Equipo</th><th>Mecánico</th><th>Días apertura→cierre</th><th>En plazo (≤5d)</th><th>Con comentario</th><th>Estado</th></tr>${filasOTs}</table>${ind3.detalle.length>20?`<p style="font-size:10px;color:#6b7280;margin-top:6px">* Se muestran las primeras 20 OTs. Total del mes: ${ind3.total}</p>`:""}`:""}
+</body></html>`;
+
+    const win=window.open("","_blank");
+    if(!win){alert("El navegador bloqueó la ventana de impresión — habilitá pop-ups para este sitio.");return;}
+    win.document.write(html);
+    win.document.close();
+    setTimeout(()=>win.print(),500);
+  };
+
+  const IndCard=({titulo,pct,peso,sub,children})=>{
+    const col=colorInd(pct);
+    const colores={
+      emerald:{bg:"bg-emerald-50",border:"border-emerald-200",text:"text-emerald-700",num:"text-emerald-600"},
+      amber:{bg:"bg-amber-50",border:"border-amber-200",text:"text-amber-700",num:"text-amber-600"},
+      red:{bg:"bg-red-50",border:"border-red-200",text:"text-red-700",num:"text-red-600"},
+      gray:{bg:"bg-gray-50",border:"border-gray-200",text:"text-gray-500",num:"text-gray-400"},
+    }[col]||{};
+    return(
+      <div className={`rounded-2xl border ${colores.border} ${colores.bg} overflow-hidden`}>
+        <div className="px-4 py-3 flex items-center justify-between border-b border-white/50">
+          <div>
+            <p className={`text-xs font-bold uppercase tracking-wide ${colores.text}`}>{titulo}</p>
+            <p className="text-[10px] text-gray-400 mt-0.5">{sub}</p>
+          </div>
+          <div className="text-right">
+            <p className={`text-3xl font-black ${colores.num}`}>{pct!=null?pct+"%":"—"}</p>
+            <p className="text-[10px] text-gray-400">Peso: {peso}%</p>
+          </div>
+        </div>
+        {children&&<div className="px-4 py-3 space-y-1.5">{children}</div>}
+      </div>
+    );
+  };
+
+  return(
+    <div className="space-y-5">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h2 className="text-xl font-bold text-gray-900">📊 Informe de Bono Taller</h2>
+          <p className="text-gray-500 text-sm capitalize mt-0.5">{nombreMes} · Indicadores de desempeño</p>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex gap-1">
+            {mesesDisp.map(m=>(
+              <button key={m} onClick={()=>setMesSel(m)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition capitalize ${mesSel===m?"text-white border-transparent":"bg-white text-gray-600 border-gray-200 hover:border-gray-400"}`}
+                style={mesSel===m?{background:"#CC0000"}:{}}>
+                {new Date(m+"-15").toLocaleDateString("es-CL",{month:"short",year:"2-digit"})}
+              </button>
+            ))}
+          </div>
+          <button onClick={exportarPDF}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold border transition hover:bg-gray-50"
+            style={{borderColor:"#0A1628",color:"#0A1628"}}>
+            🖨 Exportar PDF
+          </button>
+        </div>
+      </div>
+
+      <div className={`rounded-2xl p-5 flex items-center justify-between flex-wrap gap-4 ${corresponePago?"bg-gray-900":"bg-red-700"}`}>
+        <div>
+          <p className="text-white/70 text-xs font-semibold uppercase tracking-widest mb-1">Promedio ponderado final</p>
+          <p className="text-white font-black text-4xl">{promedio!=null?promedio+"%":"Sin datos"}</p>
+          <p className="text-white/70 text-sm mt-1">
+            {corresponePago?"Corresponde pagar ":"No corresponde pago de bono — "}
+            <span className="text-white font-bold">{corresponePago?rango.pct+"% del bono base":(pisoRoto?"Disponibilidad bajo el piso (80%)":"promedio bajo el 80%")}</span>
+          </p>
+        </div>
+        <div className="text-right">
+          <div className={`inline-flex px-4 py-2 rounded-xl font-bold text-sm ${
+            !corresponePago?"bg-white text-red-700"
+            :promedio>=95?"bg-emerald-500 text-white"
+            :promedio>=90?"bg-green-500 text-white"
+            :promedio>=85?"bg-blue-500 text-white"
+            :"bg-amber-500 text-white"}`}>
+            {rango.label}
+          </div>
+          <p className="text-white/60 text-xs mt-2">{rango.pct>0?`${rango.pct}% del bono base`:"Sin bono este mes"}</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4">
+        <IndCard titulo="1. Disponibilidad Mecánica por Faena" pct={ind1.pct} peso={40} sub={`${ind1.total} faenas cerradas en el mes`}>
+          {ind1.detalle.slice(0,5).map((d,i)=>(
+            <div key={i} className="flex items-center justify-between text-xs">
+              <span className="text-gray-500">Faena {d.numero} · {d.buque} · {d.fecha}</span>
+              <div className="flex items-center gap-2">
+                <span className="text-gray-400 text-[10px]">{d.disponibles}/{d.requeridos} equipos</span>
+                <span className={`font-bold ${d.pct>=95?"text-emerald-600":d.pct>=80?"text-amber-600":"text-red-600"}`}>{d.pct}%</span>
+              </div>
+            </div>
+          ))}
+          {ind1.detalle.length>5&&<p className="text-[10px] text-gray-400">+ {ind1.detalle.length-5} faenas más (ver PDF para detalle completo)</p>}
+          {ind1.detalle.length===0&&<p className="text-xs text-gray-400 italic">Sin faenas cerradas en el mes</p>}
+        </IndCard>
+
+        <IndCard titulo="2. Cumplimiento Plan de Mantenimiento (PM)" pct={ind2.pct} peso={35} sub={`${ind2.completadas} completadas / ${ind2.programadas} programadas en el mes`}>
+          {ind2.detalle.slice(0,5).map((d,i)=>(
+            <div key={i} className="flex items-center justify-between text-xs">
+              <span className="text-gray-500 truncate flex-1">{d.codigo} · {d.equipo} · {d.nombre}</span>
+              <span className={`ml-2 font-bold flex-shrink-0 ${d.completada?"text-emerald-600":"text-red-500"}`}>{d.completada?"✅ Completada":"⏳ Pendiente"}</span>
+            </div>
+          ))}
+          {ind2.detalle.length===0&&<p className="text-xs text-gray-400 italic">Sin OTs de PM programadas en el mes</p>}
+        </IndCard>
+
+        <IndCard titulo="3. Reportabilidad OTs (cierre ≤ 5 días + comentario)" pct={ind3.pct} peso={25} sub={`${ind3.validas} válidas / ${ind3.total} OTs abiertas en el mes`}>
+          <div className="grid grid-cols-3 gap-2 text-center text-xs mb-1">
+            <div className="bg-white rounded-lg p-2 border border-gray-100">
+              <p className="font-black text-lg text-gray-800">{ind3.total}</p>
+              <p className="text-gray-400 text-[10px]">Total OTs</p>
+            </div>
+            <div className="bg-white rounded-lg p-2 border border-gray-100">
+              <p className="font-black text-lg text-amber-600">{ind3.cerradasEnPlazo}</p>
+              <p className="text-gray-400 text-[10px]">Cerradas ≤5 días</p>
+            </div>
+            <div className="bg-white rounded-lg p-2 border border-gray-100">
+              <p className="font-black text-lg text-emerald-600">{ind3.validas}</p>
+              <p className="text-gray-400 text-[10px]">Válidas (con comentario)</p>
+            </div>
+          </div>
+          {ind3.detalle.slice(0,4).map((d,i)=>(
+            <div key={i} className={`flex items-center justify-between text-xs p-1.5 rounded-lg ${d.valida?"bg-emerald-50":"bg-red-50"}`}>
+              <span className="text-gray-600">{d.codigo} · {d.equipo} · {d.mecanico}</span>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <span className="text-[10px] text-gray-400">{d.dias}d</span>
+                <span>{d.enPlazo?"✅":"❌"}</span>
+                <span>{d.tieneComentario?"💬":"—"}</span>
+              </div>
+            </div>
+          ))}
+          {ind3.detalle.length===0&&<p className="text-xs text-gray-400 italic">Sin OTs en el mes</p>}
+        </IndCard>
+      </div>
+
+      <div className="bg-blue-50 border border-blue-100 rounded-xl p-3">
+        <p className="text-xs text-blue-700 font-semibold mb-1">ℹ️ Regla de piso</p>
+        <p className="text-xs text-blue-600">Si la disponibilidad mecánica es inferior al 80%, el bono no se paga independientemente del resultado de los demás indicadores.</p>
+        {pisoRoto&&<p className="text-xs text-red-600 font-bold mt-1">⚠️ Disponibilidad actual {ind1.pct}% — bajo el piso mínimo. El bono no corresponde este mes.</p>}
+      </div>
+    </div>
+  );
+}
+
 // ─── REPORTS ─────────────────────────────────────────────────────────────────
 function Reports({user,data,setData,saveData,activeModule}){
   const {wos,equip,users,requests,checklists}=data;
@@ -16247,10 +16597,20 @@ return(
             🔍 Causa Raíz
           </button>
         )}
+        {/* Bono Taller — solo admin/supervisor/ADMIN (authRole), y solo en
+            Taller (igual criterio que Causa Raíz: los mecánicos no lo ven,
+            no aplica a Marítimo). */}
+        {activeModule!=="maritimo"&&(user.role==="admin"||user.role==="supervisor"||user.authRole==="ADMIN")&&(
+          <button onClick={()=>setActiveTab("bono")}
+            className={`pb-2 px-3 text-sm font-semibold border-b-2 transition ${activeTab==="bono"?"border-emerald-600 text-emerald-600":"border-transparent text-gray-400 hover:text-gray-600"}`}>
+            📊 Bono Taller
+          </button>
+        )}
       </div>
 
       {activeTab==="resumen"&&<ResumenMensual data={data} activeModule={activeModule}/>}
       {activeTab==="causa_raiz"&&<CausaRaizPage data={data} setData={setData} saveData={saveData} user={user}/>}
+      {activeTab==="bono"&&activeModule!=="maritimo"&&(user.role==="admin"||user.role==="supervisor"||user.authRole==="ADMIN")&&<InformeBono data={data} user={user}/>}
 
       {activeTab==="ots"&&(<>
 <div className="flex items-center gap-3 flex-wrap mb-2">
