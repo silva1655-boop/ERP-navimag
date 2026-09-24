@@ -16223,6 +16223,35 @@ function InformeBono({data,user}){
     return()=>unsub();
   },[]);
 
+  // Ponderación de los 2 indicadores — editable, guardada en Firestore
+  // (mantek_v2/bono_config) para que sea la misma que ve todo el mundo, no
+  // un ajuste que cada quien ve distinto en su propia sesión. 70/30 por
+  // defecto si nunca se configuró.
+  const [pesoConfig,setPesoConfig]=useState({disp:70,pm:30});
+  const [pesoDispInput,setPesoDispInput]=useState("70");
+  const [guardandoPeso,setGuardandoPeso]=useState(false);
+  useEffect(()=>{
+    const unsub=onSnapshot(doc(db,COLL_TALLER,"bono_config"),snap=>{
+      if(!snap.exists()) return;
+      const disp=parseFloat(snap.data().pesoDisponibilidad);
+      if(!isNaN(disp)&&disp>=0&&disp<=100){
+        setPesoConfig({disp,pm:100-disp});
+        setPesoDispInput(String(disp));
+      }
+    });
+    return()=>unsub();
+  },[]);
+  const guardarPesos=async()=>{
+    const disp=Math.max(0,Math.min(100,parseFloat(pesoDispInput)||0));
+    setGuardandoPeso(true);
+    try{
+      await setDoc(doc(db,COLL_TALLER,"bono_config"),{
+        pesoDisponibilidad:disp,pesoPM:100-disp,
+        actualizadoPor:user.name||user.username||"",actualizadoEn:new Date().toISOString(),
+      });
+    }finally{setGuardandoPeso(false);}
+  };
+
   const [mesSel,setMesSel]=useState(()=>new Date().toISOString().slice(0,7));
   const mesesDisp=Array.from({length:6},(_,i)=>{
     const d=new Date();
@@ -16275,11 +16304,11 @@ function InformeBono({data,user}){
   const ind2=calcCumplimientoPM();
 
   const calcPonderado=()=>{
-    // Disponibilidad 70% / Cumplimiento PM 30%. Si a alguno de los dos le
-    // falta dato ese mes, se renormaliza con el peso del que sí hay (no se
-    // divide por un peso total menor a 1 sin ajustar, para no subestimar el
-    // resultado cuando falta un indicador).
-    const vals=[{pct:ind1.pct,peso:0.70},{pct:ind2.pct,peso:0.30}].filter(v=>v.pct!==null);
+    // Pesos configurables (pesoConfig, editable más abajo) — 70/30 por
+    // defecto. Si a alguno de los dos le falta dato ese mes, se renormaliza
+    // con el peso del que sí hay (no se divide por un peso total menor a 1
+    // sin ajustar, para no subestimar el resultado cuando falta un indicador).
+    const vals=[{pct:ind1.pct,peso:pesoConfig.disp/100},{pct:ind2.pct,peso:pesoConfig.pm/100}].filter(v=>v.pct!==null);
     if(vals.length===0) return null;
     const pesoTotal=vals.reduce((s,v)=>s+v.peso,0);
     return Math.round(vals.reduce((s,v)=>s+v.pct*v.peso,0)/pesoTotal);
@@ -16356,8 +16385,8 @@ function InformeBono({data,user}){
   <div class="fecha">Generado: ${esc(new Date().toLocaleDateString("es-CL",{day:"numeric",month:"long",year:"numeric"}))}<br>Por: ${esc(user.name||user.username||"—")}</div>
 </div>
 <div class="kpi-grid">
-  <div class="kpi"><div class="kpi-label">Disponibilidad Mecánica</div><div class="kpi-num" style="color:${colorP(ind1.pct)}">${fmtP(ind1.pct)}</div><div class="kpi-sub">Peso: 70% · ${ind1.total} faenas</div></div>
-  <div class="kpi"><div class="kpi-label">Cumplimiento PM</div><div class="kpi-num" style="color:${colorP(ind2.pct)}">${fmtP(ind2.pct)}</div><div class="kpi-sub">Peso: 30% · ${ind2.completadas}/${ind2.programadas} OTs</div></div>
+  <div class="kpi"><div class="kpi-label">Disponibilidad Mecánica</div><div class="kpi-num" style="color:${colorP(ind1.pct)}">${fmtP(ind1.pct)}</div><div class="kpi-sub">Peso: ${pesoConfig.disp}% · ${ind1.total} faenas</div></div>
+  <div class="kpi"><div class="kpi-label">Cumplimiento PM</div><div class="kpi-num" style="color:${colorP(ind2.pct)}">${fmtP(ind2.pct)}</div><div class="kpi-sub">Peso: ${pesoConfig.pm}% · ${ind2.completadas}/${ind2.programadas} OTs</div></div>
   <div class="kpi"><div class="kpi-label">Promedio</div><div class="kpi-num" style="color:${colorP(promedio)}">${fmtP(promedio)}</div><div class="kpi-sub">${esc(rango.label)}</div></div>
 </div>
 ${corresponePago?`
@@ -16370,8 +16399,8 @@ ${corresponePago?`
 <div class="sec-title">Cálculo por Indicador</div>
 <table>
   <tr><th>Indicador</th><th>Fórmula</th><th>Resultado</th><th>Ponderación</th><th>Aporte</th></tr>
-  <tr><td><b>1. Disponibilidad por Faena</b></td><td>Equipos disponibles / Requeridos por faena</td><td style="text-align:center;font-weight:bold;color:${colorP(ind1.pct)}">${fmtP(ind1.pct)}</td><td style="text-align:center">70%</td><td style="text-align:center;font-weight:bold">${ind1.pct!=null?Math.round(ind1.pct*0.70*10)/10+"%":"—"}</td></tr>
-  <tr style="background:#f9fafb"><td><b>2. Cumplimiento Plan PM</b></td><td>OTs PM completadas / OTs PM programadas</td><td style="text-align:center;font-weight:bold;color:${colorP(ind2.pct)}">${fmtP(ind2.pct)}</td><td style="text-align:center">30%</td><td style="text-align:center;font-weight:bold">${ind2.pct!=null?Math.round(ind2.pct*0.30*10)/10+"%":"—"}</td></tr>
+  <tr><td><b>1. Disponibilidad por Faena</b></td><td>Equipos disponibles / Requeridos por faena</td><td style="text-align:center;font-weight:bold;color:${colorP(ind1.pct)}">${fmtP(ind1.pct)}</td><td style="text-align:center">${pesoConfig.disp}%</td><td style="text-align:center;font-weight:bold">${ind1.pct!=null?Math.round(ind1.pct*(pesoConfig.disp/100)*10)/10+"%":"—"}</td></tr>
+  <tr style="background:#f9fafb"><td><b>2. Cumplimiento Plan PM</b></td><td>OTs PM completadas / OTs PM programadas</td><td style="text-align:center;font-weight:bold;color:${colorP(ind2.pct)}">${fmtP(ind2.pct)}</td><td style="text-align:center">${pesoConfig.pm}%</td><td style="text-align:center;font-weight:bold">${ind2.pct!=null?Math.round(ind2.pct*(pesoConfig.pm/100)*10)/10+"%":"—"}</td></tr>
   <tr style="background:#0A1628;color:white"><td colspan="3" style="font-weight:bold;padding:8px">PROMEDIO PONDERADO TOTAL</td><td></td><td style="text-align:center;font-weight:bold;font-size:14px">${fmtP(promedio)}</td></tr>
 </table>
 ${ind1.detalle.length>0?`<div class="sec-title">Detalle — Disponibilidad por Faena</div><table><tr><th>N° Faena</th><th>Buque/Terminal</th><th>Fecha</th><th>Disponibles/Requeridos</th><th>% Disponibilidad</th></tr>${filasDisp}</table>`:""}
@@ -16434,6 +16463,32 @@ ${ind1.detalle.length>0?`<div class="sec-title">Detalle — Disponibilidad por F
         </div>
       </div>
 
+      {/* Ponderación editable — se guarda para todos (mantek_v2/bono_config),
+          no es un ajuste que cada quien ve distinto en su propia sesión. */}
+      <div className="bg-white rounded-2xl border border-gray-200 p-4 flex items-center gap-4 flex-wrap">
+        <p className="text-xs font-bold text-gray-500 uppercase tracking-wide flex-shrink-0">⚖️ Ponderación</p>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-gray-500">Disponibilidad</span>
+          <input type="number" min="0" max="100" value={pesoDispInput}
+            onChange={e=>setPesoDispInput(e.target.value)}
+            className="w-16 px-2 py-1.5 rounded-lg border border-gray-200 text-sm font-bold text-center"/>
+          <span className="text-xs text-gray-400">%</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-gray-500">Cumplimiento PM</span>
+          <span className="w-16 px-2 py-1.5 rounded-lg bg-gray-50 border border-gray-100 text-sm font-bold text-center text-gray-700">
+            {Math.max(0,Math.min(100,parseFloat(pesoDispInput)||0))===100?0:100-Math.max(0,Math.min(100,parseFloat(pesoDispInput)||0))}
+          </span>
+          <span className="text-xs text-gray-400">%</span>
+        </div>
+        <button onClick={guardarPesos} disabled={guardandoPeso||parseFloat(pesoDispInput)===pesoConfig.disp}
+          className="px-3 py-1.5 rounded-lg text-white text-xs font-semibold transition disabled:opacity-40"
+          style={{background:"#0A1628"}}>
+          {guardandoPeso?"Guardando…":"Guardar"}
+        </button>
+        <p className="text-gray-400 text-[11px] w-full">Cumplimiento PM se ajusta solo (100 − Disponibilidad). El cambio queda para todos, no solo en esta sesión.</p>
+      </div>
+
       <div className={`rounded-2xl p-5 flex items-center justify-between flex-wrap gap-4 ${corresponePago?"bg-gray-900":"bg-red-700"}`}>
         <div>
           <p className="text-white/70 text-xs font-semibold uppercase tracking-widest mb-1">Promedio ponderado final</p>
@@ -16457,7 +16512,7 @@ ${ind1.detalle.length>0?`<div class="sec-title">Detalle — Disponibilidad por F
       </div>
 
       <div className="grid grid-cols-1 gap-4">
-        <IndCard titulo="1. Disponibilidad Mecánica por Faena" pct={ind1.pct} peso={70} sub={`${ind1.total} faenas cerradas en el mes`}>
+        <IndCard titulo="1. Disponibilidad Mecánica por Faena" pct={ind1.pct} peso={pesoConfig.disp} sub={`${ind1.total} faenas cerradas en el mes`}>
           {ind1.detalle.slice(0,5).map((d,i)=>(
             <div key={i} className="flex items-center justify-between text-xs">
               <span className="text-gray-500">Faena {d.numero} · {d.buque} · {d.fecha}</span>
@@ -16471,7 +16526,7 @@ ${ind1.detalle.length>0?`<div class="sec-title">Detalle — Disponibilidad por F
           {ind1.detalle.length===0&&<p className="text-xs text-gray-400 italic">Sin faenas cerradas en el mes</p>}
         </IndCard>
 
-        <IndCard titulo="2. Cumplimiento Plan de Mantenimiento (PM)" pct={ind2.pct} peso={30} sub={`${ind2.completadas} completadas / ${ind2.programadas} programadas en el mes`}>
+        <IndCard titulo="2. Cumplimiento Plan de Mantenimiento (PM)" pct={ind2.pct} peso={pesoConfig.pm} sub={`${ind2.completadas} completadas / ${ind2.programadas} programadas en el mes`}>
           {ind2.detalle.slice(0,5).map((d,i)=>(
             <div key={i} className="flex items-center justify-between text-xs">
               <span className="text-gray-500 truncate flex-1">{d.codigo} · {d.equipo} · {d.nombre}</span>
