@@ -5958,7 +5958,7 @@ if(rep.status==="completada"&&sel.planId){
 if(rep.status==="completada"&&activeModule!=="maritimo"){
   const closingH_l=parseFloat(rep.horometro)||equip.find(e=>e.id===sel.equipId)?.hours||0;
   const wosForCalc=wos.map(w=>w.id===sel.id?{...w,horometroCierre:closingH_l,closedAt:new Date().toISOString(),status:"completada"}:w);
-  const learned=calcAvgLearned(sel.equipId,wosForCalc,data.hourmeterReadings||[]);
+  const learned=calcAvgLearned(sel.equipId,wosForCalc,data.hourmeterReadings||[],data.checklists||[]);
   if(learned!==null){
     const samples=wosForCalc.filter(w=>w.equipId===sel.equipId&&w.planId&&w.status==="completada"&&w.horometroCierre!=null).length;
     const updEqL=equip.map(e=>e.id===sel.equipId?{...e,avgOperatingHoursLearned:learned,avgLearnedSamples:samples,avgLearnedAt:new Date().toISOString()}:e);
@@ -13747,7 +13747,7 @@ const KPICard=({label,icon:Icon,unit="",color="blue",positiveIsUp=true,mesActual
 // ─── INDICADORES ─────────────────────────────────────────────────────────────
 function Indicadores({data,activeModule}){
 const {wos=[],equip=[],plans=[],planAssignments=[],
-  requests=[],repuestos=[]}=data;
+  requests=[],repuestos=[],checklists=[],hourmeterReadings=[]}=data;
 const [eqExpanded,setEqExpanded]=useState(null);
 const [tractoEqExpanded,setTractoEqExpanded]=useState(null);
 
@@ -13782,6 +13782,26 @@ const costoOT=w=>{
   },0);
 };
 
+// Horas/día promedio de un equipo para el MTBF. getAvgActivo(eq) respeta lo
+// que ya esté configurado manualmente o "aprendido" y guardado en el propio
+// equipo (avgOperatingHours/avgOperatingHoursLearned — esto es lo único que
+// puebla el formulario de equipo de Marítimo, Taller no tiene ese campo en
+// su formulario). Si da 0 (el caso típico en Taller, donde casi nadie usa la
+// lectura manual de horómetro que alimentaba el aprendizaje), se calcula EN
+// VIVO con calcAvgLearned a partir del historial que Taller sí genera solo:
+// horómetro de cierre/inicio de cada OT y horómetro cargado en checklists —
+// sin depender de que alguien vuelva a cerrar una OT para que se recalcule.
+const avgLearnedCache={};
+const horasActivasEq=eq=>{
+  if(!eq) return 0;
+  const manual=getAvgActivo(eq);
+  if(manual>0) return manual;
+  if(avgLearnedCache[eq.id]===undefined){
+    avgLearnedCache[eq.id]=calcAvgLearned(eq.id,wos,hourmeterReadings,checklists)||0;
+  }
+  return avgLearnedCache[eq.id];
+};
+
 const d90=new Date(hoy);d90.setDate(d90.getDate()-90);
 const enPeriodo=(w,desde)=>new Date(w.createdAt||w.closedAt||0)>=desde;
 
@@ -13805,7 +13825,7 @@ const woDelMes=(mesYM)=>wos.filter(w=>{
 // manual), la misma fuente que ya usa la proyección de Plan Preventivo. Si un
 // equipo no tiene horas promedio configuradas, aporta 0 — no se le inventa un
 // número; eso puede dejar el MTBF en "—" para equipos sin ese dato cargado.
-const horasOperadasFlota=dias=>equip.reduce((s,e)=>s+(getAvgActivo(e)*dias),0);
+const horasOperadasFlota=dias=>equip.reduce((s,e)=>s+(horasActivasEq(e)*dias),0);
 
 const seriesMTBF=meses6.map(mes=>{
   const corrMes=woDelMes(mes).filter(w=>esFallaReal(w)&&w.status==="completada");
@@ -13943,7 +13963,7 @@ const calcEq=eqId=>{
   const corr=wo90.filter(w=>w.equipId===eqId&&esFallaReal(w));
   const comp=corr.filter(w=>w.status==="completada");
   const progr=wo90.filter(w=>w.equipId===eqId&&esCorrectivo(w)&&!esFallaReal(w)).length;
-  const hrs=getAvgActivo(eq)*90;
+  const hrs=horasActivasEq(eq)*90;
   const mtbf=corr.length>0&&hrs>0?hrs/corr.length:null;
   const mttr=comp.length>0?(comp.reduce((s,w)=>s+hrsOT(w),0)/comp.length):null;
   const disp=(mtbf&&mttr&&(mtbf+mttr)>0)?(mtbf/(mtbf+mttr)*100):null;
@@ -14216,7 +14236,7 @@ return(
                         {label:"MTBF",unit:"h",positiveIsUp:true,color:"blue",icon:Clock,
                           series:meses6.map(mes=>{
                             const corr=woDelMes(mes).filter(w=>w.equipId===e.id&&esFallaReal(w)&&w.status==="completada");
-                            const horasMes=getAvgActivo(e)*diasEnMes(mes);
+                            const horasMes=horasActivasEq(e)*diasEnMes(mes);
                             return{mes,valor:corr.length>0&&horasMes>0?parseFloat((horasMes/corr.length).toFixed(1)):null};
                           })},
                         {label:"MTTR",unit:"h",positiveIsUp:false,color:"amber",icon:Wrench,
@@ -14228,7 +14248,7 @@ return(
                           series:meses6.map(mes=>{
                             const corr=woDelMes(mes).filter(w=>w.equipId===e.id&&esFallaReal(w)&&w.status==="completada");
                             const comp=corr.filter(w=>hrsOT(w)>0);
-                            const horasMes=getAvgActivo(e)*diasEnMes(mes);
+                            const horasMes=horasActivasEq(e)*diasEnMes(mes);
                             const mtbf=corr.length>0&&horasMes>0?horasMes/corr.length:null;
                             const mttr=comp.length>0?comp.reduce((s,w)=>s+hrsOT(w),0)/comp.length:null;
                             return{mes,valor:(mtbf&&mttr&&(mtbf+mttr)>0)?parseFloat((mtbf/(mtbf+mttr)*100).toFixed(1)):null};
@@ -28534,35 +28554,54 @@ function resolveResponsable(nombrePlan, users) {
 }
 
 // ─── APRENDIZAJE DE HORÓMETRO PROMEDIO ───────────────────────────────────────
-function calcAvgLearned(equipId, wos, hourmeterReadings) {
-  // Usa lecturas de horómetro (readingDate = fecha real, no timestamp de imputación)
-  // en vez de OTs cerradas. Fórmula: (horo2-horo1)/(fecha2-fecha1 en días).
-  const readings=(hourmeterReadings||[])
-    .filter(r=>
-      r.equipId===equipId&&
-      r.readingDate&&
-      r.hours!=null&&
-      !isNaN(parseFloat(r.hours))
-    )
-    .map(r=>({
-      h:parseFloat(r.hours),
-      fecha:new Date(r.readingDate+"T12:00:00"),
-    }))
-    .filter(r=>!isNaN(r.fecha.getTime()))
-    .sort((a,b)=>a.fecha-b.fecha);
+// Fórmula: (horo2-horo1)/(fecha2-fecha1 en días), promedio ponderado por días
+// entre lecturas consecutivas. Antes SOLO usaba hourmeterReadings (la lectura
+// manual individual, botón del ícono de gauge) — en Taller casi nadie la usa,
+// así que para la mayoría de los equipos de Taller esto siempre daba null.
+// `wos` ya se recibía como parámetro pero no se usaba en el cuerpo; ahora sí:
+// se suman como puntos de lectura el horómetro de cierre e inicio de cada OT
+// (horometroCierre/closedAt, horometroInicio/createdAt) y el horómetro que
+// cargan los checklists (horometro/createdAt) — datos que Taller SÍ genera
+// todo el tiempo, sin que nadie tenga que usar el botón de lectura manual.
+function calcAvgLearned(equipId, wos, hourmeterReadings, checklists) {
+  const puntos=[];
+  (hourmeterReadings||[]).forEach(r=>{
+    if(r.equipId!==equipId||!r.readingDate||r.hours==null||isNaN(parseFloat(r.hours))) return;
+    const fecha=new Date(r.readingDate+"T12:00:00");
+    if(!isNaN(fecha.getTime())) puntos.push({h:parseFloat(r.hours),fecha});
+  });
+  (wos||[]).forEach(w=>{
+    if(w.equipId!==equipId) return;
+    const hCierre=parseFloat(w.horometroCierre);
+    if(hCierre>0&&w.closedAt){
+      const fecha=new Date(w.closedAt);
+      if(!isNaN(fecha.getTime())) puntos.push({h:hCierre,fecha});
+    }
+    const hInicio=parseFloat(w.horometroInicio);
+    if(hInicio>0&&w.createdAt){
+      const fecha=new Date(w.createdAt);
+      if(!isNaN(fecha.getTime())) puntos.push({h:hInicio,fecha});
+    }
+  });
+  (checklists||[]).forEach(c=>{
+    if(c.equipId!==equipId) return;
+    const h=parseFloat(c.horometro);
+    if(h>0&&c.createdAt){
+      const fecha=new Date(c.createdAt);
+      if(!isNaN(fecha.getTime())) puntos.push({h,fecha});
+    }
+  });
+  puntos.sort((a,b)=>a.fecha-b.fecha);
 
-  if(readings.length<2) return null;
+  if(puntos.length<2) return null;
 
   let sumPeso=0, sumRatio=0;
-  for(let i=1;i<readings.length;i++){
-    const deltaH=readings[i].h-readings[i-1].h;
-    const deltaD=(readings[i].fecha-readings[i-1].fecha)/(1000*60*60*24);
+  for(let i=1;i<puntos.length;i++){
+    const deltaH=puntos[i].h-puntos[i-1].h;
+    const deltaD=(puntos[i].fecha-puntos[i-1].fecha)/(1000*60*60*24);
     if(deltaH<=0||deltaD<=0) continue;
     const ratio=deltaH/deltaD;
-    if(ratio<0.1||ratio>24){
-      console.warn(`⚠️ calcAvgLearned ratio incoherente: ${ratio.toFixed(2)}h/día`);
-      continue;
-    }
+    if(ratio<0.1||ratio>24) continue; // descarta saltos de horómetro incoherentes (dato mal cargado)
     sumPeso+=deltaD;
     sumRatio+=ratio*deltaD;
   }
