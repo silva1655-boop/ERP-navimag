@@ -190,8 +190,13 @@ exports.onOTCompletada = onDocumentWritten(
 // Taller). A diferencia de los triggers anteriores, que reaccionan a una
 // escritura, acá el problema es el paso del tiempo SIN que nadie escriba
 // nada — por eso es la única onSchedule del proyecto (corre cada hora).
-// Marca avisoAbiertaEnviado en la faena para avisar UNA sola vez por
-// faena mientras siga abierta, no en cada corrida.
+// Antes avisaba UNA sola vez por faena (avisoAbiertaEnviado la frenaba en
+// las corridas siguientes) — pedido explícito: que repita hasta que se
+// cierre, no que avise una vez y se calle. Ahora reenvía en CADA corrida
+// mientras la faena siga activa y pasada las 12h — se detiene solo cuando
+// la faena se cierra (estado deja de ser "activa"). avisoAbiertaEnviado se
+// mantiene solo como bandera informativa ("ya se avisó alguna vez"),
+// avisoAbiertaVeces cuenta cuántas veces van.
 exports.onFaenaAbiertaLarga = onSchedule(
   {schedule:"every 60 minutes", region:"southamerica-west1", timeZone:"America/Santiago"},
   async () => {
@@ -202,11 +207,11 @@ exports.onFaenaAbiertaLarga = onSchedule(
     const ahora=Date.now();
     const avisos=[];
     const actualizadas=faenas.map(f=>{
-      if(f.estado!=="activa"||!f.inicioOp||f.avisoAbiertaEnviado) return f;
+      if(f.estado!=="activa"||!f.inicioOp) return f;
       const horas=(ahora-new Date(f.inicioOp).getTime())/3600000;
       if(horas<12) return f;
       avisos.push(f);
-      return {...f,avisoAbiertaEnviado:true};
+      return {...f,avisoAbiertaEnviado:true,avisoAbiertaUltimoEnvio:new Date().toISOString(),avisoAbiertaVeces:(f.avisoAbiertaVeces||0)+1};
     });
     if(!avisos.length) return;
 

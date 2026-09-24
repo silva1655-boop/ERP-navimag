@@ -20823,6 +20823,16 @@ function FaenaActivaPage({user,data}){
 const faenaActiva=faenas.find(f=>f.estado==="activa"&&(esSup||f.creadoPor===quien));
   const horasFaenaAbierta=faenaActiva?.inicioOp?(nowTick-new Date(faenaActiva.inicioOp).getTime())/3600000:0;
   const faenaAbiertaLarga=horasFaenaAbierta>=12;
+  // Aviso emergente (modal, no solo el banner pasivo de abajo) — recién a
+  // partir de las 12h (mismo umbral que ya existía, no desde el minuto 1: una
+  // faena normal de varias horas no debería interrumpirse con esto). Una vez
+  // que aparece, se puede posponer 5 min ("Recordarme en 5 min"), pero vuelve
+  // a aparecer solo — no hay forma de cerrarlo definitivamente sin cerrar la
+  // faena. Se reinicia el "snooze" cada vez que cambia la faena activa, para
+  // que una faena nueva no herede el silencio de una anterior.
+  const [avisoAbiertaDismissedAt,setAvisoAbiertaDismissedAt]=useState(0);
+  useEffect(()=>{setAvisoAbiertaDismissedAt(0);},[faenaActiva?.id]);
+  const mostrarAvisoAbiertaModal=faenaAbiertaLarga&&(nowTick-avisoAbiertaDismissedAt)>=5*60*1000;
 
   const [vista,setVista]=useState("inicio");
   const [form,setForm]=useState({
@@ -21285,6 +21295,32 @@ const faenaActiva=faenas.find(f=>f.estado==="activa"&&(esSup||f.creadoPor===quie
           <div className="mt-2 flex items-center gap-3 bg-red-50 border border-red-300 rounded-xl px-3 py-2">
             <span className="text-red-600 text-sm">🚨</span>
             <p className="text-xs text-red-700 font-semibold">Esta faena lleva {horasFaenaAbierta.toFixed(1)} horas abierta — si ya terminó, ciérrala para que no quede pendiente.</p>
+          </div>
+        )}
+        {mostrarAvisoAbiertaModal&&(
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 border-4 border-red-500">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0 text-2xl">🚨</div>
+                <div>
+                  <h3 className="text-red-700 font-bold text-lg leading-tight">Faena abierta hace {horasFaenaAbierta.toFixed(1)} horas</h3>
+                  <p className="text-gray-500 text-sm">{faenaActiva.buque} · Faena {faenaActiva.numeroFaena}</p>
+                </div>
+              </div>
+              <p className="text-gray-600 text-sm mb-5">
+                Esta faena sigue en curso desde hace más de 12 horas — probablemente se olvidaron de cerrarla, no es normal que dure tanto. Si ya terminó, ciérrala ahora. Este aviso va a seguir apareciendo cada 5 minutos mientras siga abierta.
+              </p>
+              <div className="flex gap-2">
+                <button onClick={()=>setAvisoAbiertaDismissedAt(Date.now())}
+                  className="flex-1 px-4 py-2.5 rounded-xl border border-gray-300 text-gray-600 text-sm font-semibold hover:bg-gray-50 transition">
+                  Recordarme en 5 min
+                </button>
+                <button onClick={()=>setAvisoAbiertaDismissedAt(Date.now())}
+                  className="flex-1 px-4 py-2.5 rounded-xl text-white text-sm font-semibold transition" style={{background:"#DC2626"}}>
+                  Ir a cerrar la faena
+                </button>
+              </div>
+            </div>
           </div>
         )}
         {detencionesActiva.length>0&&(

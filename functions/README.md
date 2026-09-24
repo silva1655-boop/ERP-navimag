@@ -102,9 +102,12 @@ curl -X POST https://us-central1-<PROJECT_ID>.cloudfunctions.net/sendManualPush 
   horas después de `inicioOp` → notifica a supervisor/admin/operaciones.
   A diferencia de los demás triggers (reaccionan a una escritura), este es
   un `onSchedule` que corre cada hora — el problema acá es el paso del
-  tiempo, no un cambio de dato. Avisa UNA sola vez por faena (marca
-  `avisoAbiertaEnviado:true` en el doc) mientras siga abierta, para no
-  repetir el aviso en cada corrida.
+  tiempo, no un cambio de dato. Repite el aviso en CADA corrida (cada hora)
+  mientras la faena siga `activa` y pasadas las 12h — no avisa una sola vez,
+  sigue hasta que se cierra la faena. `avisoAbiertaVeces` cuenta cuántas
+  veces se avisó. En la app (Faena en Curso) hay además un aviso emergente
+  en pantalla que se repite cada 5 minutos con el mismo umbral de 12h,
+  independiente de este push.
 - Tokens que devuelven 410/404 al enviar se borran de `pushTokens`
   automáticamente en la misma llamada.
 - Un mismo usuario puede tener un token por dispositivo (`userId+device`),
