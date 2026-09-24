@@ -5759,8 +5759,8 @@ const finalizeWizard=async(closeOT)=>{
   if(closeOT&&(wizardOT.assignmentId||wizardOT.planId)){
     setTimeout(()=>{
       setData(current=>{
-        const{planAssignments=[],planTemplates=[],wos=[],equip=[],users=[],plans=[],checklists=[]}=current;
-        const newOTs1=checkAndAutoGenerateOTs(plans,wos,equip,checklists,users);
+        const{planAssignments=[],planTemplates=[],wos=[],equip=[],users=[],plans=[],checklists=[],taskTemplates=[]}=current;
+        const newOTs1=checkAndAutoGenerateOTs(plans,wos,equip,checklists,users,taskTemplates);
         // closingDate: la OT se cerró usando la fecha real de intervención, no "hoy"
         const newOTs2=checkAndAutoGenerateOTsFromAssignments(planAssignments,planTemplates,[...wos,...newOTs1],equip,users,closingDate);
         const newOTs=[...newOTs1,...newOTs2];
@@ -9949,7 +9949,7 @@ const getAssignmentStatus=(assignment,template,equipment,wos)=>{
 };
 
 // ─── PLANS ───────────────────────────────────────────────────────────────────
-const EMPTY_TPL={name:"",frequency:"",estimatedHours:"",technician:"",tasks:""};
+const EMPTY_TPL={name:"",frequency:"",estimatedHours:"",technician:"",tasks:"",pctAnticipacion:20};
 const EMPTY_PLAN_FORM={equipId:"",name:"",frequency:"",lastHorometro:"",estimatedHours:"",technician:"",tasks:"",
   materialesAsociados:[],
   // Maritimo-only fields
@@ -10004,6 +10004,7 @@ const [vistaCategory,setVistaCategory]=useState("vencidos");
 const [vistaSearch,setVistaSearch]=useState("");
 const [fltEquip,setFltEquip]=useState("");
 const [showTplForm,setShowTplForm]=useState(false);
+const [editTplId,setEditTplId]=useState(null);
 const [showAssign,setShowAssign]=useState(null);
 const [showPlanForm,setShowPlanForm]=useState(false);
 const [showMatEquipo,setShowMatEquipo]=useState(false);
@@ -10096,10 +10097,20 @@ return {id:uid(),code:otCode,type:"preventiva",equipId:plan.equipId,planId:plan.
 
 const saveTpl=()=>{
 if(!tplForm.name||!tplForm.frequency)return;
-const nt={id:uid(),...tplForm,frequency:parseInt(tplForm.frequency)||0,estimatedHours:parseFloat(tplForm.estimatedHours)||0,tasks:tplForm.tasks.split("\n").filter(Boolean)};
-const upd=[...(taskTemplates||[]),nt];
+const patch={...tplForm,frequency:parseInt(tplForm.frequency)||0,estimatedHours:parseFloat(tplForm.estimatedHours)||0,
+  tasks:tplForm.tasks.split("\n").filter(Boolean),pctAnticipacion:resolvePctAnticipacion(tplForm.pctAnticipacion)};
+const upd=editTplId
+  ?(taskTemplates||[]).map(t=>t.id===editTplId?{...t,...patch}:t)
+  :[...(taskTemplates||[]),{id:uid(),...patch}];
 setData(d=>({...d,taskTemplates:upd}));saveData("taskTemplates",upd);
-setShowTplForm(false);setTplForm(EMPTY_TPL);
+setShowTplForm(false);setTplForm(EMPTY_TPL);setEditTplId(null);
+};
+
+const abrirEdicionTpl=(t)=>{
+setTplForm({name:t.name||"",frequency:String(t.frequency||""),estimatedHours:String(t.estimatedHours||""),
+  technician:t.technician||"",tasks:Array.isArray(t.tasks)?t.tasks.join("\n"):(t.tasks||""),
+  pctAnticipacion:t.pctAnticipacion??20});
+setEditTplId(t.id);setShowTplForm(true);
 };
 
 const deleteTpl=(id)=>{
@@ -10116,7 +10127,7 @@ const eq=equip.find(e=>e.id===eqId);if(!eq)return;
 const rawVal=selEquipsData[eqId]?.lastHorometro;
 const lastHoro=(rawVal!==undefined&&rawVal!==""&&!isNaN(parseFloat(rawVal)))?parseFloat(rawVal):(parseFloat(eq.hours)||0);
 const planCode=isMaritimo?nextPlanCode(eqId):null;
-const np={id:uid(),code:planCode,templateId:showAssign.id,equipId:eqId,name:showAssign.name,frequency:showAssign.frequency,lastHorometro:lastHoro,horometroTarget:lastHoro+showAssign.frequency,estimatedHours:showAssign.estimatedHours,technician:showAssign.technician,tasks:showAssign.tasks};
+const np={id:uid(),code:planCode,templateId:showAssign.id,equipId:eqId,name:showAssign.name,frequency:showAssign.frequency,lastHorometro:lastHoro,horometroTarget:lastHoro+showAssign.frequency,estimatedHours:showAssign.estimatedHours,technician:showAssign.technician,tasks:showAssign.tasks,pctAnticipacion:resolvePctAnticipacion(showAssign.pctAnticipacion)};
 newPlans.push(np);
 // Recalculate correlativo using the in-progress array so two plans for the
 // same equipment in the same batch don't collide on "01"
@@ -10145,6 +10156,7 @@ const np={
   ...(tipoPlanNorm==="horometro"?{horometroTarget:lastHoro+freq}:{horometroTarget:null}),
   estimatedHours:parseFloat(planForm.estimatedHours)||0,technician:planForm.technician,
   tasks:planForm.tasks.split("\n").filter(Boolean),
+  pctAnticipacion:resolvePctAnticipacion(planForm.pctAnticipacion),
   ...(isMaritimo?{
     nave:planForm.nave,area:planForm.area,idEquipoText:planForm.idEquipoText,
     responsable:planForm.responsable,responsablePlan:planForm.responsable,technician:planForm.responsable,
@@ -10156,7 +10168,6 @@ const np={
     fechaUltima:planForm.fechaUltima,proximaFecha:nextDueDateCalc||"",
     lastExecutionDate:lastExecDate,nextDueDate:nextDueDateCalc,
     valorRepuesto:parseFloat(planForm.valorRepuesto)||0,valorServicio:parseFloat(planForm.valorServicio)||0,moneda:planForm.moneda,
-    pctAnticipacion:resolvePctAnticipacion(planForm.pctAnticipacion),
     historialCambios:[{ts:new Date().toISOString(),usuario:user.name,accion:"creado",detalle:`Plan creado · ${tipoPlanNorm==="calendario"?`cada ${freq} día(s)`:`cada ${freq}h`}`}],
   }:{})
 };
@@ -10329,6 +10340,8 @@ const savePlanEdit=()=>{
     // El horómetro objetivo solo aplica a planes por horómetro — igual
     // criterio que addPlan, para no convertir una frecuencia en días en horas.
     ...(tipoPlanNorm==="horometro"?{horometroTarget:lastHoro+freq}:{horometroTarget:null}),
+    pctAnticipacion:resolvePctAnticipacion(editPlanForm.pctAnticipacion),
+    tasks:editPlanForm.tasks.split("\n").filter(Boolean),
     ...(isMaritimo?{
       nave:editPlanForm.nave,area:editPlanForm.area,
       responsable:editPlanForm.responsable,responsablePlan:editPlanForm.responsable,technician:editPlanForm.responsable,
@@ -10339,8 +10352,6 @@ const savePlanEdit=()=>{
       lastHorometro:lastHoro,
       nextDueDate:nextDueDateCalc,proximaFecha:nextDueDateCalc||"",
       valorRepuesto:parseFloat(editPlanForm.valorRepuesto)||0,valorServicio:parseFloat(editPlanForm.valorServicio)||0,moneda:editPlanForm.moneda,
-      pctAnticipacion:resolvePctAnticipacion(editPlanForm.pctAnticipacion),
-      tasks:editPlanForm.tasks.split("\n").filter(Boolean),
       historialCambios:[...(pl.historialCambios||[]),{ts:new Date().toISOString(),usuario:user.name,accion:"editado",detalle:"Plan editado"}],
     }:{}),
   }:pl);
@@ -12837,10 +12848,11 @@ return(
 <div className="flex items-start justify-between mb-2">
 <div>
 <p className="text-gray-800 font-semibold text-sm">{t.name}</p>
-<p className="text-gray-400 text-xs mt-0.5">Cada {t.frequency}h · {t.estimatedHours}h est.</p>
+<p className="text-gray-400 text-xs mt-0.5">Cada {t.frequency}h · {t.estimatedHours}h est. · Anticipación {resolvePctAnticipacion(t.pctAnticipacion)}%</p>
 </div>
 {user.role==="supervisor"&&<div className="flex gap-1 flex-shrink-0">
 <button onClick={()=>{setSelEquipsData({});setShowAssign(t);}} className="text-xs px-2.5 py-1 rounded-lg font-medium text-white transition hover:opacity-90 flex items-center gap-1" style={{background:NV.blue}}><Layers size={11}/>Asignar</button>
+<button onClick={()=>abrirEdicionTpl(t)} className="text-gray-300 hover:text-blue-500 p-1 transition"><Edit2 size={13}/></button>
 <button onClick={()=>deleteTpl(t.id)} className="text-gray-300 hover:text-red-500 p-1 transition"><Trash2 size={13}/></button>
 </div>}
 </div>
@@ -12853,18 +12865,23 @@ return(
 </>
 )}
 
-{/* Nueva Plantilla */}
+{/* Nueva/Editar Plantilla */}
 {showTplForm&&(
-<Modal title="Nueva Plantilla de Tarea" onClose={()=>{setShowTplForm(false);setTplForm(EMPTY_TPL);}}>
+<Modal title={editTplId?"Editar Plantilla de Tarea":"Nueva Plantilla de Tarea"} onClose={()=>{setShowTplForm(false);setTplForm(EMPTY_TPL);setEditTplId(null);}}>
 <div className="space-y-3">
 <div><label className="text-gray-500 text-xs font-medium mb-1 block">NOMBRE</label><input value={tplForm.name} onChange={e=>setTplForm(f=>({...f,name:e.target.value}))} className={iCls} placeholder="ej: Servicio 250h"/></div>
 <div className="grid grid-cols-2 gap-3">
 <div><label className="text-gray-500 text-xs font-medium mb-1 block">FRECUENCIA (horas)</label><input type="number" value={tplForm.frequency} onChange={e=>setTplForm(f=>({...f,frequency:e.target.value}))} className={iCls} placeholder="250"/></div>
 <div><label className="text-gray-500 text-xs font-medium mb-1 block">HRS ESTIMADAS</label><input type="number" value={tplForm.estimatedHours} onChange={e=>setTplForm(f=>({...f,estimatedHours:e.target.value}))} className={iCls} placeholder="4"/></div>
 </div>
+<div>
+  <label className="text-gray-500 text-xs font-medium mb-1 block">% ANTICIPACIÓN PARA GENERAR OT <span className="text-blue-500 font-bold">{resolvePctAnticipacion(tplForm.pctAnticipacion)}%</span></label>
+  <input type="range" min="0" max="50" step="5" value={resolvePctAnticipacion(tplForm.pctAnticipacion)} onChange={e=>setTplForm(f=>({...f,pctAnticipacion:parseFloat(e.target.value)}))} className="w-full accent-blue-600"/>
+  <p className="text-gray-400 text-xs mt-1">Valor por defecto para los planes creados desde esta plantilla — cada plan puede después ajustar el suyo propio.</p>
+</div>
 <div><label className="text-gray-500 text-xs font-medium mb-1 block">TAREAS (una por línea)</label><textarea value={tplForm.tasks} onChange={e=>setTplForm(f=>({...f,tasks:e.target.value}))} rows={4} className={iCls+" resize-none"} placeholder={"Cambio aceite motor\nFiltro hidráulico\nRevisión frenos"}/></div>
 </div>
-<ModalActions onSave={saveTpl} onCancel={()=>{setShowTplForm(false);setTplForm(EMPTY_TPL);}} label="Guardar Plantilla"/>
+<ModalActions onSave={saveTpl} onCancel={()=>{setShowTplForm(false);setTplForm(EMPTY_TPL);setEditTplId(null);}} label={editTplId?"Guardar cambios":"Guardar Plantilla"}/>
 </Modal>
 )}
 
@@ -12969,6 +12986,10 @@ return(
 </div>
 )}
 <div><label className="text-gray-500 text-xs font-medium mb-1 block">HRS ESTIMADAS</label><input type="number" value={planForm.estimatedHours} onChange={e=>setPlanForm(f=>({...f,estimatedHours:e.target.value}))} className={iCls}/></div>
+<div>
+  <label className="text-gray-500 text-xs font-medium mb-1 block">% ANTICIPACIÓN PARA GENERAR OT <span className="text-blue-500 font-bold">{resolvePctAnticipacion(planForm.pctAnticipacion)}%</span></label>
+  <input type="range" min="0" max="50" step="5" value={resolvePctAnticipacion(planForm.pctAnticipacion)} onChange={e=>setPlanForm(f=>({...f,pctAnticipacion:parseFloat(e.target.value)}))} className="w-full accent-blue-600"/>
+</div>
 <div><label className="text-gray-500 text-xs font-medium mb-1 block">TAREAS (una por línea)</label><textarea value={planForm.tasks} onChange={e=>setPlanForm(f=>({...f,tasks:e.target.value}))} rows={4} className={iCls+" resize-none"} placeholder={"Cambio aceite motor\nFiltro hidráulico\nRevisión frenos"}/></div>
 <MaterialesEquipoQuickPick
   equipId={planForm.equipId}
@@ -13562,10 +13583,6 @@ return(
       <input type="number" value={editPlanForm.lastHorometro} onChange={e=>setEditPlanForm(f=>({...f,lastHorometro:e.target.value}))} className={iCls} placeholder="ej: 1000"/>
     </div>
   </div>
-  <div>
-    <label className="text-gray-500 text-xs font-medium mb-1 block">% ANTICIPACIÓN PARA GENERAR OT <span className="text-blue-500 font-bold">{resolvePctAnticipacion(editPlanForm.pctAnticipacion)}%</span></label>
-    <input type="range" min="0" max="50" step="5" value={resolvePctAnticipacion(editPlanForm.pctAnticipacion)} onChange={e=>setEditPlanForm(f=>({...f,pctAnticipacion:parseFloat(e.target.value)}))} className="w-full accent-blue-600"/>
-  </div>
   <div className="grid grid-cols-3 gap-3">
     <div><label className="text-gray-500 text-xs font-medium mb-1 block">VALOR REPUESTO</label>
       <input type="number" value={editPlanForm.valorRepuesto} onChange={e=>setEditPlanForm(f=>({...f,valorRepuesto:e.target.value}))} className={iCls} placeholder="0"/>
@@ -13579,10 +13596,6 @@ return(
       </select>
     </div>
   </div>
-  <div>
-    <label className="text-gray-500 text-xs font-medium mb-1 block">ACTIVIDADES / TAREAS (UNA POR LÍNEA)</label>
-    <textarea value={editPlanForm.tasks} onChange={e=>setEditPlanForm(f=>({...f,tasks:e.target.value}))} rows={4} className={iCls+" resize-none"}/>
-  </div>
 </>)}
 <div className="grid grid-cols-2 gap-3">
 <div><label className="text-gray-500 text-xs font-medium mb-1 block">{editPlanForm.tipoPlan==="Calendario"?"FRECUENCIA (días)":"FRECUENCIA (horas)"}</label><input type="number" value={editPlanForm.frequency} onChange={e=>setEditPlanForm(f=>({...f,frequency:e.target.value}))} className={iCls} placeholder="250"/></div>
@@ -13594,6 +13607,15 @@ return(
 <span>Nueva meta horómetro = base + frecuencia = <strong>{((parseFloat(editPlanForm.lastHorometro)||0)+(parseFloat(editPlanForm.frequency)||0)).toLocaleString()}h</strong></span>
 </div>
 )}
+<div>
+  <label className="text-gray-500 text-xs font-medium mb-1 block">% ANTICIPACIÓN PARA GENERAR OT <span className="text-blue-500 font-bold">{resolvePctAnticipacion(editPlanForm.pctAnticipacion)}%</span></label>
+  <input type="range" min="0" max="50" step="5" value={resolvePctAnticipacion(editPlanForm.pctAnticipacion)} onChange={e=>setEditPlanForm(f=>({...f,pctAnticipacion:parseFloat(e.target.value)}))} className="w-full accent-blue-600"/>
+  <p className="text-gray-400 text-xs mt-1">La OT preventiva se genera cuando falta este % de la frecuencia para llegar a la meta. Ej: frecuencia 500h y 20% → se genera 100h antes de vencer.</p>
+</div>
+<div>
+  <label className="text-gray-500 text-xs font-medium mb-1 block">ACTIVIDADES / TAREAS (UNA POR LÍNEA)</label>
+  <textarea value={editPlanForm.tasks} onChange={e=>setEditPlanForm(f=>({...f,tasks:e.target.value}))} rows={4} className={iCls+" resize-none"}/>
+</div>
 <div>
   <MaterialesEquipoQuickPick
     equipId={editPlanTarget.equipId}
@@ -29060,7 +29082,7 @@ function proyeccionPMHorometro(hActual,hObjetivo,eq){
 }
 
 // ─── AUTO PM OT GENERATION ───────────────────────────────────────────────────
-function checkAndAutoGenerateOTs(plans, wos, equip, checklists, users) {
+function checkAndAutoGenerateOTs(plans, wos, equip, checklists, users, taskTemplates) {
   const liveHours = (equipId) => {
     const eq = equip.find(e=>e.id===equipId);
     const horometroOficial = eq?.hours || 0;
@@ -29089,7 +29111,7 @@ function checkAndAutoGenerateOTs(plans, wos, equip, checklists, users) {
     if(target===0) continue;
     const hActual=liveHours(plan.equipId);
     const freq=parseFloat(plan.frequency)||0;
-    const pct=resolvePctAnticipacion(plan.pctAnticipacion);
+    const pct=resolvePctAnticipacion(plan.pctAnticipacion,(taskTemplates||[]).find(t=>t.id===plan.templateId)?.pctAnticipacion);
     const triggerH=target-(freq*pct/100);
     if(hActual<triggerH) continue;
     if(wos.some(w=>w.planId===plan.id&&!["completada","cancelada"].includes(w.status))) continue;
@@ -29116,7 +29138,7 @@ function checkAndAutoGenerateOTs(plans, wos, equip, checklists, users) {
     const nextDue=plan.nextDueDate||plan.proximaFecha;
     if(!nextDue) continue;
     const freq=parseFloat(plan.frequency)||0;
-    const pct=resolvePctAnticipacion(plan.pctAnticipacion);
+    const pct=resolvePctAnticipacion(plan.pctAnticipacion,(taskTemplates||[]).find(t=>t.id===plan.templateId)?.pctAnticipacion);
     const triggerDate=freq>0?addDays(nextDue,-(freq*pct/100)):nextDue;
     if(today<triggerDate) continue;
     if(wos.some(w=>w.planId===plan.id&&!["completada","cancelada"].includes(w.status))) continue;
@@ -38798,8 +38820,8 @@ setTimeout(async()=>{
     // Pequeña espera para que los listeners onSnapshot poblen data antes de proceder
     await new Promise(r=>setTimeout(r,2000));
     setData(current=>{
-      const{plans=[],planAssignments=[],planTemplates=[],wos=[],equip=[],checklists=[],users=[]}=current;
-      const newOTs1=checkAndAutoGenerateOTs(plans,wos,equip,checklists,users);
+      const{plans=[],planAssignments=[],planTemplates=[],wos=[],equip=[],checklists=[],users=[],taskTemplates=[]}=current;
+      const newOTs1=checkAndAutoGenerateOTs(plans,wos,equip,checklists,users,taskTemplates);
       const newOTs2=checkAndAutoGenerateOTsFromAssignments(planAssignments,planTemplates,[...wos,...newOTs1],equip,users);
       const newOTs=[...newOTs1,...newOTs2];
       if(!newOTs.length) return current;
